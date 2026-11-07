@@ -191,3 +191,8 @@ add_test(NAME dsp_preset_safety COMMAND dsp_preset_safety)
 add_executable(dsp_phase_crossfade_tests tests/test_phase_crossfade.cpp)
 target_link_libraries(dsp_phase_crossfade_tests PRIVATE skelly_dsp)
 add_test(NAME dsp_phase_crossfade COMMAND dsp_phase_crossfade_tests)
+
+# v3.4: detector ring-index optimisation and antiphase stereo integrity.
+add_executable(dsp_v34_tests tests/test_v34_tracker.cpp)
+target_link_libraries(dsp_v34_tests PRIVATE skelly_dsp)
+add_test(NAME dsp_v34_pitch_tracker_performance_regression COMMAND dsp_v34_tests)

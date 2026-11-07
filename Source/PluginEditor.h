@@ -39,6 +39,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttach_;
     std::array<std::unique_ptr<PitchButton>, 12> notes_;
     float lastDisplayHz_ = 0.0f, lastConfidence_ = 0.0f, lastCorrectionCents_ = 0.0f;
+    float lastReferenceA_ = 440.0f;
     int lastTargetNote_ = -1;
     bool lastTargetPending_ = false;
     int lastMask_ = -1;

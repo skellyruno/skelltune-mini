@@ -186,3 +186,8 @@ add_test(NAME dsp_v33_onset_memory COMMAND dsp_v33_tests)
 add_executable(dsp_preset_safety tests/test_preset_safety.cpp)
 target_link_libraries(dsp_preset_safety PRIVATE skelly_dsp)
 add_test(NAME dsp_preset_safety COMMAND dsp_preset_safety)
+
+# Max-retune cycle overlap math: replace expensive audio-thread cosine with LUT.
+add_executable(dsp_phase_crossfade_tests tests/test_phase_crossfade.cpp)
+target_link_libraries(dsp_phase_crossfade_tests PRIVATE skelly_dsp)
+add_test(NAME dsp_phase_crossfade COMMAND dsp_phase_crossfade_tests)

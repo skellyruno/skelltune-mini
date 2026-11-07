@@ -7,6 +7,7 @@
 #include "CoherentMixGuard.hpp"
 #include "FormantEnvelopeGuard.hpp"
 #include "HarmonicAirGuard.hpp"
+#include "PhaseCrossfadeLut.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -497,6 +498,7 @@ public:
         mixGuard_.prepare(rate_);
         formantGuard_.prepare(rate_, channels_);
         airGuard_.prepare(rate_, channels_);
+        phaseCrossfade_.prepare();
         cycleSynth_.setClockLockedDelay(studioClock_ ? latency_ : 0);
         highBandPole_ = std::exp(-2.0*kPi*3400.0/rate_);
         voicedEnvelopeStep_ = 1.0 - std::exp(-1.0 / (rate_ * 0.003));
@@ -891,8 +893,11 @@ public:
                 enforceAge(jumpTo_);
             } else enforceAge(readDelay_);
             const bool jumping = jumpPosition_ < jumpLength_;
+            // Precomputed Hann blend only in maximum hard-tune mode.
+            // Ordinary presets retain their original exact cosine curve.
             const double jumpBlend = jumping ?
-                (0.5-0.5*std::cos(kPi * (jumpPosition_+1.0)/jumpLength_)) : 0.0;
+                (hard ? phaseCrossfade_.blend(jumpPosition_, jumpLength_) :
+                        0.5-0.5*std::cos(kPi * (jumpPosition_+1.0)/jumpLength_)) : 0.0;
             // Two grains of equal loudness still cancel when their phases differ.
             // Predict expected power from normalized source correlation, then
             // conservatively compensate a portion of the overlap attenuation.
@@ -1135,6 +1140,7 @@ private:
     FormantEnvelopeGuard formantGuard_;
     bool formantActive_=false;
     HarmonicAirGuard airGuard_;
+    PhaseCrossfadeLut phaseCrossfade_;
     double cycleBlend_ = 0.0;
     uint64_t phaseJumpCount_ = 0;
     uint64_t cycleWrapCount_ = 0, activeWrapCount_ = 0, sourceAgeGuardHits_ = 0;

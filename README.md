@@ -11,6 +11,14 @@ The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversize
 - New `dsp_v34_pitch_tracker_performance_regression` and extended `gui_startup_smoke.cpp` cover regression cases. The native JUCE/Windows CI build **has not been verified** as part of this update.
 - Original VST3 IDs, parameter IDs and host latency contract remain unchanged.
 
+## DSP v3.5 — high-confidence semitone lock and audio-thread efficiency
+- **Stable adjacent-note acquisition:** in 0 ms/full-wet aggressive tuning, a new semitone within 30 cents of its center may commit after at least 35 ms of consistently high-confidence (>= 0.92) pitch evidence. A candidate must remain inside a 16-cent observed excursion window. Older broad vibrato excursions still use conservative confirmation.
+- **Centered-note vibrato safety:** the existing 15 ms near-center lock also requires the candidate's accumulated pitch evidence to stay within that 16-cent window, reducing false semitone switches near wide vibrato extrema.
+- **Hot-loop math:** pitch ratios now use `std::exp2(cents/1200.0)` instead of `std::pow(2.0,cents/1200.0)`; the transient detector now compares squared threshold magnitudes rather than taking a square root for every sample.
+- **Regression coverage:** `dsp_v35_stable_note_lock` checks fast/normal note decisions, 70–100-cent vibrato at 4–6 Hz, onset/phrase recovery, note-mask edits, and pitch-ratio / transient-threshold math.
+- **Local validation:** the extracted NoteDecision implementation passed C++17 GCC -Werror tests at 44.1/48/96 kHz; AddressSanitizer+UndefinedBehaviorSanitizer passed. An isolated CMake/CTest run passed 1/1. An isolated pitch-ratio microbenchmark was ~3x faster for that math operation, **not** the full plugin. A deterministic 2,000,000-sample transient stimulus yielded identical threshold decisions.
+- **Still unverified:** full in-repository regression suite, Windows VST3 build, FL Studio hosts, real-vocal A/B benchmarks, true wet-path latency, and plugin-wide CPU reduction. No manufacturer/plugin IDs, parameter IDs, or host delay contract were changed.
+
 ## Build and download
 On pushes to `main`, **Build SkellyTune Realtime VST3** runs on GitHub Actions and builds only the **SkellyTune Realtime** Windows VST3 (3 ms nominal dry/transient delay). Download the `SkellyTune-Realtime-Windows-VST3` artifact from the successful workflow. No Studio, Studio Fast, or Standalone files are produced.
 

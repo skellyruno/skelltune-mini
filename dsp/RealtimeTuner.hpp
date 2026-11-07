@@ -854,7 +854,10 @@ public:
                     jumpPosition_ = jumpLength_ = 0;
                 }
             } else dryCenteredSamples_ = 0;
-            const double ratio = std::clamp(std::pow(2.0, cents_ / 1200.0), 0.5, 2.0);
+            // base-2 pitch ratio is evaluated for every output sample.
+            // exp2 is equivalent to pow(2,x) at double precision but avoids
+            // the general-purpose exponent path in the audio callback.
+            const double ratio = std::clamp(std::exp2(cents_ / 1200.0), 0.5, 2.0);
             const double period = rate_ / std::clamp(smoothF0_, 65.0, 850.0);
             const double slope = 1.0 - ratio;
             // Pitch-synchronous variable-delay shifter: a continuous read head moves at

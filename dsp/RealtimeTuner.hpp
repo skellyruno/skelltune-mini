@@ -92,7 +92,15 @@ public:
         oscSin_ = s*stepCos_ + c*stepSin_;
         if (++renormalize_ >= 8192) {
             const double magnitude=std::hypot(oscCos_,oscSin_);
-            oscCos_ /= magnitude; oscSin_ /= magnitude; renormalize_=0;
+            if (std::isfinite(magnitude) && magnitude > 1.0e-12) {
+                oscCos_ /= magnitude;
+                oscSin_ /= magnitude;
+            } else {
+                // Recover from a corrupted phase oscillator without propagating NaNs.
+                oscCos_ = 1.0;
+                oscSin_ = 0.0;
+            }
+            renormalize_=0;
         }
         inPhase_ += alpha_ * (input*c-inPhase_);
         quadrature_ += alpha_ * (input*s-quadrature_);

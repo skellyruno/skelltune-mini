@@ -1,10 +1,10 @@
 # SkellTune Mini — SkellyTune v3.3.1
-JUCE 8 / CMake C++17 VST3 and Standalone project with SkellyTune's real pitch-correction engine and compact dark/cyan GUI (not the original gain template).
+JUCE 8 / CMake C++17 VST3 project with SkellyTune's real pitch-correction engine and compact dark/cyan GUI (not the original gain template).
 
 The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversized, or unsupported saved parameter values without overwriting existing valid settings. **It has not yet been verified to resolve the exact Fruity Wrapper crash**; see [FL_STUDIO_RECOVERY.md](FL_STUDIO_RECOVERY.md).
 
 ## Build and download
-On pushes to `main`, **Build Windows VST3** uses GitHub Actions to build three plugin profiles: Realtime (3 ms nominal dry/transient delay), Studio Fast (40 ms) and Studio (50 ms). From the workflow's Artifacts section download `SkellyTune-Windows-x64`.
+On pushes to `main`, **Build SkellyTune Realtime VST3** runs on GitHub Actions and builds only the **SkellyTune Realtime** Windows VST3 (3 ms nominal dry/transient delay). Download the `SkellyTune-Realtime-Windows-VST3` artifact from the successful workflow. No Studio, Studio Fast, or Standalone files are produced.
 
 To run portable C++ DSP tests locally (without JUCE):
 ```sh

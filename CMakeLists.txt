@@ -6,7 +6,7 @@ project(SkellyTune VERSION 3.3.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(SKELLY_BUILD_PLUGIN "Build SkellyTune JUCE VST3 and Standalone" ON)
+option(SKELLY_BUILD_PLUGIN "Build SkellyTune JUCE VST3" ON)
 option(SKELLY_BUILD_DSP_TESTS "Build portable DSP tests and analysis tools" OFF)
 option(SKELLY_BUILD_STUDIO "Include the separate 50 ms Studio plugin" OFF)
 option(SKELLY_BUILD_STUDIO_FAST "Include the separate 40 ms Studio Fast plugin" OFF)
@@ -50,7 +50,7 @@ if(SKELLY_BUILD_PLUGIN)
             IS_MIDI_EFFECT FALSE
             EDITOR_WANTS_KEYBOARD_FOCUS FALSE
             COPY_PLUGIN_AFTER_BUILD FALSE
-            FORMATS VST3 Standalone
+            FORMATS VST3
             PRODUCT_NAME "${product_name}")
         target_sources(${target} PRIVATE
             Source/PluginProcessor.cpp Source/PluginProcessor.h

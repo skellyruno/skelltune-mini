@@ -112,9 +112,9 @@ private:
     std::unique_ptr<State::ButtonAttachment> phaseAttachment_;
 };
 
-juce::String detectedNoteName(float hz) {
-    if (!std::isfinite(hz) || hz < 45.0f) return "--";
-    const auto note = juce::roundToInt(69.0 + 12.0 * std::log2(double(hz) / 440.0));
+juce::String detectedNoteName(float hz, float referenceA) {
+    if (!std::isfinite(hz) || hz < 45.0f || !std::isfinite(referenceA) || referenceA <= 0.0f) return "--";
+    const auto note = juce::roundToInt(69.0 + 12.0 * std::log2(double(hz) / double(referenceA)));
     return juce::String(noteNames[(note % 12 + 12) % 12]) + juce::String(note / 12 - 1);
 }
 } // namespace
@@ -182,6 +182,12 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     speed_.setLookAndFeel(&theme_);
     addAndMakeVisible(speed_);
     styleLinear(amount_, "%"); styleLinear(mix_, "%");
+    amount_.setName("Correction Amount");
+    mix_.setName("Wet/Dry Mix");
+    speed_.setName("Retune Speed");
+    speed_.setTooltip("Retune smoothing in milliseconds. 0 ms is immediate retune, not zero processing latency.");
+    amount_.setTooltip("Strength of pitch correction.");
+    mix_.setTooltip("Wet/dry balance. Dry signal remains delay-compensated.");
     addAndMakeVisible(amount_); addAndMakeVisible(mix_);
     const juce::StringArray keys {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
     for (int i=0; i<keys.size(); ++i) key_.addItem(keys[i], i+1);
@@ -218,6 +224,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     // Both enabling the resizer AND setSize can invoke resized().
     // Do neither until the last note button has been constructed.
     setResizable(true, true);
+    setWantsKeyboardFocus(true);
     setResizeLimits(432, 414, 1008, 966);
     if (auto* sizeConstrainer = getConstrainer())
         sizeConstrainer->setFixedAspectRatio(432.0 / 414.0);
@@ -275,6 +282,8 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setColour(panel);
     g.fillRoundedRectangle(juce::Rectangle<float>(8, 68, 416, 64), 7.0f);
     g.fillRoundedRectangle(juce::Rectangle<float>(9, 138, 414, 141), 9.0f);
+    g.setColour(neon.withAlpha(0.16f));
+    g.drawRoundedRectangle(juce::Rectangle<float>(9, 138, 414, 141), 9.0f, 1.0f);
 
     // Minimal vector waveform mark, not a raster image.
     g.setColour(neon);
@@ -303,8 +312,9 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         ? juce::String(noteNames[(lastTargetNote_%12+12)%12])
             + juce::String(lastTargetNote_/12-1)
         : juce::String(lastTargetPending_ ? "CHECKING" : "--");
+    const float referenceA = parameters_.getRawParameterValue("a4")->load();
     const auto inputLabel = lastDisplayHz_ > 0.0f
-        ? detectedNoteName(lastDisplayHz_) : juce::String("WAITING");
+        ? detectedNoteName(lastDisplayHz_, referenceA) : juce::String("WAITING");
     const auto centsLabel = lastDisplayHz_ > 0.0f && !lastTargetPending_
         ? juce::String(lastCorrectionCents_ >= 0.0f ? "+" : "")
             + juce::String(lastCorrectionCents_, 1) + " ct"
@@ -328,7 +338,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
 
     // Tiny note-class status strip, separate from the 12 playable note buttons.
     const int active = lastDisplayHz_ > 0.0f
-        ? (juce::roundToInt(69.0 + 12.0*std::log2(double(lastDisplayHz_)/440.0))%12+12)%12
+        ? (juce::roundToInt(69.0 + 12.0*std::log2(double(lastDisplayHz_)/double(referenceA)))%12+12)%12
         : -1;
     for (int n=0; n<12; ++n) {
         g.setColour(n==active ? neon : stroke);
@@ -344,6 +354,9 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
     g.drawText("AMOUNT", 13, 360, 62, 17, juce::Justification::centredLeft);
     g.drawText("MIX", 222, 360, 35, 17, juce::Justification::centredLeft);
+    g.setColour(neon.withAlpha(0.55f));
+    g.fillRoundedRectangle(juce::Rectangle<float>(413.0f, 397.0f, 7.0f, 2.0f), 1.0f);
+    g.fillRoundedRectangle(juce::Rectangle<float>(416.0f, 393.0f, 4.0f, 2.0f), 1.0f);
 }
 
 void SkellyTuneEditor::togglePitchClass(int index) {
@@ -390,14 +403,18 @@ void SkellyTuneEditor::timerCallback() {
     const auto target = processor_.displayedTargetNote();
     const auto pending = processor_.displayedTargetPending();
     const auto cents = processor_.displayedCorrectionCents();
+    // Reference tuning is automatable: repaint pitch class even when detected Hz is unchanged.
+    const auto referenceA = parameters_.getRawParameterValue("a4")->load();
     if (std::abs(hz-lastDisplayHz_) > 0.1f || std::abs(confidence-lastConfidence_) > 0.05f ||
         target != lastTargetNote_ || pending != lastTargetPending_ ||
-        std::abs(cents-lastCorrectionCents_) > 0.5f) {
+        std::abs(cents-lastCorrectionCents_) > 0.5f ||
+        std::abs(referenceA-lastReferenceA_) > 0.05f) {
         lastDisplayHz_ = hz;
         lastConfidence_ = confidence;
         lastTargetNote_ = target;
         lastTargetPending_ = pending;
         lastCorrectionCents_ = cents;
+        lastReferenceA_ = referenceA;
         const auto sy = float(getHeight()) / 414.0f;
         repaint(juce::Rectangle<int>(0, juce::roundToInt(67.0f * sy),
                                        getWidth(), juce::roundToInt(66.0f * sy)));

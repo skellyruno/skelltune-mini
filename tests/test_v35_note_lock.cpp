@@ -73,6 +73,33 @@ static void existingFastPaths(double rate) {
     check(d.update(midiHz(59),.99,0,hop,0x0fff,440,true).targetMidi==59,
         "invalid pitch cancels pending candidate");
 }
+static void ratioEquivalence() {
+    // The production signal-path ratio uses exp2 instead of the generic pow.
+    // Compare the full allowed correction range at sub-cent resolution.
+    for (int i=-120000;i<=120000;i+=7) {
+        const double cents=i/100.0;
+        const double reference=std::fmax(0.5,std::fmin(2.0,std::pow(2.0,cents/1200.0)));
+        const double optimized=std::fmax(0.5,std::fmin(2.0,std::exp2(cents/1200.0)));
+        check(std::abs(reference-optimized)<1.0e-12,
+            "exp2 pitch-ratio result must match reference pow");
+    }
+}
+static void phraseReentry(double rate) {
+    skelly_research::NoteDecision d;
+    d.prepare(rate);
+    const uint32_t hop=uint32_t(std::lround(rate*.005));
+    check(d.update(midiHz(59),.99,0,hop,0x0fff,440,true).targetMidi==59,
+          "initial phrase target");
+    for (int i=0;i<6;++i)
+        d.update(0.0,0,0,hop,0x0fff,440,true);
+    check(d.update(midiHz(60),.99,0,hop,0x0fff,440,true).targetMidi==60,
+          "new phrase re-entry must not inherit stale note");
+    d.reset();
+    check(d.update(midiHz(59),.99,0,hop,0x0fff,440,true).targetMidi==59,
+          "target after reset");
+    check(d.update(midiHz(59),.99,0,hop,0x0fffu & ~(1u<<11),440,true).targetMidi!=59,
+          "disallowed note should be dropped immediately");
+}
 int main(){
     for(double rate : {44100.0,48000.0,96000.0}) {
         stableAdjacent(rate);
@@ -80,6 +107,8 @@ int main(){
             for(double freq : {4.0,5.0,6.0})
                 vibratoNoFalseSwitch(rate,depth,freq);
         existingFastPaths(rate);
+        phraseReentry(rate);
     }
+    ratioEquivalence();
     std::cout << "PASS: v3.5 stable note lock / vibrato / legacy fast paths\n";
 }

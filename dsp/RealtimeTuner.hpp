@@ -695,8 +695,11 @@ public:
                 diff = std::max(diff, std::abs(double(in[c]) - previousTransientInput_[c]));
                 previousTransientInput_[c] = in[c];
             }
-            const double floor = std::sqrt(std::max(0.0, transientDiffPower_));
-            const bool attack = diff > std::max(0.075, 5.0 * floor);
+            // Compare squared magnitudes: equivalent to the previous
+            // sqrt-based attack threshold for nonnegative diff/power, but
+            // avoids a square root on each sample of the audio callback.
+            const bool attack = diff * diff >
+                std::max(0.005625, 25.0 * std::max(0.0, transientDiffPower_));
             // Update AFTER testing so the incoming attack cannot mask itself.
             transientDiffPower_ += transientMeterStep *
                 (std::min(diff * diff, 1.0) - transientDiffPower_);

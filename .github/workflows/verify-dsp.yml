@@ -1,0 +1,25 @@
+name: Verify portable DSP
+on:
+  push:
+    paths:
+      - 'dsp/**'
+      - 'Source/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/verify-dsp.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-dsp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure portable DSP (no JUCE required)
+        run: cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON
+      - name: Compile portable DSP targets
+        run: cmake --build build-dsp --parallel 4
+      - name: Run DSP regressions
+        run: ctest --test-dir build-dsp --output-on-failure --parallel 4

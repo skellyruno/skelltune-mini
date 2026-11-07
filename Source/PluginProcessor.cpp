@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "../dsp/ScaleMask.hpp"
+#include "../dsp/SafePresetValue.hpp"
 #include <array>
 #include <algorithm>
 
@@ -155,14 +156,53 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
 juce::AudioProcessorEditor* SkellyTuneRealtimeProcessor::createEditor() {
     return new SkellyTuneEditor(*this);
 }
-void SkellyTuneRealtimeProcessor::getStateInformation(juce::MemoryBlock& block) {
-    auto xml = state_.copyState().createXml();
-    copyXmlToBinary(*xml, block);
+
+namespace {
+constexpr int kMaxSavedStateBytes = 256 * 1024;
+
+// Reject invalid saved values before installing host-supplied state.
+std::optional<double> decodeSavedNumber(const juce::var& raw) {
+    const auto text = raw.toString().trim();
+    if (text.isEmpty() || text.getNumBytesAsUTF8() > 63) return std::nullopt;
+    return skelly::parseSavedNumber(text.toRawUTF8());
 }
+} // namespace
+
+void SkellyTuneRealtimeProcessor::getStateInformation(juce::MemoryBlock& block) {
+    if (const auto xml = state_.copyState().createXml())
+        copyXmlToBinary(*xml, block);
+    else
+        block.reset();
+}
+
 void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int bytes) {
-    auto xml = getXmlFromBinary(data, bytes);
-    if (xml && xml->hasTagName(state_.state.getType()))
-        state_.replaceState(juce::ValueTree::fromXml(*xml));
+    // FL Studio can restore an older parameter layout. Restrict input size,
+    // XML root, IDs, and numeric values instead of replacing APVTS blindly.
+    if (data == nullptr || bytes <= 0 || bytes > kMaxSavedStateBytes) return;
+    const auto xml = getXmlFromBinary(data, bytes);
+    if (xml == nullptr || !xml->hasTagName(state_.state.getType())) return;
+
+    const auto incoming = juce::ValueTree::fromXml(*xml);
+    if (!incoming.isValid()) return;
+    auto safeState = state_.copyState();
+    int restored = 0;
+    for (int i = 0; i < incoming.getNumChildren(); ++i) {
+        const auto source = incoming.getChild(i);
+        if (!source.hasType(juce::Identifier("PARAM"))) continue;
+        const auto id = source.getProperty(juce::Identifier("id")).toString();
+        const auto* spec = skelly::findSavedParameter(id.toRawUTF8());
+        if (spec == nullptr || !source.hasProperty(juce::Identifier("value"))) continue;
+        const auto rawValue = decodeSavedNumber(source.getProperty(juce::Identifier("value")));
+        if (!rawValue.has_value()) continue;
+        const auto cleanValue = skelly::sanitizedSavedValue(spec->id, *rawValue);
+        if (!cleanValue.has_value()) continue;
+        auto target = safeState.getChildWithProperty(juce::Identifier("id"), id);
+        if (!target.isValid()) continue;
+        target.setProperty(juce::Identifier("value"), *cleanValue, nullptr);
+        ++restored;
+    }
+    if (restored > 0) state_.replaceState(safeState);
+    // Invalid/unknown chunks do not damage the current valid state.
 }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
     return new SkellyTuneRealtimeProcessor();

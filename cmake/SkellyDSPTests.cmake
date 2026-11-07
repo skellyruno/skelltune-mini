@@ -181,3 +181,8 @@ add_test(NAME dsp_v32_acquisition_integrity COMMAND dsp_v32_tests)
 add_executable(dsp_v33_tests tests/test_v33.cpp)
 target_link_libraries(dsp_v33_tests PRIVATE skelly_dsp)
 add_test(NAME dsp_v33_onset_memory COMMAND dsp_v33_tests)
+
+# Validate saved parameters before replacing APVTS state in a VST3 host.
+add_executable(dsp_preset_safety tests/test_preset_safety.cpp)
+target_link_libraries(dsp_preset_safety PRIVATE skelly_dsp)
+add_test(NAME dsp_preset_safety COMMAND dsp_preset_safety)

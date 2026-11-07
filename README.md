@@ -1,29 +1,21 @@
-# Skell VST3 Quickstart Template
+# SkellTune Mini — SkellyTune v3.3.1
+JUCE 8 / CMake C++17 VST3 and Standalone project with SkellyTune's real pitch-correction engine and compact dark/cyan GUI (not the original gain template).
 
-Reusable JUCE 8 / CMake / GitHub Actions Windows VST3 starter derived from the **build structure** of your uploaded skell-key-vst project. Unlike the TONIC-specific project, this is a generic **gain effect** with a working parameter, GUI knob, preset-state serialization, mono/stereo support, and automated GitHub packaging.
+The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversized, or unsupported saved parameter values without overwriting existing valid settings. **It has not yet been verified to resolve the exact Fruity Wrapper crash**; see [FL_STUDIO_RECOVERY.md](FL_STUDIO_RECOVERY.md).
 
-## Fast start
+## Build and download
+On pushes to `main`, **Build Windows VST3** uses GitHub Actions to build three plugin profiles: Realtime (3 ms nominal dry/transient delay), Studio Fast (40 ms) and Studio (50 ms). From the workflow's Artifacts section download `SkellyTune-Windows-x64`.
 
-1. Create a new GitHub repository and upload the **contents** of this folder (including `.github`).
-2. Open **Actions → Build Windows VST3 → Run workflow**.
-3. After a successful build, download the workflow artifact containing the `.vst3` bundle.
-4. Or run `python tools/new_plugin.py "Skell Compressor" ../skell-compressor --code Sk03` to generate a separate renamed project. Use a **different 4-character plugin code** for every released plugin; the manufacturer code should remain stable for your brand.
+To run portable C++ DSP tests locally (without JUCE):
+```sh
+cmake -S . -B build-dsp -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON
+cmake --build build-dsp --parallel 4
+ctest --test-dir build-dsp --output-on-failure
+```
 
-## Local build
+The DSP engine includes 0 ms *Retune Speed* (no correction smoothing), which does not mean zero detection or audio transport latency. Actual fixed wet delay and FL Studio compatibility are not fully validated.
 
-`cmake -S . -B build -A x64 -DJUCE_PATH=C:/JUCE`
+### Compatibility
+Do not change manufacturer/plugin codes or parameter IDs without a migration plan; existing FL Studio projects rely on them. Back up projects before changing installed VST3 versions. Third-party license notices are in `third_party`.
 
-`cmake --build build --config Release --parallel 2`
-
-Without `JUCE_PATH`, CMake fetches JUCE 8.0.12 from GitHub.
-
-## Where to edit
-
-- `Source/PluginProcessor.cpp`: parameters and DSP (the sample multiplies incoming audio by Gain).
-- `Source/PluginEditor.cpp`: GUI and knob layout.
-- `CMakeLists.txt`: company, unique plugin code, bundle ID, plugin format, name.
-- `.github/workflows/build.yml`: CI compilation and artifact packaging.
-
-## Important
-
-This is **not** a synthesizer template; it is an audio effect. It does not include TONIC's pitch/key detector or third-party graphical assets. The supplied original ZIP was used to guide project layout and the GitHub workflow. No original TONIC code is bundled. A successful GitHub Actions build has not been verified in this environment.
+[Patch notes](CHANGELOG_v331.md) · [FL Studio recovery](FL_STUDIO_RECOVERY.md) · [State validation](STATE_RESTORE_PATCH_REPORT.md)

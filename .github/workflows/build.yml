@@ -1,24 +1,43 @@
 name: Build Windows VST3
 on:
   workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure
-        run: cmake -S . -B build -A x64
-      - name: Build
+      - name: Configure JUCE 8 and all SkellyTune profiles
+        shell: pwsh
+        run: >-
+          cmake -S . -B build -A x64
+          -DSKELLY_BUILD_PLUGIN=ON -DSKELLY_BUILD_DSP_TESTS=OFF
+          -DSKELLY_BUILD_STUDIO=ON -DSKELLY_BUILD_STUDIO_FAST=ON
+      - name: Build Windows VST3 and Standalone
         run: cmake --build build --config Release --parallel 2
-      - name: Package
+      - name: Package VST3 bundles and Standalone executables
         shell: pwsh
         run: |
-          $plugin = Get-ChildItem -Path build -Directory -Recurse -Filter '*.vst3' | Select-Object -First 1
-          if (-not $plugin) { throw 'VST3 bundle missing' }
-          Compress-Archive -Path $plugin.FullName -DestinationPath SkellPlugin-Windows-VST3.zip
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $bundles = @(Get-ChildItem -Path build -Recurse -Directory -Filter '*.vst3' |
+            Where-Object { $_.Name -match '^SkellyTune' -and $_.FullName -match '[\\/]Release[\\/]' })
+          if ($bundles.Count -ne 3) {
+            throw "Expected three Release VST3 bundles; found $($bundles.Count): $($bundles.FullName -join ', ')"
+          }
+          foreach ($bundle in $bundles) {
+            $zipPath = Join-Path (Resolve-Path dist) ([System.IO.Path]::GetFileNameWithoutExtension($bundle.Name) + '-Windows-VST3.zip')
+            Compress-Archive -LiteralPath $bundle.FullName -DestinationPath $zipPath -Force
+          }
+          $standalone = @(Get-ChildItem -Path build -Recurse -File -Filter '*.exe' |
+            Where-Object { $_.Name -match '^SkellyTune.*\.exe$' -and $_.FullName -match '[\\/]Release[\\/]' })
+          if ($standalone.Count -gt 0) {
+            Compress-Archive -LiteralPath $standalone.FullName -DestinationPath dist/SkellyTune-Windows-Standalone.zip -Force
+          }
       - uses: actions/upload-artifact@v4
         with:
-          name: SkellPlugin-Windows-VST3
-          path: SkellPlugin-Windows-VST3.zip
+          name: SkellyTune-Windows-x64
+          path: dist/*.zip
           if-no-files-found: error

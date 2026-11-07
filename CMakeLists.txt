@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SkellyTune VERSION 3.3.0 LANGUAGES C CXX)
+project(SkellyTune VERSION 3.3.1 LANGUAGES C CXX)
 
 # Based on skell-vst-template's CMake/JUCE 8 approach. The original template's
 # demo gain processor has been replaced by the SkellyTune v3.3 DSP and GUI.

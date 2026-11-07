@@ -79,27 +79,27 @@ public:
         phase_.setColour(juce::ToggleButton::tickColourId, neon);
         addAndMakeVisible(phase_);
         phaseAttachment_ = std::make_unique<State::ButtonAttachment>(state_, "phaseAlign", phase_);
-        setSize(375, 530);
+        setSize(345, 425);
     }
     void paint(juce::Graphics& g) override {
         g.fillAll(bg);
         g.setColour(light);
-        g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
-        g.drawText("ADVANCED TUNING", 18, 10, getWidth()-36, 31, juce::Justification::centredLeft);
+        g.setFont(juce::Font(juce::FontOptions(17.0f, juce::Font::bold)));
+        g.drawText("ADVANCED TUNING", 16, 6, getWidth()-32, 27, juce::Justification::centredLeft);
         g.setColour(dimText);
         g.setFont(11.0f);
-        g.drawText("These controls remain automatable in your DAW", 18, 39, getWidth()-36, 19, juce::Justification::centredLeft);
+        g.drawText("DAW automation supported", 16, 31, getWidth()-32, 16, juce::Justification::centredLeft);
     }
     void resized() override {
-        int y = 64;
+        int y = 53;
         for (size_t i=0; i<sliders_.size(); ++i) {
-            labels_[i]->setBounds(18, y, getWidth()-36, 16);
-            sliders_[i]->setBounds(18, y+18, getWidth()-36, 28);
-            y += 53;
+            labels_[i]->setBounds(16, y, getWidth()-32, 15);
+            sliders_[i]->setBounds(16, y+14, getWidth()-32, 25);
+            y += 42;
         }
-        labels_[7]->setBounds(18, y, getWidth()-36, 16);
-        mode_.setBounds(18, y+20, getWidth()-36, 32);
-        phase_.setBounds(18, y+61, getWidth()-36, 29);
+        labels_[7]->setBounds(16, y, getWidth()-32, 15);
+        mode_.setBounds(16, y+17, getWidth()-32, 29);
+        phase_.setBounds(16, y+51, getWidth()-32, 24);
     }
 private:
     State& state_;
@@ -261,7 +261,7 @@ void SkellyTuneEditor::resized() {
     place(mix_, 258, 357, 155, 24);
     place(presetNotes_, 11, 386, 112, 23);
     place(more_, 170, 386, 92, 23);
-    place(bypass_, 327, 386, 96, 23);
+    place(bypass_, 309, 385, 96, 24);
 }
 
 void SkellyTuneEditor::paint(juce::Graphics& g) {
@@ -339,8 +339,8 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawText("RETUNE SPEED", 133, 269, 165, 19, juce::Justification::centred);
     const bool custom = parameters_.getRawParameterValue("noteMask")->load() > 0.5f;
     g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
-    g.drawText(custom ? "CUSTOM NOTES" : "ENABLED NOTES", 13, 295, 109, 14,
-               juce::Justification::centredLeft, true);
+    g.drawText(custom ? "CUSTOM" : "NOTES", 354, 279, 62, 14,
+               juce::Justification::centredRight, true);
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
     g.drawText("AMOUNT", 13, 360, 62, 17, juce::Justification::centredLeft);
     g.drawText("MIX", 222, 360, 35, 17, juce::Justification::centredLeft);

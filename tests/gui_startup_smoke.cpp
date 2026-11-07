@@ -20,7 +20,16 @@ int main() {
         if (!editor || editor->getWidth() < 400 || editor->getHeight() < 400)
             return 2;
         editor->resized();
-        std::cerr << "STEP: resized ok\n" << std::flush;
+        std::cerr << "STEP: default 432x414 layout ok\n" << std::flush;
+        editor->setSize(720, 690);
+        editor->resized();
+        std::cerr << "STEP: full 720x690 layout ok\n" << std::flush;
+        editor->setSize(1008, 966);
+        editor->resized();
+        std::cerr << "STEP: large 1008x966 layout ok\n" << std::flush;
+        editor->setSize(432, 414);
+        editor->resized();
+        std::cerr << "STEP: compact return layout ok\n" << std::flush;
         juce::Image frame(juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
         juce::Graphics graphics(frame);
         editor->paint(graphics);

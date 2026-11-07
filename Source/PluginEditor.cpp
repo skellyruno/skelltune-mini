@@ -173,7 +173,6 @@ void SkellyTuneEditor::PitchButton::paintButton(juce::Graphics& g, bool hover, b
 
 SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     : juce::AudioProcessorEditor(p), processor_(p), parameters_(p.parameters()) {
-    setSize(720, 690);
     setResizable(false, false);
     speed_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     speed_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
@@ -213,6 +212,9 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     more_.onClick = [this] { openAdvancedControls(); };
     presetNotes_.onClick = [this] { resetManualNotes(); };
     refreshNotes();
+    // IMPORTANT: setSize synchronously invokes resized(). All 12 notes, sliders
+    // and buttons must already exist before resized() dereferences them.
+    setSize(720, 690);
     startTimerHz(25);
 }
 

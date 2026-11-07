@@ -5,27 +5,27 @@
 #include <vector>
 
 namespace {
-const auto bg       = juce::Colour::fromRGB(8, 10, 14);
-const auto panel    = juce::Colour::fromRGB(17, 21, 27);
-const auto cyan     = juce::Colour::fromRGB(72, 227, 235);
-const auto dimText  = juce::Colour::fromRGB(124, 133, 148);
-const auto light    = juce::Colour::fromRGB(231, 238, 247);
-const auto stroke   = juce::Colour::fromRGB(38, 52, 62);
+const auto bg       = juce::Colour::fromRGB(8, 13, 10);
+const auto panel    = juce::Colour::fromRGB(18, 27, 20);
+const auto neon     = juce::Colour::fromRGB(144, 255, 68);
+const auto dimText  = juce::Colour::fromRGB(157, 173, 156);
+const auto light    = juce::Colour::fromRGB(236, 248, 235);
+const auto stroke   = juce::Colour::fromRGB(47, 67, 48);
 const char* const noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 using State = juce::AudioProcessorValueTreeState;
 
 void styleSelector(juce::ComboBox& b) {
     b.setColour(juce::ComboBox::backgroundColourId, panel);
-    b.setColour(juce::ComboBox::outlineColourId, cyan.withAlpha(0.40f));
+    b.setColour(juce::ComboBox::outlineColourId, neon.withAlpha(0.40f));
     b.setColour(juce::ComboBox::textColourId, light);
-    b.setColour(juce::ComboBox::arrowColourId, cyan);
+    b.setColour(juce::ComboBox::arrowColourId, neon);
     b.setJustificationType(juce::Justification::centred);
 }
 
 void styleLinear(juce::Slider& s, const juce::String& suffix) {
     s.setSliderStyle(juce::Slider::LinearHorizontal);
     s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 77, 21);
-    s.setColour(juce::Slider::trackColourId, cyan);
+    s.setColour(juce::Slider::trackColourId, neon);
     s.setColour(juce::Slider::backgroundColourId, stroke);
     s.setColour(juce::Slider::thumbColourId, light);
     s.setColour(juce::Slider::textBoxTextColourId, light);
@@ -76,7 +76,7 @@ public:
         modeAttachment_ = std::make_unique<State::ComboBoxAttachment>(state_, "synthesisMode", mode_);
         phase_.setButtonText("Phase-aligned cycle jumps");
         phase_.setColour(juce::ToggleButton::textColourId, light);
-        phase_.setColour(juce::ToggleButton::tickColourId, cyan);
+        phase_.setColour(juce::ToggleButton::tickColourId, neon);
         addAndMakeVisible(phase_);
         phaseAttachment_ = std::make_unique<State::ButtonAttachment>(state_, "phaseAlign", phase_);
         setSize(375, 530);
@@ -113,7 +113,7 @@ private:
 };
 
 juce::String detectedNoteName(float hz) {
-    if (!std::isfinite(hz) || hz < 45.0f) return "—";
+    if (!std::isfinite(hz) || hz < 45.0f) return "--";
     const auto note = juce::roundToInt(69.0 + 12.0 * std::log2(double(hz) / 440.0));
     return juce::String(noteNames[(note % 12 + 12) % 12]) + juce::String(note / 12 - 1);
 }
@@ -121,59 +121,64 @@ juce::String detectedNoteName(float hz) {
 
 void SkellyTuneEditor::SimpleTheme::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
                                     float pos, float start, float end, juce::Slider& slider) {
-    auto bounds = juce::Rectangle<float>(float(x), float(y), float(w), float(h)).reduced(18.0f);
-    const float cx = bounds.getCentreX(), cy = bounds.getCentreY();
-    const float radius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    const float r = radius - 5.0f;
-    juce::Path outer, active;
-    outer.addCentredArc(cx, cy, r, r, 0.0f, start, end, true);
-    active.addCentredArc(cx, cy, r, r, 0.0f, start, start + pos*(end-start), true);
-    g.setColour(juce::Colour::fromRGB(37, 46, 56));
-    g.strokePath(outer, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour(cyan.withAlpha(0.20f));
-    g.strokePath(active, juce::PathStrokeType(15.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour(cyan);
-    g.strokePath(active, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour(juce::Colour::fromRGB(3, 6, 12));
-    g.fillEllipse(cx-r+20.0f, cy-r+20.0f, 2.0f*r-40.0f, 2.0f*r-40.0f);
+    const auto rect = juce::Rectangle<float>(float(x), float(y), float(w), float(h)).reduced(5.0f);
+    const float cx = rect.getCentreX(), cy = rect.getCentreY();
+    const float radius = 0.5f * std::min(rect.getWidth(), rect.getHeight());
+    const float ring = std::max(3.0f, radius * 0.075f);
+    const float r = radius - ring * 1.9f;
+    juce::Path track, active;
+    track.addCentredArc(cx, cy, r, r, 0.0f, start, end, true);
+    active.addCentredArc(cx, cy, r, r, 0.0f, start, start + pos * (end - start), true);
+    g.setColour(juce::Colour::fromRGB(40, 60, 43));
+    g.strokePath(track, juce::PathStrokeType(ring, juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
+    g.setColour(neon.withAlpha(0.18f));
+    g.strokePath(active, juce::PathStrokeType(ring * 2.1f, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+    g.setColour(neon);
+    g.strokePath(active, juce::PathStrokeType(ring, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+    auto center = juce::Rectangle<float>(cx-r+ring*1.7f, cy-r+ring*1.7f,
+                                          2.0f*(r-ring*1.7f), 2.0f*(r-ring*1.7f));
+    g.setColour(juce::Colour::fromRGB(5, 10, 7));
+    g.fillEllipse(center);
     g.setColour(stroke);
-    g.drawEllipse(cx-r+20.0f, cy-r+20.0f, 2.0f*r-40.0f, 2.0f*r-40.0f, 3.0f);
-    g.setColour(cyan);
-    g.setFont(juce::Font(juce::FontOptions(41.0f, juce::Font::bold)));
-    // 0 ms is a real DSP setting now. Do not round 0.1–0.9 ms down to a
-    // visually misleading zero on the main control.
-    const double speedValue = slider.getValue();
-    const juce::String speedLabel = (speedValue < 0.005)
-        ? juce::String("0 ms")
-        : (speedValue < 1.0)
-            ? juce::String(speedValue, 2) + " ms"
-            : (speedValue < 10.0)
-                ? juce::String(speedValue, 1) + " ms"
-                : juce::String(juce::roundToInt(speedValue)) + " ms";
+    g.drawEllipse(center, 1.4f);
+    // The centre remains readable when the editor is at its 432x414 default.
+    const double value = slider.getValue();
+    const juce::String speedLabel = value < 0.005 ? "0 ms" :
+        (value < 1.0 ? juce::String(value, 2) + " ms" :
+        (value < 10.0 ? juce::String(value, 1) + " ms" :
+                       juce::String(juce::roundToInt(value)) + " ms"));
+    g.setColour(neon);
+    g.setFont(juce::Font(juce::FontOptions(
+        juce::jlimit(21.0f, 41.0f, float(w) * 0.24f), juce::Font::bold)));
     g.drawText(speedLabel,
-               juce::Rectangle<int>(int(cx-110),int(cy-34),220,68),juce::Justification::centred);
+        juce::Rectangle<int>(int(cx-radius+8), int(cy-27), int(radius*2-16), 54),
+        juce::Justification::centred, true);
 }
 
 void SkellyTuneEditor::PitchButton::paintButton(juce::Graphics& g, bool hover, bool down) {
-    const auto active = getToggleState();
-    const auto r = getLocalBounds().toFloat().reduced(2.0f);
-    if (active) {
-        g.setColour(cyan.withAlpha(down ? 0.38f : 0.20f));
-        g.fillEllipse(r);
-    } else if (hover) {
-        g.setColour(stroke.withAlpha(0.6f));
-        g.fillEllipse(r);
-    }
-    g.setColour(active ? cyan : stroke.brighter(0.4f));
-    g.drawEllipse(r, 1.8f);
+    const bool active = getToggleState();
+    const auto area = getLocalBounds().toFloat().reduced(1.8f);
+    g.setColour(active ? neon.withAlpha(down ? 0.28f : 0.16f) :
+                           (hover ? stroke.withAlpha(0.7f) : panel));
+    g.fillEllipse(area);
+    g.setColour(active ? neon : stroke.brighter(0.55f));
+    g.drawEllipse(area, std::max(1.2f, getHeight() * 0.05f));
     g.setColour(active ? light : dimText);
-    g.setFont(juce::Font(juce::FontOptions(12.5f, active ? juce::Font::bold : juce::Font::plain)));
-    g.drawText(getButtonText(), getLocalBounds(), juce::Justification::centred);
+    g.setFont(juce::Font(juce::FontOptions(
+        juce::jlimit(11.0f, 18.0f, float(getHeight()) * 0.39f),
+        active ? juce::Font::bold : juce::Font::plain)));
+    g.drawText(getButtonText(), getLocalBounds(), juce::Justification::centred, true);
 }
 
 SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     : juce::AudioProcessorEditor(p), processor_(p), parameters_(p.parameters()) {
-    setResizable(false, false);
+    setResizable(true, true);
+    setResizeLimits(432, 414, 1008, 966);
+    if (auto* constrainer = getConstrainer())
+        constrainer->setFixedAspectRatio(432.0 / 414.0);
     speed_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     speed_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     speed_.setRotaryParameters(juce::MathConstants<float>::pi * 1.23f,
@@ -186,6 +191,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     for (int i=0; i<keys.size(); ++i) key_.addItem(keys[i], i+1);
     scale_.addItem("Chromatic", 1); scale_.addItem("Major", 2); scale_.addItem("Minor", 3);
     styleSelector(key_); styleSelector(scale_);
+    key_.setLookAndFeel(&theme_);
+    scale_.setLookAndFeel(&theme_);
     addAndMakeVisible(key_); addAndMakeVisible(scale_);
     keyAttach_ = std::make_unique<State::ComboBoxAttachment>(parameters_, "key", key_);
     scaleAttach_ = std::make_unique<State::ComboBoxAttachment>(parameters_, "scale", scale_);
@@ -203,9 +210,9 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     }
     for (auto* btn : {&bypass_, &more_, &presetNotes_}) {
         btn->setColour(juce::TextButton::buttonColourId, panel);
-        btn->setColour(juce::TextButton::buttonOnColourId, cyan.withAlpha(0.20f));
+        btn->setColour(juce::TextButton::buttonOnColourId, neon.withAlpha(0.20f));
         btn->setColour(juce::TextButton::textColourOffId, dimText);
-        btn->setColour(juce::TextButton::textColourOnId, cyan);
+        btn->setColour(juce::TextButton::textColourOnId, neon);
         addAndMakeVisible(*btn);
     }
     bypass_.setClickingTogglesState(true);
@@ -214,102 +221,129 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     refreshNotes();
     // IMPORTANT: setSize synchronously invokes resized(). All 12 notes, sliders
     // and buttons must already exist before resized() dereferences them.
-    setSize(720, 690);
+    setSize(432, 414);
     startTimerHz(25);
 }
 
-SkellyTuneEditor::~SkellyTuneEditor() { speed_.setLookAndFeel(nullptr); }
+SkellyTuneEditor::~SkellyTuneEditor() {
+    speed_.setLookAndFeel(nullptr);
+    key_.setLookAndFeel(nullptr);
+    scale_.setLookAndFeel(nullptr);
+}
 
 void SkellyTuneEditor::resized() {
-    key_.setBounds(445, 23, 85, 40);
-    scale_.setBounds(540, 23, 158, 40);
-    speed_.setBounds(209, 161, 302, 302);
-    constexpr int natural[] = {0, 2, 4, 5, 7, 9, 11};
-    constexpr int sharp[]   = {1, 3, 6, 8, 10};
-    constexpr int upperX[]  = {205, 264, 382, 441, 500};
-    for (int i=0; i<7; ++i) notes_[size_t(natural[i])]->setBounds(160+i*59, 529, 47, 47);
-    for (int i=0; i<5; ++i) notes_[size_t(sharp[i])]->setBounds(upperX[i], 481, 47, 47);
-    amount_.setBounds(125, 609, 197, 28);
-    mix_.setBounds(431, 609, 197, 28);
-    bypass_.setBounds(591, 651, 105, 29);
-    presetNotes_.setBounds(27, 651, 115, 29);
-    more_.setBounds(303, 652, 115, 27);
+    // Draw and place children in a 432 x 414 logical design space.
+    // Fixed aspect ratio avoids distorted typography and hit targets.
+    const float sx = float(getWidth()) / 432.0f;
+    const float sy = float(getHeight()) / 414.0f;
+    const auto place = [sx, sy](juce::Component& child, float x, float y, float w, float h) {
+        child.setBounds(juce::roundToInt(x*sx), juce::roundToInt(y*sy),
+                        std::max(1, juce::roundToInt(w*sx)),
+                        std::max(1, juce::roundToInt(h*sy)));
+    };
+    place(key_, 254, 28, 69, 27);
+    place(scale_, 331, 28, 92, 27);
+    place(speed_, 143, 123, 146, 146);
+    // Match the position of the black keys on a seven-white-key row.
+    constexpr float naturalX[] = {22, 77, 132, 187, 242, 297, 352};
+    constexpr float sharpX[] = {51, 106, 216, 271, 326};
+    constexpr int naturalNotes[] = {0, 2, 4, 5, 7, 9, 11};
+    constexpr int sharpNotes[] = {1, 3, 6, 8, 10};
+    for (int n=0; n<7; ++n)
+        place(*notes_[size_t(naturalNotes[n])], naturalX[n], 320, 34, 34);
+    for (int n=0; n<5; ++n)
+        place(*notes_[size_t(sharpNotes[n])], sharpX[n], 289, 31, 31);
+    amount_.setTextBoxStyle(juce::Slider::TextBoxRight, false,
+        std::max(48, juce::roundToInt(53*sx)), std::max(18, juce::roundToInt(20*sy)));
+    mix_.setTextBoxStyle(juce::Slider::TextBoxRight, false,
+        std::max(48, juce::roundToInt(53*sx)), std::max(18, juce::roundToInt(20*sy)));
+    place(amount_, 72, 357, 133, 24);
+    place(mix_, 258, 357, 155, 24);
+    place(presetNotes_, 11, 386, 112, 23);
+    place(more_, 170, 386, 92, 23);
+    place(bypass_, 327, 386, 96, 23);
 }
 
 void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.fillAll(bg);
-    auto root = getLocalBounds().toFloat().reduced(5.0f);
+    juce::Graphics::ScopedSaveState saved(g);
+    g.addTransform(juce::AffineTransform::scale(
+        float(getWidth()) / 432.0f, float(getHeight()) / 414.0f));
+
     g.setColour(stroke);
-    g.drawRoundedRectangle(root, 13.0f, 1.2f);
-    g.setColour(juce::Colour::fromRGB(11, 14, 19));
-    g.fillRoundedRectangle(juce::Rectangle<float>(8.0f,77.0f,704.0f,603.0f), 11.0f);
-    g.setColour(stroke);
-    g.drawLine(8.0f,75.0f,712.0f,75.0f,1.3f);
-    // Original waveform icon: only vector drawing, no external logos/assets.
-    for (int j=0; j<3; ++j) {
-        juce::Path wave;
-        wave.startNewSubPath(24.0f, 54.0f);
-        wave.cubicTo(40.0f,53.0f,35.0f,16.0f+j*5.0f,47.0f,36.0f+j*2.0f);
-        wave.cubicTo(58.0f,54.0f,61.0f,30.0f+j*4.0f,78.0f,53.0f);
-        g.setColour(light.withAlpha(0.50f+j*0.20f));
-        g.strokePath(wave, juce::PathStrokeType(1.35f));
-    }
+    g.drawRoundedRectangle(juce::Rectangle<float>(5, 5, 422, 404), 10.0f, 1.0f);
+    g.setColour(panel);
+    g.fillRoundedRectangle(juce::Rectangle<float>(8, 68, 416, 64), 7.0f);
+    g.fillRoundedRectangle(juce::Rectangle<float>(9, 138, 414, 141), 9.0f);
+
+    // Minimal vector waveform mark, not a raster image.
+    g.setColour(neon);
+    juce::Path wave;
+    wave.startNewSubPath(15.0f, 40.0f);
+    wave.cubicTo(21, 40, 19, 18, 26, 22);
+    wave.cubicTo(33, 26, 32, 38, 43, 40);
+    g.strokePath(wave, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
+                                           juce::PathStrokeType::rounded));
     g.setColour(light);
-    g.setFont(juce::Font(juce::FontOptions(27.0f, juce::Font::bold)));
-    g.drawText("SKELLYTUNE", 93, 24, 238, 40, juce::Justification::centredLeft);
+    g.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
+    g.drawText("SKELLYTUNE", 49, 12, 190, 27, juce::Justification::centredLeft, true);
+    g.setColour(neon);
+    g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    g.drawText("MINI  /  LIVE", 49, 39, 128, 16, juce::Justification::centredLeft);
     g.setColour(dimText);
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
-    g.drawText("LIVE", 310, 38, 45, 21, juce::Justification::centredLeft);
-    g.setFont(12.0f);
-    g.drawText("KEY", 408, 33, 36, 22, juce::Justification::centredLeft);
-    // Input pitch meter: live DSP estimate, not fabricated visual motion.
+    g.drawText("KEY", 254, 10, 66, 15, juce::Justification::centredLeft);
+    g.drawText("SCALE", 331, 10, 90, 15, juce::Justification::centredLeft);
+    g.setColour(stroke);
+    g.drawLine(9.0f, 62.0f, 423.0f, 62.0f, 1.0f);
+
+    // Live detector and controller state; never animate guessed pitch.
+    const auto targetLabel = (lastTargetNote_ >= 0 && lastDisplayHz_ > 0 &&
+                              !lastTargetPending_)
+        ? juce::String(noteNames[(lastTargetNote_%12+12)%12])
+            + juce::String(lastTargetNote_/12-1)
+        : juce::String(lastTargetPending_ ? "CHECKING" : "--");
+    const auto inputLabel = lastDisplayHz_ > 0.0f
+        ? detectedNoteName(lastDisplayHz_) : juce::String("WAITING");
+    const auto centsLabel = lastDisplayHz_ > 0.0f && !lastTargetPending_
+        ? juce::String(lastCorrectionCents_ >= 0.0f ? "+" : "")
+            + juce::String(lastCorrectionCents_, 1) + " ct"
+        : juce::String("--");
+
     g.setColour(dimText);
-    g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
-    g.drawText("INPUT", 29, 97, 65, 24, juce::Justification::centredLeft);
-    if (lastDisplayHz_ > 0.0f) {
-        g.setColour(cyan);
-        g.drawText(detectedNoteName(lastDisplayHz_), 89, 96, 83, 25, juce::Justification::centredLeft);
-        g.setColour(dimText);
-        g.drawText(juce::String(lastDisplayHz_, 1) + " Hz", 160, 96, 92, 25, juce::Justification::centredLeft);
-    } else {
-        g.drawText("WAITING FOR VOICE", 97, 96, 160, 25, juce::Justification::centredLeft);
+    g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    g.drawText("INPUT", 17, 73, 100, 17, juce::Justification::centredLeft);
+    g.drawText("TARGET", 168, 73, 100, 17, juce::Justification::centredLeft);
+    g.drawText("CORRECTION", 306, 73, 111, 17, juce::Justification::centredLeft);
+    g.setColour(neon);
+    g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
+    g.drawText(inputLabel, 17, 88, 128, 23, juce::Justification::centredLeft, true);
+    g.drawText(targetLabel, 168, 88, 120, 23, juce::Justification::centredLeft, true);
+    g.drawText(centsLabel, 306, 88, 108, 23, juce::Justification::centredLeft, true);
+    g.setColour(dimText);
+    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.drawText(lastDisplayHz_ > 0.0f ? juce::String(lastDisplayHz_, 1) + " Hz"
+                                    : juce::String("No voiced input"),
+               17, 110, 137, 16, juce::Justification::centredLeft);
+
+    // Tiny note-class status strip, separate from the 12 playable note buttons.
+    const int active = lastDisplayHz_ > 0.0f
+        ? (juce::roundToInt(69.0 + 12.0*std::log2(double(lastDisplayHz_)/440.0))%12+12)%12
+        : -1;
+    for (int n=0; n<12; ++n) {
+        g.setColour(n==active ? neon : stroke);
+        g.fillRoundedRectangle(juce::Rectangle<float>(170.0f+n*20.0f, 117.0f, 13.0f, 4.0f), 2.0f);
     }
-    // Feedback comes from actual DSP state, not a decorative animation.
-    // A target can be held briefly through unvoiced consonants, so only
-    // display it as actively tuning when a current input pitch is available.
     g.setColour(dimText);
     g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-    g.drawText("TARGET", 29, 124, 63, 22, juce::Justification::centredLeft);
-    if (lastTargetNote_ >= 0 && lastDisplayHz_ > 0.0f && !lastTargetPending_) {
-        g.setColour(cyan);
-        g.drawText(juce::String(noteNames[(lastTargetNote_%12+12)%12])
-                     + juce::String(lastTargetNote_/12-1), 89, 123, 76, 24,
-                   juce::Justification::centredLeft);
-        g.setColour(light);
-        g.drawText(juce::String(lastCorrectionCents_ >= 0.0f ? "+" : "")
-                   + juce::String(lastCorrectionCents_, 1) + " ct",
-                   160, 123, 109, 24, juce::Justification::centredLeft);
-    } else {
-        g.setColour(dimText);
-        g.drawText(lastTargetPending_ ? "CHECKING" : "—", 89, 123, 86, 24,
-                   juce::Justification::centredLeft);
-    }
-    const int active = (lastDisplayHz_ > 0.0f) ? (juce::roundToInt(69.0 + 12.0*std::log2(double(lastDisplayHz_)/440.0))%12+12)%12 : -1;
-    for (int i=0; i<12; ++i) {
-        auto b = juce::Rectangle<float>(341.0f+i*28.0f, 103.0f, 21.0f, 12.0f);
-        g.setColour(i == active ? cyan : juce::Colour::fromRGB(32, 38, 49));
-        g.fillRoundedRectangle(b, 2.0f);
-    }
-    g.setColour(dimText);
-    g.setFont(juce::Font(juce::FontOptions(15.0f)));
-    g.drawText("RETUNE SPEED", 245, 448, 230, 30, juce::Justification::centred);
-    const bool customNotes = parameters_.getRawParameterValue("noteMask")->load() > 0.5f;
-    g.drawText(customNotes ? "CUSTOM NOTES" : "ENABLED NOTES", 268, 579, 185, 24,
-               juce::Justification::centred);
-    g.setColour(dimText);
-    g.setFont(12.0f);
-    g.drawText("AMOUNT", 39, 611, 85, 23, juce::Justification::centredRight);
-    g.drawText("MIX", 378, 611, 50, 23, juce::Justification::centredRight);
+    g.drawText("RETUNE SPEED", 133, 269, 165, 19, juce::Justification::centred);
+    const bool custom = parameters_.getRawParameterValue("noteMask")->load() > 0.5f;
+    g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+    g.drawText(custom ? "CUSTOM NOTES" : "ENABLED NOTES", 13, 295, 109, 14,
+               juce::Justification::centredLeft, true);
+    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    g.drawText("AMOUNT", 13, 360, 62, 17, juce::Justification::centredLeft);
+    g.drawText("MIX", 222, 360, 35, 17, juce::Justification::centredLeft);
 }
 
 void SkellyTuneEditor::togglePitchClass(int index) {
@@ -364,7 +398,9 @@ void SkellyTuneEditor::timerCallback() {
         lastTargetNote_ = target;
         lastTargetPending_ = pending;
         lastCorrectionCents_ = cents;
-        repaint(juce::Rectangle<int>(24, 91, 680, 60));
+        const auto sy = float(getHeight()) / 414.0f;
+        repaint(juce::Rectangle<int>(0, juce::roundToInt(67.0f * sy),
+                                       getWidth(), juce::roundToInt(66.0f * sy)));
     }
 }
 

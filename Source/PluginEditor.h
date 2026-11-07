@@ -14,6 +14,10 @@ private:
     struct SimpleTheme : juce::LookAndFeel_V4 {
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
+        juce::Font getComboBoxFont(juce::ComboBox& box) override {
+            return juce::Font(juce::FontOptions(
+                juce::jlimit(11.0f, 19.0f, float(box.getHeight()) * 0.46f)));
+        }
     } theme_;
     struct PitchButton final : juce::Button {
         explicit PitchButton(const juce::String& text) : juce::Button(text) { setButtonText(text); }

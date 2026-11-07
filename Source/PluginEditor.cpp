@@ -175,10 +175,6 @@ void SkellyTuneEditor::PitchButton::paintButton(juce::Graphics& g, bool hover, b
 
 SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     : juce::AudioProcessorEditor(p), processor_(p), parameters_(p.parameters()) {
-    setResizable(true, true);
-    setResizeLimits(432, 414, 1008, 966);
-    if (auto* constrainer = getConstrainer())
-        constrainer->setFixedAspectRatio(432.0 / 414.0);
     speed_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     speed_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     speed_.setRotaryParameters(juce::MathConstants<float>::pi * 1.23f,
@@ -219,8 +215,12 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     more_.onClick = [this] { openAdvancedControls(); };
     presetNotes_.onClick = [this] { resetManualNotes(); };
     refreshNotes();
-    // IMPORTANT: setSize synchronously invokes resized(). All 12 notes, sliders
-    // and buttons must already exist before resized() dereferences them.
+    // Both enabling the resizer AND setSize can invoke resized().
+    // Do neither until the last note button has been constructed.
+    setResizable(true, true);
+    setResizeLimits(432, 414, 1008, 966);
+    if (auto* sizeConstrainer = getConstrainer())
+        sizeConstrainer->setFixedAspectRatio(432.0 / 414.0);
     setSize(432, 414);
     startTimerHz(25);
 }

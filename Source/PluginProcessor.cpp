@@ -128,6 +128,10 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     if (ch == 0 || b.getNumSamples() == 0) return;
     engine_.setParameters(currentParameters());
     const int capacity = doubleScratch_.getNumSamples();
+    // Some hosts can probe a processor before prepareToPlay; never enter a
+    // zero-stride loop or allocate on the realtime thread. Match the float
+    // path's unprepared behavior by passing the original buffer through.
+    if (capacity <= 0) return;
     for (int offset = 0; offset < b.getNumSamples(); offset += capacity) {
         const int n = std::min(capacity, b.getNumSamples() - offset);
         for (int c = 0; c < ch; ++c) {

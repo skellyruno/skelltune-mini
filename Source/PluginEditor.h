@@ -14,9 +14,13 @@ private:
     struct SimpleTheme : juce::LookAndFeel_V4 {
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
+        juce::Font getTextButtonFont(juce::TextButton&, int buttonHeight) override {
+            return juce::Font(juce::FontOptions(
+                juce::jlimit(11.0f, 23.0f, float(buttonHeight) * 0.49f), juce::Font::bold));
+        }
         juce::Font getComboBoxFont(juce::ComboBox& box) override {
             return juce::Font(juce::FontOptions(
-                juce::jlimit(11.0f, 19.0f, float(box.getHeight()) * 0.46f)));
+                juce::jlimit(12.0f, 21.0f, float(box.getHeight()) * 0.50f)));
         }
     } theme_;
     struct PitchButton final : juce::Button {
@@ -43,5 +47,7 @@ private:
     int lastTargetNote_ = -1;
     bool lastTargetPending_ = false;
     int lastMask_ = -1;
+    bool lastCustomMask_ = false;
+    bool lastBypassed_ = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SkellyTuneEditor)
 };

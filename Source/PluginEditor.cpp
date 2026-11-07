@@ -79,12 +79,12 @@ public:
         phase_.setColour(juce::ToggleButton::tickColourId, neon);
         addAndMakeVisible(phase_);
         phaseAttachment_ = std::make_unique<State::ButtonAttachment>(state_, "phaseAlign", phase_);
-        setSize(345, 425);
+        setSize(370, 452);
     }
     void paint(juce::Graphics& g) override {
         g.fillAll(bg);
         g.setColour(light);
-        g.setFont(juce::Font(juce::FontOptions(17.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
         g.drawText("ADVANCED TUNING", 16, 6, getWidth()-32, 27, juce::Justification::centredLeft);
         g.setColour(dimText);
         g.setFont(11.0f);
@@ -208,6 +208,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     for (int i=0; i<12; ++i) {
         notes_[size_t(i)] = std::make_unique<PitchButton>(noteNames[i]);
         addAndMakeVisible(*notes_[size_t(i)]);
+        notes_[size_t(i)]->setTooltip(juce::String("Enable or disable ") + noteNames[i] + " as a correction target");
         notes_[size_t(i)]->onClick = [this, i] { togglePitchClass(i); };
     }
     for (auto* btn : {&bypass_, &more_, &presetNotes_}) {
@@ -215,9 +216,13 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
         btn->setColour(juce::TextButton::buttonOnColourId, neon.withAlpha(0.20f));
         btn->setColour(juce::TextButton::textColourOffId, dimText);
         btn->setColour(juce::TextButton::textColourOnId, neon);
+        btn->setLookAndFeel(&theme_);
         addAndMakeVisible(*btn);
     }
+    amount_.setLookAndFeel(&theme_);
+    mix_.setLookAndFeel(&theme_);
     bypass_.setClickingTogglesState(true);
+    bypass_.setTooltip("When bypassed, outputs the latency-compensated dry signal.");
     more_.onClick = [this] { openAdvancedControls(); };
     presetNotes_.onClick = [this] { resetManualNotes(); };
     refreshNotes();
@@ -234,6 +239,11 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
 
 SkellyTuneEditor::~SkellyTuneEditor() {
     speed_.setLookAndFeel(nullptr);
+    amount_.setLookAndFeel(nullptr);
+    mix_.setLookAndFeel(nullptr);
+    bypass_.setLookAndFeel(nullptr);
+    more_.setLookAndFeel(nullptr);
+    presetNotes_.setLookAndFeel(nullptr);
     key_.setLookAndFeel(nullptr);
     scale_.setLookAndFeel(nullptr);
 }
@@ -335,6 +345,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawText(lastDisplayHz_ > 0.0f ? juce::String(lastDisplayHz_, 1) + " Hz"
                                     : juce::String("No voiced input"),
                17, 110, 137, 16, juce::Justification::centredLeft);
+    g.drawText(lastDisplayHz_ > 0.0f
+                   ? juce::String(juce::roundToInt(juce::jlimit(0.0f, 1.0f, lastConfidence_) * 100.0f)) + "% confidence"
+                   : juce::String("Awaiting pitch"),
+               168, 110, 134, 15, juce::Justification::centredLeft);
 
     // Tiny note-class status strip, separate from the 12 playable note buttons.
     const int active = lastDisplayHz_ > 0.0f
@@ -342,11 +356,15 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         : -1;
     for (int n=0; n<12; ++n) {
         g.setColour(n==active ? neon : stroke);
-        g.fillRoundedRectangle(juce::Rectangle<float>(170.0f+n*20.0f, 117.0f, 13.0f, 4.0f), 2.0f);
+        g.fillRoundedRectangle(juce::Rectangle<float>(170.0f+n*20.0f, 126.0f, 13.0f, 3.0f), 2.0f);
     }
     g.setColour(dimText);
     g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
     g.drawText("RETUNE SPEED", 133, 269, 165, 19, juce::Justification::centred);
+    // Visual hierarchy: primary value above, secondary labels below.
+    g.setColour(stroke.brighter(0.30f));
+    g.drawLine(169.0f, 284.0f, 263.0f, 284.0f, 1.0f);
+    g.setColour(dimText);
     const bool custom = parameters_.getRawParameterValue("noteMask")->load() > 0.5f;
     g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
     g.drawText(custom ? "CUSTOM" : "NOTES", 354, 279, 62, 14,
@@ -390,14 +408,23 @@ void SkellyTuneEditor::refreshNotes() {
     const int scale = juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
     const int overrideMask = juce::roundToInt(parameters_.getRawParameterValue("noteMask")->load());
     const int mask = skelly::effectiveMask(root,scale,overrideMask);
-    if (mask == lastMask_) return;
+    const bool custom = overrideMask != 0;
+    if (mask == lastMask_ && custom == lastCustomMask_) return;
     lastMask_ = mask;
+    lastCustomMask_ = custom;
+    repaint(juce::Rectangle<int>(0, juce::roundToInt(getHeight()*279.0f/414.0f),
+                                  getWidth(), juce::roundToInt(getHeight()*80.0f/414.0f)));
     for (int i=0; i<12; ++i)
         notes_[size_t(i)]->setToggleState((mask & (1<<i)) != 0, juce::dontSendNotification);
 }
 
 void SkellyTuneEditor::timerCallback() {
     refreshNotes();
+    const bool bypassed = bypass_.getToggleState();
+    if (lastBypassed_ != bypassed) {
+        lastBypassed_ = bypassed;
+        bypass_.setButtonText(bypassed ? "BYPASSED" : "BYPASS");
+    }
     const auto hz = processor_.displayedPitchHz();
     const auto confidence = processor_.displayedConfidence();
     const auto target = processor_.displayedTargetNote();

@@ -26,6 +26,8 @@ public:
         pendingNote_ = -1;
         pendingSamples_ = 0;
         centeredCandidateSamples_ = 0;
+        pendingMinCents_ = 0.0;
+        pendingMaxCents_ = 0.0;
         untrustedSamples_ = 0;
     }
     // Invoke at detector hop boundaries. elapsedSamples is the number of HOST samples
@@ -88,25 +90,46 @@ public:
                 centeredCandidateSamples_ = 0;
                 result.changed = true;
             } else {
+                // Track a candidate's entire pitch excursion, not just its latest
+                // centered hop. Vibrato extrema can temporarily resemble the next
+                // semitone, but they enter across the boundary with a wide sweep.
+                // A steady off-center note stays within a narrow cents band.
+                const double candidateCents = 1200.0 *
+                    std::log2(f0Hz / (a4Hz * std::pow(2.0, (candidate - 69) / 12.0)));
                 if (pendingNote_ != candidate) {
                     pendingNote_ = candidate;
                     pendingSamples_ = delta;
                     centeredCandidateSamples_ = 0;
+                    pendingMinCents_ = pendingMaxCents_ = candidateCents;
                 } else {
                     pendingSamples_ = satAdd(pendingSamples_, delta);
+                    pendingMinCents_ = std::min(pendingMinCents_, candidateCents);
+                    pendingMaxCents_ = std::max(pendingMaxCents_, candidateCents);
                 }
                 // Hard tuning: an adjacent note that stabilizes *at its center*
                 // is stronger evidence than merely crossing a note boundary.
                 // A sustained 85-cent vibrato centered on the old note still
                 // remains >=15 cents away from the adjacent note center.
-                const double centerCents = std::abs(1200.0 *
-                    std::log2(f0Hz / (a4Hz * std::pow(2.0, (candidate - 69) / 12.0))));
+                const double centerCents = std::abs(candidateCents);
+                const double candidateSpread = pendingMaxCents_ - pendingMinCents_;
+                // The 15 ms center-lock path also requires a stable trajectory.
+                // This prevents a ~100 cent vibrato trough from masquerading as
+                // a new target while leaving stationary, exact-center notes fast.
+                const bool stableCenter = candidateSpread <= 16.0;
                 if (aggressiveRetune && confidence >= 0.85 && centerCents < 11.0)
                     centeredCandidateSamples_ = satAdd(centeredCandidateSamples_, delta);
                 else
                     centeredCandidateSamples_ = 0;
                 const bool centeredAdjacent = std::abs(candidate - activeNote_) == 1 &&
-                    centeredCandidateSamples_ >= toSamples(0.015);
+                    stableCenter && centeredCandidateSamples_ >= toSamples(0.015);
+                // At maximum retune a stable, high-confidence adjacent note
+                // 15-30 cents off center should not suffer the old 95 ms hold.
+                // Require >=35 ms of low-drift evidence from its first hop;
+                // wide vibrato excursions still use the conservative timeout.
+                const bool stableOffCenterAdjacent = aggressiveRetune &&
+                    std::abs(candidate - activeNote_) == 1 &&
+                    confidence >= 0.92 && centerCents <= 30.0 &&
+                    stableCenter && pendingSamples_ >= toSamples(0.035);
                 // Wait for evidence that persists beyond a short vibrato excursion;
                 // strong onsets bypass this timeout, preserving genuine short notes.
                 // v2.7: maximum-speed hard tuning must not inherit a 65 ms
@@ -117,7 +140,8 @@ public:
                 const int distance = std::abs(candidate - activeNote_);
                 const double seconds = (aggressiveRetune && confidence >= 0.82)
                     ? (distance >= 2 ? 0.008 : 0.095) : 0.065;
-                if ((centeredAdjacent || pendingSamples_ >= toSamples(seconds)) &&
+                if ((centeredAdjacent || stableOffCenterAdjacent ||
+                     pendingSamples_ >= toSamples(seconds)) &&
                     confidence >= (aggressiveRetune ? 0.82 : 0.65)) {
                     activeNote_ = candidate;
                     pendingNote_ = -1;
@@ -163,6 +187,9 @@ private:
     int pendingNote_ = -1;
     uint32_t pendingSamples_ = 0;
     uint32_t centeredCandidateSamples_ = 0;
+    // Bound evidence accrued ONLY for the current pending note. Reset on new
+    // candidates so an old phrase cannot bias a later note decision.
+    double pendingMinCents_ = 0.0, pendingMaxCents_ = 0.0;
     uint32_t untrustedSamples_ = 0;
 };
 } // namespace skelly_research

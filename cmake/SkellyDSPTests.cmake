@@ -196,3 +196,9 @@ add_test(NAME dsp_phase_crossfade COMMAND dsp_phase_crossfade_tests)
 add_executable(dsp_v34_tests tests/test_v34_tracker.cpp)
 target_link_libraries(dsp_v34_tests PRIVATE skelly_dsp)
 add_test(NAME dsp_v34_pitch_tracker_performance_regression COMMAND dsp_v34_tests)
+
+# v3.5: bounded candidate excursion / faster confident adjacent-note locking;
+# protects expressive vibrato and verifies sample-loop pitch-ratio equivalence.
+add_executable(dsp_v35_tests tests/test_v35_note_lock.cpp)
+target_link_libraries(dsp_v35_tests PRIVATE skelly_dsp)
+add_test(NAME dsp_v35_stable_note_lock COMMAND dsp_v35_tests)

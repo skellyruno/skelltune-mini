@@ -177,14 +177,14 @@ public:
         if (!std::isfinite(in)) in = 0.0f;
         rawPower_ = rawPowerAlpha_ * rawPower_ + (1.0 - rawPowerAlpha_) * double(in)*in;
         fir_[firIndex_] = in;
-        firIndex_ = (firIndex_ + 1) % int(fir_.size());
+        if (++firIndex_ == int(fir_.size())) firIndex_ = 0;
         if (++downCount_ < factor_) return false;
         downCount_ = 0;
         float filtered = 0.0f;
         int pos = firIndex_;
         for (int i = 0; i < int(taps_.size()); ++i) {
             filtered += taps_[i] * fir_[pos];
-            pos = (pos + 1) % int(fir_.size());
+            if (++pos == int(fir_.size())) pos = 0;
         }
         filteredPower_ = filteredPowerAlpha_ * filteredPower_ +
             (1.0 - filteredPowerAlpha_) * double(filtered)*filtered;
@@ -403,8 +403,11 @@ public:
         covariance_ = alpha_ * covariance_ + k * double(left)*right;
         // Near-inverted stereo will cancel in the mid signal. Use a single
         // channel for analysis, but preserve original stereo in the output.
-        const double joint = std::sqrt(leftPower_*rightPower_);
-        if (joint > 1.0e-12 && covariance_ < -0.60 * joint)
+        // Squared test avoids a square root on every audio sample while
+        // retaining the 0.60 anti-correlation threshold.
+        const double powerProduct = leftPower_ * rightPower_;
+        if (powerProduct > 1.0e-24 && covariance_ < 0.0 &&
+            covariance_ * covariance_ > 0.36 * powerProduct)
             return (leftPower_ >= rightPower_) ? left : right;
         // If almost all of the program exists on one channel, prefer it.
         if (leftPower_ > rightPower_ * 16.0) return left;

@@ -68,6 +68,26 @@ if(SKELLY_BUILD_PLUGIN)
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
     endfunction()
 
+
+    # CI-only startup check: instantiate the same real processor and JUCE editor
+    # used by the plugin. This is built and run on Windows but NOT distributed.
+    option(SKELLY_BUILD_GUI_SMOKE "Build realtime plugin/editor startup smoke test" OFF)
+    if(SKELLY_BUILD_GUI_SMOKE)
+        juce_add_console_app(SkellyTuneGuiSmoke PRODUCT_NAME "SkellyTune GUI Smoke")
+        target_sources(SkellyTuneGuiSmoke PRIVATE
+            tests/gui_startup_smoke.cpp
+            Source/PluginProcessor.cpp Source/PluginProcessor.h
+            Source/PluginEditor.cpp Source/PluginEditor.h)
+        target_include_directories(SkellyTuneGuiSmoke PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/dsp")
+        target_link_libraries(SkellyTuneGuiSmoke PRIVATE
+            skelly_dsp juce::juce_audio_utils juce::juce_audio_processors
+            juce::juce_dsp juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+        target_compile_definitions(SkellyTuneGuiSmoke PRIVATE
+            JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
+    endif()
+
     # Keep the v3.3 VST3 IDs unchanged so projects and presets can continue
     # recognizing the same plugin rather than the template gain plugin.
     skelly_add_plugin(SkellyTuneRealtime

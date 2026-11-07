@@ -258,8 +258,9 @@ void SkellyTuneEditor::resized() {
                         std::max(1, juce::roundToInt(w*sx)),
                         std::max(1, juce::roundToInt(h*sy)));
     };
-    place(key_, 254, 28, 69, 27);
-    place(scale_, 331, 28, 92, 27);
+    // Reserve enough text width for "Chromatic" at the compact size.
+    place(key_, 254, 28, 63, 27);
+    place(scale_, 324, 28, 99, 27);
     place(speed_, 143, 123, 146, 146);
     // Match the position of the black keys on a seven-white-key row.
     constexpr float naturalX[] = {22, 77, 132, 187, 242, 297, 352};
@@ -312,7 +313,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setColour(dimText);
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.drawText("KEY", 254, 10, 66, 15, juce::Justification::centredLeft);
-    g.drawText("SCALE", 331, 10, 90, 15, juce::Justification::centredLeft);
+    g.drawText("SCALE", 324, 10, 99, 15, juce::Justification::centredLeft);
     g.setColour(stroke);
     g.drawLine(9.0f, 62.0f, 423.0f, 62.0f, 1.0f);
 

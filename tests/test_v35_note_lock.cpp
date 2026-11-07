@@ -100,6 +100,26 @@ static void phraseReentry(double rate) {
     check(d.update(midiHz(59),.99,0,hop,0x0fffu & ~(1u<<11),440,true).targetMidi!=59,
           "disallowed note should be dropped immediately");
 }
+static void transientThresholdEquivalence() {
+    // Match the original sqrt threshold across a deterministic stream of
+    // low-level samples and bursts, updating the same running noise floor.
+    uint32_t seed=0x432a937u;
+    double power=0.0, previous=0.0;
+    const double step=1.0-std::exp(-1.0/(48000.0*.030));
+    int events=0;
+    for (int i=0;i<2000000;++i) {
+        seed=1664525u*seed+1013904223u;
+        const double noise=(double((seed>>8)&65535)/65535.0-0.5)*0.006;
+        const double input=noise+((i%10003==0)?0.32:0.0);
+        const double delta=std::abs(input-previous); previous=input;
+        const bool original=delta>std::max(0.075,5.0*std::sqrt(std::max(0.0,power)));
+        const bool optimized=delta*delta>std::max(0.005625,25.0*std::max(0.0,power));
+        check(original==optimized,"transient protection event changed");
+        if(original)++events;
+        power+=step*(std::min(delta*delta,1.0)-power);
+    }
+    check(events>0,"transient threshold regression must exercise attacks");
+}
 int main(){
     for(double rate : {44100.0,48000.0,96000.0}) {
         stableAdjacent(rate);
@@ -110,5 +130,6 @@ int main(){
         phraseReentry(rate);
     }
     ratioEquivalence();
+    transientThresholdEquivalence();
     std::cout << "PASS: v3.5 stable note lock / vibrato / legacy fast paths\n";
 }

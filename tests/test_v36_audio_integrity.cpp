@@ -27,9 +27,12 @@ Render run(const std::vector<float>& input, int fs, int block,
     result.reportedDelay = engine.latencySamples();
     result.left.resize(input.size());
     result.right.resize(input.size());
-    std::vector<float> l(input), r(input.size());
-    for (size_t i = 0; i < input.size(); ++i)
-        r[i] = -l[i];
+    // Both channels are derived from the same bounded fixture. Copy the
+    // input directly rather than default-constructing an unnecessarily large
+    // uninitialised vector (also avoids GCC 15's size overflow diagnostic).
+    std::vector<float> l(input), r(input);
+    for (float& sample : r)
+        sample = -sample;
     if (injectBadSamples) {
         for (size_t i=2048; i<input.size(); i+=1237) {
             l[i] = std::numeric_limits<float>::quiet_NaN();

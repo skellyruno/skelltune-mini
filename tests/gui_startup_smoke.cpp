@@ -93,16 +93,16 @@ int main() {
         if (std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f)
             return 10;
         key->setSelectedId(1, juce::sendNotificationSync);
-        bypass->triggerClick();
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        // Synchronous state notifications invoke the same Button::onClick
+        // and APVTS attachment paths as a mouse click, without entering a
+        // nested modal message loop (which JUCE console apps disable).
+        bypass->setToggleState(true, juce::sendNotificationSync);
         if (processor.parameters().getRawParameterValue("bypass")->load() < 0.5f)
             return 11;
-        bypass->triggerClick();
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        bypass->setToggleState(false, juce::sendNotificationSync);
         if (processor.parameters().getRawParameterValue("bypass")->load() > 0.5f)
             return 12;
-        note->triggerClick();
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        note->setToggleState(!note->getToggleState(), juce::sendNotificationSync);
         if (processor.parameters().getRawParameterValue("noteMask")->load() < 1.0f)
             return 13;
         std::cerr << "STEP: slider, key selector, bypass and note clicks update DAW state\n"

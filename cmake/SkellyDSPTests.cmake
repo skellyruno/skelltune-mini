@@ -202,3 +202,9 @@ add_test(NAME dsp_v34_pitch_tracker_performance_regression COMMAND dsp_v34_tests
 add_executable(dsp_v35_tests tests/test_v35_note_lock.cpp)
 target_link_libraries(dsp_v35_tests PRIVATE skelly_dsp)
 add_test(NAME dsp_v35_stable_note_lock COMMAND dsp_v35_tests)
+
+# v3.6: production-engine audio-path safety, dry PDC, sample-block invariance,
+# nonfinite/subnormal host input recovery, basic output headroom and CPU.
+add_executable(dsp_v36_audio_integrity tests/test_v36_audio_integrity.cpp)
+target_link_libraries(dsp_v36_audio_integrity PRIVATE skelly_dsp)
+add_test(NAME dsp_v36_audio_integrity COMMAND dsp_v36_audio_integrity)

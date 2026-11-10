@@ -185,6 +185,9 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     amount_.setName("Correction Amount");
     mix_.setName("Wet/Dry Mix");
     speed_.setName("Retune Speed");
+    speed_.setComponentID("skelly.speed");
+    amount_.setComponentID("skelly.amount");
+    mix_.setComponentID("skelly.mix");
     speed_.setTooltip("Retune smoothing in milliseconds. 0 ms is immediate retune, not zero processing latency.");
     amount_.setTooltip("Strength of pitch correction.");
     mix_.setTooltip("Wet/dry balance. Dry signal remains delay-compensated.");
@@ -193,6 +196,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     for (int i=0; i<keys.size(); ++i) key_.addItem(keys[i], i+1);
     scale_.addItem("Chromatic", 1); scale_.addItem("Major", 2); scale_.addItem("Minor", 3);
     styleSelector(key_); styleSelector(scale_);
+    key_.setComponentID("skelly.key");
+    scale_.setComponentID("skelly.scale");
     key_.setLookAndFeel(&theme_);
     scale_.setLookAndFeel(&theme_);
     addAndMakeVisible(key_); addAndMakeVisible(scale_);
@@ -209,6 +214,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
         notes_[size_t(i)] = std::make_unique<PitchButton>(noteNames[i]);
         addAndMakeVisible(*notes_[size_t(i)]);
         notes_[size_t(i)]->setTooltip(juce::String("Enable or disable ") + noteNames[i] + " as a correction target");
+        notes_[size_t(i)]->setComponentID("skelly.note." + juce::String(i));
+        notes_[size_t(i)]->setMouseCursor(juce::MouseCursor::PointingHandCursor);
         notes_[size_t(i)]->onClick = [this, i] { togglePitchClass(i); };
     }
     for (auto* btn : {&bypass_, &more_, &presetNotes_}) {
@@ -221,6 +228,9 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     }
     amount_.setLookAndFeel(&theme_);
     mix_.setLookAndFeel(&theme_);
+    bypass_.setComponentID("skelly.bypass");
+    presetNotes_.setComponentID("skelly.reset");
+    more_.setComponentID("skelly.more");
     bypass_.setClickingTogglesState(true);
     bypass_.setTooltip("When bypassed, outputs the latency-compensated dry signal.");
     more_.onClick = [this] { openAdvancedControls(); };

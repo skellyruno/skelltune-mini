@@ -18,6 +18,13 @@ private:
             return juce::Font(juce::FontOptions(
                 juce::jlimit(11.0f, 23.0f, float(buttonHeight) * 0.49f), juce::Font::bold));
         }
+        // JUCE creates slider value readouts as Labels. Scale their font
+        // with the editor instead of leaving tiny fixed-size values at 2x.
+        juce::Font getLabelFont(juce::Label& label) override {
+            return juce::Font(juce::FontOptions(
+                juce::jlimit(11.0f, 25.0f, float(label.getHeight()) * 0.60f),
+                juce::Font::bold));
+        }
         juce::Font getComboBoxFont(juce::ComboBox& box) override {
             return juce::Font(juce::FontOptions(
                 juce::jlimit(12.0f, 21.0f, float(box.getHeight()) * 0.50f)));

@@ -682,7 +682,12 @@ public:
         for (int i = 0; i < frames; ++i) {
             float in[2] = {0.0f, 0.0f};
             for (int c = 0; c < numChannels; ++c) {
-                in[c] = std::isfinite(input[c][i]) ? input[c][i] : 0.0f;
+                // A host may supply NaNs, infinities, or near-zero
+                // subnormals. Reject them before they poison the shared
+                // pitch tracker, delay history or envelope state.
+                const float sample = input[c][i];
+                in[c] = (std::isfinite(sample) && std::abs(sample) >= 1.0e-30f)
+                    ? sample : 0.0f;
                 history_[size_t(c) * capacity + write_] = in[c];
             }
             // v2.0: Preserve sample-aligned sharp attacks before entering either
@@ -1050,7 +1055,11 @@ public:
                 output[c][i] = float(dryForGuard[c] * transientRelease_ +
                     synthesizedForGuard[c] * (1.0 - transientRelease_) *
                     (guardEligible ? mixGain : 1.0));
-                if (!std::isfinite(output[c][i])) output[c][i] = 0.0f;
+                // The host normally enables FTZ/DAZ, but this guarantee
+                // also holds when rendering offline without JUCE.
+                if (!std::isfinite(output[c][i]) ||
+                    std::abs(output[c][i]) < 1.0e-30f)
+                    output[c][i] = 0.0f;
             }
             if (jumping && ++jumpPosition_ == jumpLength_) {
                 readDelay_ = jumpTo_;

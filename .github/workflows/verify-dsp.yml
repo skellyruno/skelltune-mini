@@ -12,14 +12,25 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel superseded runs on the same branch/event; preserve latest evidence.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux-dsp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure portable DSP (no JUCE required)
         run: cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON
       - name: Compile portable DSP targets
         run: cmake --build build-dsp --parallel 4
       - name: Run DSP regressions
         run: ctest --test-dir build-dsp --output-on-failure --parallel 4
+      - name: Measure callback CPU distribution (diagnostic)
+        run: ./build-dsp/profile_callbacks
+      - name: Render saved real singer input in G major / zero-ms retune
+        run: |
+          ./build-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav build-dsp/real_vocal_current.wav 0 100 100 0 0 2773
+          python3 tests/validate_real_vocal.py benchmark/v33/raw_levelmatched_20-28.wav build-dsp/real_vocal_current.wav

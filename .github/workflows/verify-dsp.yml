@@ -30,3 +30,7 @@ jobs:
         run: ctest --test-dir build-dsp --output-on-failure --parallel 4
       - name: Measure callback CPU distribution (diagnostic)
         run: ./build-dsp/profile_callbacks
+      - name: Render saved real singer input in G major / zero-ms retune
+        run: |
+          ./build-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav build-dsp/real_vocal_current.wav 0 100 100 0 0 2773
+          python3 tests/validate_real_vocal.py benchmark/v33/raw_levelmatched_20-28.wav build-dsp/real_vocal_current.wav

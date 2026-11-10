@@ -1,12 +1,15 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../dsp/RealtimeTuner.hpp"
+#include <SkellCore/WorldLink.h>
+#include <SkellCore/SkullTheme.h>
+#include <juce_events/juce_events.h>
 #include <atomic>
 
-class SkellyTuneRealtimeProcessor final : public juce::AudioProcessor {
+class SkellyTuneRealtimeProcessor final : public juce::AudioProcessor, private juce::Timer {
 public:
     SkellyTuneRealtimeProcessor();
-    ~SkellyTuneRealtimeProcessor() override = default;
+    ~SkellyTuneRealtimeProcessor() override;
     void prepareToPlay(double sampleRate, int maxBlockSize) override;
     void releaseResources() override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
@@ -35,6 +38,30 @@ public:
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
+    // SkellWorld is optional and never invoked from the audio callback.
+    skellcore::world::WorldLink worldLink{"skell.tune","SkellyTune"};
+    bool joinWorld() { if(worldLink.join()) { startTimerHz(5); return true; } return false; }
+    void leaveWorld() { stopTimer(); followKey_.store(false); linkedKey_.store(0); worldLink.leave(); }
+    bool setFollowSkellKey(bool enabled) noexcept {
+        if(enabled && (!worldLink.requested() || state_.getRawParameterValue("noteMask")->load()!=0.f))
+            return false;
+        followKey_.store(enabled,std::memory_order_release);
+        if(!enabled) linkedKey_.store(0,std::memory_order_release);
+        return true;
+    }
+    bool followingSkellKey() const noexcept { return followKey_.load(std::memory_order_acquire); }
+    skellcore::world::MusicalKey linkedMusicalKey() const noexcept {
+        if(!followingSkellKey() || !worldLink.online())return {};
+        return skellcore::world::unpackMusicalKey(linkedKey_.load(std::memory_order_acquire));
+    }
+    skellcore::ui::SkullSkin getSkullSkin() const noexcept {
+        return skellcore::ui::skinFromIndex(skinIndex_.load(std::memory_order_acquire));
+    }
+    void setSkullSkin(skellcore::ui::SkullSkin skin) {
+        const auto next=static_cast<int>(skin);
+        skinIndex_.store(next,std::memory_order_release);
+        state_.state.setProperty("skellSkullSkin",next,nullptr);
+    }
     juce::AudioProcessorValueTreeState& parameters() noexcept { return state_; }
     const juce::AudioProcessorValueTreeState& parameters() const noexcept { return state_; }
     float displayedPitchHz() const noexcept { return displayedPitchHz_.load(std::memory_order_relaxed); }

@@ -12,11 +12,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel superseded runs on the same branch/event; preserve latest evidence.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux-dsp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Configure portable DSP (no JUCE required)
         run: cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON
       - name: Compile portable DSP targets

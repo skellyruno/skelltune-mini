@@ -345,17 +345,17 @@ private:
                 // evidence only: it cannot override poor period correlation.
                 double closureMatch=0.0;
                 if(closureEvidenceEnabled_ && locked && pitchHz < 200.0) {
-                    double dx=0.0, xx=1.e-9, yy=1.e-9;
+                    double closureDot=0.0, closureOldPower=1.e-9, closureNewPower=1.e-9;
                     const double stride=std::max(1.0, period/20.0);
                     for(int t=-3;t<=3;++t) {
                         const double off=t*stride;
                         for(int c=0;c<channels_;++c) {
                             const double a=read(c,previousSource_+off+1.0)-read(c,previousSource_+off-1.0);
                             const double b=read(c,s+off+1.0)-read(c,s+off-1.0);
-                            dx+=a*b; xx+=a*a; yy+=b*b;
+                            closureDot+=a*b; closureOldPower+=a*a; closureNewPower+=b*b;
                         }
                     }
-                    closureMatch=std::clamp(dx/std::sqrt(xx*yy),-1.0,1.0);
+                    closureMatch=std::clamp(closureDot/std::sqrt(closureOldPower*closureNewPower),-1.0,1.0);
                 }
                 const double quality=corr + (strongerConcurrentPhaseEnabled_ ? 0.18 : 0.08)*concurrent
                     + 0.045*closureMatch - 0.12*std::abs(d)/radius;

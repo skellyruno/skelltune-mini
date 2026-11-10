@@ -16,7 +16,7 @@ jobs:
   linux-dsp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure portable DSP (no JUCE required)
         run: cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON
       - name: Compile portable DSP targets

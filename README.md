@@ -31,26 +31,29 @@ The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversize
 
 ## Skell Key -> SkellyTune Mini automatic Send to Tune
 
-**No extra Mini controls.** SkellyTune Mini automatically listens to the local
-**SkellWorld Hub** (127.0.0.1:48673) on a non-audio thread. Open Skell Key,
-wait until it has a confirmed key, then click **SEND TO TUNE**. Only then does
+**No extra Mini controls.** SkellyTune Mini listens through the built-in
+SkellCore Windows local tuning channel (no Hub or Python required). Open Skell
+Key and Mini in your DAW, wait until Skell Key confirms a key and click
+**SEND TO TUNE**. Only then does
 Skell Key broadcast Key, Scale and A4 (plus an absolute pitch-class mask).
 Mini receives trusted `skell.key` packets, updates its existing Key/Scale/A4
 controls and DAW parameter values, and uses a coherent atomic tuning snapshot
 for audio. The mini piano follows the transmitted scale unless it has a custom
 note selection; double-click a note to restore normal Key/Scale following.
 
-**SEND TO TUNE** stays active until turned off or Skell Key loses its
-available result. While active, newly confirmed tuning changes are forwarded
-automatically. Without a running Hub or a valid Skell Key event, Mini remains
-fully functional using its current tuning; there is no fabricated received key.
+**SEND TO TUNE** stays active until turned off, including across silence
+and source changes. While active, newly confirmed tuning changes are forwarded
+automatically. If no Skell Key sender is active, Mini uses its existing tuning;
+it never invents a key. Normal sender shutdown withdraws its local packet;
+crashed senders expire after five seconds. If more than one Skell Key is sending,
+the latest publisher wins.
 The original VST3 IDs and parameter IDs are unchanged. Since incoming tuning
 also updates existing host parameters, the last received values remain after
 sharing stops. No audio thread performs socket operations.
 
 **Verification:** The Windows JUCE GUI smoke test checks valid and malformed
-tuning snapshots, automatic link startup, and actual message transfer through
-the pinned SkellWorld Hub with a simulated authenticated SkellKey publisher.
+tuning snapshots, automatic listener startup, and actual transfer through
+Windows shared memory with no SkellWorld Hub or Python process.
 FL Studio host-specific loading and session restore remain to be verified.
 
 ## Build and download

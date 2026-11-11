@@ -99,7 +99,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
     std::vector<float> inputA(block),inputB(block),outputA(block),outputB(block);
     std::ofstream trace;
     if(const char* name=std::getenv("SKELLY_TRACE")) {
-        trace.open(name); trace << "time,f0,confidence,target,pending,cents,mix,source_age,onset\n";
+        trace.open(name); trace << "time,f0,confidence,target,pending,cents,mix,source_age,onset,protected\n";
     }
     for(size_t offset=0;offset<total;offset+=block) {
         const int len=int(std::min<size_t>(block,total-offset));
@@ -115,7 +115,8 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
             trace << double(offset+len)/w.rate << ',' << est.hertz << ',' << est.confidence << ','
                   << dsp.currentTargetNote() << ',' << dsp.targetPending() << ','
                   << dsp.appliedCents() << ',' << dsp.effectiveWetMix() << ','
-                  << dsp.currentReadDelaySamples() << ',' << dsp.currentOnsetScore() << '\n';
+                  << dsp.currentReadDelaySamples() << ',' << dsp.currentOnsetScore() << ','
+                  << dsp.preservedTransientSamples() << '\n';
         }
         for(int i=0;i<len;++i) {
             output.samples[(offset+i)*w.channels]=outputA[i];

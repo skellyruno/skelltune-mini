@@ -40,4 +40,11 @@ jobs:
           python3 tests/validate_real_vocal.py benchmark/v33/raw_levelmatched_20-28.wav build-dsp/real_vocal_current.wav
           python3 tests/validate_real_vocal.py --scale benchmark/v33/raw_levelmatched_20-28.wav build-dsp/loud_vocal_input.wav 1.08
           ./build-dsp/skelly_render build-dsp/loud_vocal_input.wav build-dsp/loud_vocal_render.wav 0 100 100 0 0 2773
+          python3 tests/validate_real_vocal.py --report build-dsp/real_vocal_current.wav build-dsp/loud_vocal_render.wav 1.08
+          SKELLY_V33_ONSET_MEMORY_OFF=1 ./build-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav build-dsp/raw_no_onset.wav 0 100 100 0 0 2773
+          SKELLY_V33_ONSET_MEMORY_OFF=1 ./build-dsp/skelly_render build-dsp/loud_vocal_input.wav build-dsp/loud_no_onset.wav 0 100 100 0 0 2773
+          python3 tests/validate_real_vocal.py --report build-dsp/raw_no_onset.wav build-dsp/loud_no_onset.wav 1.08
+          SKELLY_V31_BRIDGE_OFF=1 ./build-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav build-dsp/raw_no_bridge.wav 0 100 100 0 0 2773
+          SKELLY_V31_BRIDGE_OFF=1 ./build-dsp/skelly_render build-dsp/loud_vocal_input.wav build-dsp/loud_no_bridge.wav 0 100 100 0 0 2773
+          python3 tests/validate_real_vocal.py --report build-dsp/raw_no_bridge.wav build-dsp/loud_no_bridge.wav 1.08
           python3 tests/validate_real_vocal.py --compare build-dsp/real_vocal_current.wav build-dsp/loud_vocal_render.wav 1.08

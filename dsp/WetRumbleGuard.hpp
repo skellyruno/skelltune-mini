@@ -28,8 +28,12 @@ public:
         if (!std::isfinite(sample)) sample = 0.0;
         for (int stage = 0; stage < 2; ++stage) {
             const double prior = previousInput_[size_t(ch)][size_t(stage)];
-            const double y = normalizer_ * (sample - prior)
+            double y = normalizer_ * (sample - prior)
                 + coefficient_ * previousOutput_[size_t(ch)][size_t(stage)];
+            // Keep even stand-alone/offline renders denormal-free after
+            // a long silence. This threshold is hundreds of dB below
+            // any meaningful audio, so it cannot create audible gating.
+            if (std::abs(y) < 1.0e-24) y = 0.0;
             previousInput_[size_t(ch)][size_t(stage)] = sample;
             previousOutput_[size_t(ch)][size_t(stage)] = y;
             sample = y;

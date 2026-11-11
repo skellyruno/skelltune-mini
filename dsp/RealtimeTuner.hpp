@@ -521,7 +521,8 @@ public:
         std::fill(history_.begin(), history_.end(), 0.0f);
         std::fill(transientMark_.begin(), transientMark_.end(), uint8_t(0));
         previousTransientInput_.fill(0.0f);
-        transientDiffPower_ = 0.0; transientHold_ = 0; transientRelease_ = 0.0;
+        transientDiffPower_ = transientInputPower_ = 0.0;
+        transientHold_ = 0; transientRelease_ = 0.0;
         preservedTransientSamples_ = 0;
         write_ = 0;
         readDelay_ = latency_ + 6.0;
@@ -699,16 +700,25 @@ public:
             // exact transport delay we report to the host. Store the decision
             // alongside its INPUT sample and retrieve at the same delay as dry.
             double diff = 0.0;
+            double inputSquared = 0.0;
             for (int c = 0; c < numChannels; ++c) {
                 diff = std::max(diff, std::abs(double(in[c]) - previousTransientInput_[c]));
+                inputSquared = std::max(inputSquared, double(in[c])*double(in[c]));
                 previousTransientInput_[c] = in[c];
             }
-            // Compare squared magnitudes: equivalent to the previous
-            // sqrt-based attack threshold for nonnegative diff/power, but
-            // avoids a square root on each sample of the audio callback.
+            // Loud periodic vowels must not get a different dry-transient
+            // bypass simply because their recording level was raised.
+            // Compare the incoming derivative to BOTH its recent derivative
+            // RMS and the recent source RMS, entirely in squared amplitudes.
+            // 0.70 * input power is ~0.075^2 for the existing reference
+            // vocal; scaling the source now also scales this threshold.
+            // The very low constant is a silence/noise safety floor only.
             const bool attack = diff * diff >
-                std::max(0.005625, 25.0 * std::max(0.0, transientDiffPower_));
-            // Update AFTER testing so the incoming attack cannot mask itself.
+                std::max({0.0009, 0.70 * std::max(0.0, transientInputPower_),
+                          25.0 * std::max(0.0, transientDiffPower_)});
+            // Update AFTER testing so the new attack can't mask itself.
+            transientInputPower_ += transientMeterStep *
+                (std::min(inputSquared, 4.0) - transientInputPower_);
             transientDiffPower_ += transientMeterStep *
                 (std::min(diff * diff, 1.0) - transientDiffPower_);
             if (attack) transientHold_ = int(std::lround(rate_ * 0.005));
@@ -1150,7 +1160,7 @@ private:
     // as the unprocessed signal. All storage is allocated in prepare().
     std::vector<uint8_t> transientMark_;
     std::array<float, 2> previousTransientInput_{};
-    double transientDiffPower_ = 0.0, transientRelease_ = 0.0;
+    double transientDiffPower_ = 0.0, transientInputPower_ = 0.0, transientRelease_ = 0.0;
     int transientHold_ = 0;
     uint64_t preservedTransientSamples_ = 0;
     bool studioClock_ = false, fastStudio_ = false;

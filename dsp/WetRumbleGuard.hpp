@@ -20,16 +20,16 @@ public:
         reset();
     }
     void reset() noexcept {
-        previousInput_.fill({});
-        previousOutput_.fill({});
+        for (auto& channel : previousInput_) channel.fill(0.0);
+        for (auto& channel : previousOutput_) channel.fill(0.0);
     }
     double process(int channel, double sample) noexcept {
         const int ch = std::clamp(channel, 0, 1);
         if (!std::isfinite(sample)) sample = 0.0;
         for (int stage = 0; stage < 2; ++stage) {
             const double prior = previousInput_[size_t(ch)][size_t(stage)];
-            const double y = normalizer_ *
-                (sample - prior + coefficient_ * previousOutput_[size_t(ch)][size_t(stage)]);
+            const double y = normalizer_ * (sample - prior)
+                + coefficient_ * previousOutput_[size_t(ch)][size_t(stage)];
             previousInput_[size_t(ch)][size_t(stage)] = sample;
             previousOutput_[size_t(ch)][size_t(stage)] = y;
             sample = y;

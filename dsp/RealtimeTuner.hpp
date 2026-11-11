@@ -7,6 +7,7 @@
 #include "CoherentMixGuard.hpp"
 #include "FormantEnvelopeGuard.hpp"
 #include "HarmonicAirGuard.hpp"
+#include "WetRumbleGuard.hpp"
 #include "PhaseCrossfadeLut.hpp"
 #include <algorithm>
 #include <array>
@@ -509,6 +510,7 @@ public:
         mixGuard_.prepare(rate_);
         formantGuard_.prepare(rate_, channels_);
         airGuard_.prepare(rate_, channels_);
+        wetRumbleGuard_.prepare(rate_);
         phaseCrossfade_.prepare();
         cycleSynth_.setClockLockedDelay(studioClock_ ? latency_ : 0);
         highBandPole_ = std::exp(-2.0*kPi*3400.0/rate_);
@@ -561,6 +563,7 @@ public:
         formantGuard_.reset();
         formantActive_ = false;
         airGuard_.reset();
+        wetRumbleGuard_.reset();
         cycleBlend_ = 0.0;
     }
     int latencySamples() const noexcept { return latency_; }
@@ -1002,21 +1005,25 @@ public:
                 const double air = params_.airPreservation * noiseBand *
                     (1.0 - 0.96*harmonicAir);
                 const double reconstructed = wet + air*((dry - dryLow_[c]) - (wet - wetLow_[c]));
-                const double baseline = dry * (1.0 - effectiveMix_) + reconstructed * effectiveMix_;
-                // v1.4: Restore delayed consonant air in the experimental
-                // pitch-cycle path. It previously bypassed this protection,
-                // even though the realtime shifter already offered it.
+                // v1.4: Preserve consonant air in the optional cycle path too.
                 cycleLow_[c] = highBandPole_*cycleLow_[c]
                     + (1.0-highBandPole_)*double(cycleOutput[c]);
                 const double cycleReconstructed = double(cycleOutput[c])
                     + air*((dry-dryLow_[c])
                            -(double(cycleOutput[c])-cycleLow_[c]));
-                const double experimental = dry * (1.0-effectiveMix_) + cycleReconstructed*effectiveMix_;
-                const double synthesized = baseline*(1.0-safeCycleBlend) + experimental*safeCycleBlend;
+                // Filter ONLY the reconstructed wet output, with zero lookahead.
+                // A quiet subsonic component may appear at source-cycle wraps.
+                // Do not high-pass the unprocessed/delayed input, so Mix=0,
+                // bypass and sample-exact transient anchors remain bit-identical.
+                // Keep the wet filter running even while gated off, avoiding
+                // a stale DC state on the next voiced re-entry.
+                const double blendedWet = reconstructed*(1.0-safeCycleBlend)
+                                        + cycleReconstructed*safeCycleBlend;
+                const double cleanWet = wetRumbleGuard_.process(c, blendedWet);
                 dryForGuard[c] = dry;
-                wetForGuard[c] = float(reconstructed * (1.0-safeCycleBlend)
-                                       + cycleReconstructed*safeCycleBlend);
-                synthesizedForGuard[c] = float(synthesized);
+                wetForGuard[c] = float(cleanWet);
+                synthesizedForGuard[c] = float(dry*(1.0-effectiveMix_)
+                                               + cleanWet*effectiveMix_);
             }
             // v2.4: spectral-envelope matching uses delayed dry only as a
             // control reference; reweights *wet PSOLA* bands, never mixing
@@ -1166,6 +1173,7 @@ private:
     FormantEnvelopeGuard formantGuard_;
     bool formantActive_=false;
     HarmonicAirGuard airGuard_;
+    WetRumbleGuard wetRumbleGuard_;
     PhaseCrossfadeLut phaseCrossfade_;
     double cycleBlend_ = 0.0;
     uint64_t phaseJumpCount_ = 0;

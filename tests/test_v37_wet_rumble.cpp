@@ -42,6 +42,14 @@ void testRumbleGuard(int fs) {
     guard.reset();
     require(std::abs(guard.process(0,.25)-guard.process(1,.25))<1e-12,
             "reset left or right stale");
+    guard.reset();
+    for(int i=0;i<fs*3;++i) {
+        const double output=guard.process(0, i<256 ? 0.25 : 0.0);
+        require(std::isfinite(output),"wet filter silence recovery became nonfinite");
+        require(output==0.0 || std::fpclassify(output)==FP_NORMAL,
+                "subnormal wet filter state on long silence");
+        if(i==fs*3-1)require(output==0.0,"wet filter should settle to exact zero");
+    }
 }
 void testEngineDC(int fs) {
     skelly::RealtimeTuner dsp;

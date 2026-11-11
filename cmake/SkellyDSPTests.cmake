@@ -208,3 +208,13 @@ add_test(NAME dsp_v35_stable_note_lock COMMAND dsp_v35_tests)
 add_executable(dsp_v36_audio_integrity tests/test_v36_audio_integrity.cpp)
 target_link_libraries(dsp_v36_audio_integrity PRIVATE skelly_dsp)
 add_test(NAME dsp_v36_audio_integrity COMMAND dsp_v36_audio_integrity)
+
+# v3.7: subsonic wet-only filter response and complete-engine DC/PDC checks.
+add_executable(dsp_v37_wet_rumble tests/test_v37_wet_rumble.cpp)
+target_link_libraries(dsp_v37_wet_rumble PRIVATE skelly_dsp)
+add_test(NAME dsp_v37_wet_rumble COMMAND dsp_v37_wet_rumble)
+
+# v3.8: loud vowel amplitude scaling, headroom and accidental transient bypass.
+add_executable(dsp_v38_loud_voice tests/test_v38_loud_voice.cpp)
+target_link_libraries(dsp_v38_loud_voice PRIVATE skelly_dsp)
+add_test(NAME dsp_v38_loud_voice COMMAND dsp_v38_loud_voice)

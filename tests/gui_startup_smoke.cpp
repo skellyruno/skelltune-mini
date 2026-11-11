@@ -168,12 +168,12 @@ int main() {
         processor.processBlock(audio, midi);
         std::cerr << "STEP: processBlock ok\n" << std::flush;
 
-        if (juce::SystemStats::getEnvironmentVariable("SKELL_SYNC_HUB_TEST", {}) == "1") {
-            // End-to-end link: Hub + real WorldLink receiver + deliberately
-            // opted-in SkellKey sender, without activating Mini UI controls.
+        if (juce::SystemStats::getEnvironmentVariable("SKELL_LOCAL_IPC_TEST", {}) == "1") {
+            // End-to-end link: local shared-memory bus + WorldLink receiver + deliberately
+            // opted-in SkellKey sender, without Hub or Mini UI controls.
             skellcore::world::WorldLink sender("skell.key", "Skell Key smoke sender");
             if (!sender.join()) {
-                std::cerr << "FAIL: sender could not join hub\n"; return 23;
+                std::cerr << "FAIL: sender could not open local tuning bus\n"; return 23;
             }
             for (int i=0; i<100 &&
                  (!sender.online() || !processor.worldLink.online()); ++i) {
@@ -181,7 +181,7 @@ int main() {
                 juce::Timer::callPendingTimersSynchronously();
             }
             if (!sender.online() || !processor.worldLink.online()) {
-                std::cerr << "FAIL: sender/receiver never connected to hub\n";
+                std::cerr << "FAIL: sender/receiver could not open local tuning bus\n";
                 return 24;
             }
             // Merely connecting must not change Key, Scale or A4:
@@ -192,10 +192,10 @@ int main() {
                 std::cerr << "FAIL: tuning changed before Send to Tune\n";
                 return 25;
             }
-            juce::Thread::sleep(220); // allow hub PEER identity advertisement
+            juce::Thread::sleep(50); // two independent plugin objects
             if (!sender.publishMusicalTuning(
                     skellcore::world::makeMusicalTuning(4, 1, 432.5))) {
-                std::cerr << "FAIL: SEND TO TUNE event could not publish\n";
+                std::cerr << "FAIL: hubless Send to Tune could not publish\n";
                 return 26;
             }
             bool received = false;
@@ -214,7 +214,7 @@ int main() {
                 std::cerr << "FAIL: Mini did not receive Key=E, Minor, A4=432.5\n";
                 return 27;
             }
-            std::cerr << "STEP: hub verified Send to Tune -> Key/Scale/A4 without Mini controls\n"
+            std::cerr << "STEP: HUB-FREE cross-plugin Send to Tune -> Key/Scale/A4 without Mini controls\n"
                       << std::flush;
         }
         editor.reset();

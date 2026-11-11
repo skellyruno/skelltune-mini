@@ -168,6 +168,16 @@ def compare_traces(low_file, high_file):
             or pending_changes > max(4, len(low) * 0.04)
             or average_wet > 0.04 or average_pitch_cents > 6.0):
         raise ValueError("higher vocal level caused an unintended note/gate change")
+    # Stronger recording gain should not spuriously route additional voiced
+    # samples into the uncorrected attack lane. This test previously differed
+    # by ~22%; level-proportional transient thresholds reduce it to ~2%.
+    quiet_protected = int(low[-1]["protected"])
+    loud_protected = int(high[-1]["protected"])
+    tag_delta = abs(quiet_protected-loud_protected) / max(1,quiet_protected,loud_protected)
+    print(f"Protected sample counts at gain A/B: {quiet_protected}/{loud_protected}; "
+          f"relative difference={100*tag_delta:.2f}%")
+    if tag_delta > 0.08:
+        raise ValueError("louder vocal triggered inconsistent transient bypass")
 
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--traces":

@@ -67,7 +67,64 @@ def measure(samples, channels):
     return math.sqrt(energy / len(samples)), peak, step, over
 
 
+
+def write_float_wav(path, rate, channels, samples):
+    import array
+    pcm = array.array("f", samples)
+    if sys.byteorder != "little":
+        pcm.byteswap()
+    payload = pcm.tobytes()
+    with Path(path).open("wb") as fh:
+        fh.write(struct.pack("<4sI4s4sIHHIIHH4sI",
+              b"RIFF", 36 + len(payload), b"WAVE", b"fmt ", 16,
+              3, channels, rate, rate * channels * 4, channels * 4, 32,
+              b"data", len(payload)))
+        fh.write(payload)
+
+
+def run_gain_scale(source, destination, factor):
+    fs, channels, samples = read_float_wav(source)
+    if not 0.5 < factor < 1.5:
+        raise ValueError("test gain out of safe range")
+    peak = max(abs(s) for s in samples)
+    if peak * factor >= 0.98:
+        raise ValueError("scaled test would approach full-scale input")
+    write_float_wav(destination, fs, channels, (x * factor for x in samples))
+    print(f"Scaled real-singer input by {factor:.3f}x; peak={peak*factor:.5f}")
+
+
+def compare_gain_normalized(baseline, louder, factor):
+    fs, channels, low = read_float_wav(baseline)
+    new_fs, new_channels, high = read_float_wav(louder)
+    if (fs, channels, len(low)) != (new_fs, new_channels, len(high)):
+        raise ValueError("real-vocal comparison has different timing/channels")
+    start = int(fs * 0.3) * channels
+    signal = 1.e-12
+    difference = 0.0
+    maxstep = 0.0
+    for i in range(start, len(low)):
+        target = low[i]
+        actual = high[i] / factor
+        signal += target * target
+        difference += (target - actual) ** 2
+        maxstep = max(maxstep, abs(target - actual))
+    relative = math.sqrt(difference / signal)
+    print(f"Real-singer loudness A/B: normalized RMS mismatch={100*relative:.3f}% "
+          f"maximum per-sample difference={maxstep:.5f} "
+          f"gain={factor:.3f}x")
+    # This is a signal-safety regression, not a perceptual equivalence
+    # measurement. Moderately different gain should not change pitch-lock
+    # decisions so much that the rendered audio diverges dramatically.
+    if relative > 0.15:
+        raise ValueError("vocal protection became substantially level-dependent")
+
 def main():
+    if len(sys.argv) == 5 and sys.argv[1] == "--scale":
+        run_gain_scale(sys.argv[2], sys.argv[3], float(sys.argv[4]))
+        return
+    if len(sys.argv) == 5 and sys.argv[1] == "--compare":
+        compare_gain_normalized(sys.argv[2], sys.argv[3], float(sys.argv[4]))
+        return
     if len(sys.argv) != 3:
         raise SystemExit("usage: validate_real_vocal.py original.wav rendered.wav")
     rate_a, channels_a, input_audio = read_float_wav(sys.argv[1])

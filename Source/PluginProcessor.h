@@ -41,12 +41,12 @@ public:
     // SkellWorld is optional and never invoked from the audio callback.
     skellcore::world::WorldLink worldLink{"skell.tune","SkellyTune"};
     bool joinWorld() { if(worldLink.join()) { startTimerHz(5); return true; } return false; }
-    void leaveWorld() { stopTimer(); followKey_.store(false); linkedKey_.store(0); worldLink.leave(); }
+    void leaveWorld() { stopTimer(); followKey_.store(false); linkedKey_.store(0); linkedTuning_.store(0); worldLink.leave(); }
     bool setFollowSkellKey(bool enabled) noexcept {
         if(enabled && (!worldLink.requested() || state_.getRawParameterValue("noteMask")->load()!=0.f))
             return false;
         followKey_.store(enabled,std::memory_order_release);
-        if(!enabled) linkedKey_.store(0,std::memory_order_release);
+        if(!enabled) { linkedKey_.store(0,std::memory_order_release); linkedTuning_.store(0,std::memory_order_release); }
         return true;
     }
     bool followingSkellKey() const noexcept { return followKey_.load(std::memory_order_acquire); }
@@ -76,6 +76,7 @@ private:
     std::atomic<int> skinIndex_{1};
     std::atomic<bool> followKey_{false};
     std::atomic<int> linkedKey_{0};
+    std::atomic<std::uint64_t> linkedTuning_{0}; // all of scale + A4 + key in one atomic
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     skelly::Parameters currentParameters() const noexcept;
     juce::AudioBuffer<float> doubleScratch_;  // allocated ONLY in prepareToPlay

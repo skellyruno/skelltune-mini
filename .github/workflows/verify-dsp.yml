@@ -28,6 +28,10 @@ jobs:
         run: cmake --build build-dsp --parallel 4
       - name: Run DSP regressions
         run: ctest --test-dir build-dsp --output-on-failure --parallel 4
+      - name: Measure loud vowel gain consistency and subsonic response
+        run: |
+          ./build-dsp/dsp_v37_wet_rumble
+          ./build-dsp/dsp_v38_loud_voice
       - name: Measure callback CPU distribution (diagnostic)
         run: ./build-dsp/profile_callbacks
       - name: Render saved real singer input in G major / zero-ms retune

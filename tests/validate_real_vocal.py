@@ -93,7 +93,7 @@ def run_gain_scale(source, destination, factor):
     print(f"Scaled real-singer input by {factor:.3f}x; peak={peak*factor:.5f}")
 
 
-def compare_gain_normalized(baseline, louder, factor):
+def compare_gain_normalized(baseline, louder, factor, report_only=False):
     fs, channels, low = read_float_wav(baseline)
     new_fs, new_channels, high = read_float_wav(louder)
     if (fs, channels, len(low)) != (new_fs, new_channels, len(high)):
@@ -115,15 +115,16 @@ def compare_gain_normalized(baseline, louder, factor):
     # This is a signal-safety regression, not a perceptual equivalence
     # measurement. Moderately different gain should not change pitch-lock
     # decisions so much that the rendered audio diverges dramatically.
-    if relative > 0.15:
+    if relative > 0.15 and not report_only:
         raise ValueError("vocal protection became substantially level-dependent")
 
 def main():
     if len(sys.argv) == 5 and sys.argv[1] == "--scale":
         run_gain_scale(sys.argv[2], sys.argv[3], float(sys.argv[4]))
         return
-    if len(sys.argv) == 5 and sys.argv[1] == "--compare":
-        compare_gain_normalized(sys.argv[2], sys.argv[3], float(sys.argv[4]))
+    if len(sys.argv) == 5 and sys.argv[1] in ("--compare", "--report"):
+        compare_gain_normalized(sys.argv[2], sys.argv[3], float(sys.argv[4]),
+                                report_only=sys.argv[1] == "--report")
         return
     if len(sys.argv) != 3:
         raise SystemExit("usage: validate_real_vocal.py original.wav rendered.wav")

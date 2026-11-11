@@ -13,11 +13,29 @@ int main() {
         std::cerr << "STEP: JUCE init ok\n" << std::flush;
         SkellyTuneRealtimeProcessor processor;
         std::cerr << "STEP: processor ok\n" << std::flush;
-        if (processor.worldLink.requested() || processor.followingSkellKey() ||
-            processor.linkedMusicalKey().valid() || processor.setFollowSkellKey(true)) {
-            std::cerr << "FAIL: World/Follow unexpectedly enabled at plugin startup\n";
+        // Receiver must not assume any SkellKey value until an authenticated
+        // packet is received. Joining the local hub needs no Mini control.
+        if (processor.linkedMusicalKey().valid()) {
+            std::cerr << "FAIL: invented tuning before SkellKey sent\n";
             return 19;
         }
+        const auto incoming = skellcore::world::makeMusicalTuning(7, 1, 442.4);
+        if (!processor.applySkellKeyTuning(incoming) ||
+            std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f ||
+            std::abs(processor.parameters().getRawParameterValue("scale")->load() - 2.0f) > 0.01f ||
+            std::abs(processor.parameters().getRawParameterValue("a4")->load() - 442.4f) > 0.06f) {
+            std::cerr << "FAIL: SkellKey did not synchronize Key, Scale and A4\n";
+            return 19;
+        }
+        auto malformed = incoming;
+        malformed.root = 12;
+        if (processor.applySkellKeyTuning(malformed) ||
+            std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f) {
+            std::cerr << "FAIL: accepted invalid external key\n";
+            return 21;
+        }
+        std::cerr << "STEP: verified SkellKey key/scale/A4 receive + malformed rejection\n"
+                  << std::flush;
         // Theme is UI-only, stored in a non-automatable property. Old plugin
         // parameter IDs remain intact after a state roundtrip.
         processor.setSkullSkin(skellcore::ui::SkullSkin::Ossuary);
@@ -41,7 +59,12 @@ int main() {
         std::cerr << "STEP: prepare ok\n" << std::flush;
         std::cerr << "STEP: before editor construction\n" << std::flush;
         std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
-        std::cerr << "STEP: editor constructed\n" << std::flush;
+        if (!processor.worldLink.requested() || !processor.followingSkellKey()) {
+            std::cerr << "FAIL: Mini did not start automatic SkellKey listener\n";
+            return 22;
+        }
+        std::cerr << "STEP: editor constructed and automatic listener started\n"
+                  << std::flush;
         if (!editor || editor->getWidth() < 400 || editor->getHeight() < 400)
             return 2;
         editor->resized();

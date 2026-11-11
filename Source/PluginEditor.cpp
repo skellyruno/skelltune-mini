@@ -78,7 +78,7 @@ void SkellyTuneEditor::PitchButton::paintButton(
     g.drawEllipse(area, std::max(1.25f, float(getHeight()) * 0.045f));
     g.setColour(selected ? p.bone : p.boneDim);
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(11.0f, 18.0f, float(getHeight()) * 0.39f),
+        juce::jlimit(11.0f, 29.0f, float(getHeight()) * 0.39f),
         selected ? juce::Font::bold : juce::Font::plain)));
     g.drawText(getButtonText(), getLocalBounds(),
                juce::Justification::centred, true);
@@ -173,6 +173,11 @@ void SkellyTuneEditor::resized() {
         c.setBounds(juce::roundToInt(x*sx), juce::roundToInt(y*sy),
             std::max(1,juce::roundToInt(w*sx)), std::max(1,juce::roundToInt(h*sy)));
     };
+    // Proportionally grow the editable A4 readout with the rest of the
+    // editor. Without this the +/- buttons filled most of the wide layout.
+    a4_.setTextBoxStyle(juce::Slider::TextBoxLeft, false,
+                        std::max(83, juce::roundToInt(83.0f*sx)),
+                        std::max(30, juce::roundToInt(30.0f*sy)));
     place(key_, 18, 95, 90, 33);
     place(scale_, 119, 95, 151, 33);
     place(a4_, 290, 95, 122, 33);

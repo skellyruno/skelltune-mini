@@ -225,14 +225,15 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawRoundedRectangle(juce::Rectangle<float>(13,137,406,178),9.0f,0.9f);
     g.setColour(muted);
     g.setFont(juce::Font(juce::FontOptions(12.0f,juce::Font::bold)));
-    g.drawText("RETUNE SPEED",123,315,186,19,juce::Justification::centred);
+    g.drawText("RETUNE SPEED",137,314,158,19,juce::Justification::centred);
 
     const bool custom = parameters_.getRawParameterValue("noteMask")->load() > 0.5f;
-    g.setColour(muted);
-    g.setFont(juce::Font(juce::FontOptions(9.5f)));
-    g.drawText(custom ? "CUSTOM NOTES  •  DOUBLE-CLICK TO RESET"
-                      : "ENABLED NOTES  •  CLICK TO EDIT",
-               13,407,407,7,juce::Justification::centred,true);
+    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.drawText(custom ? "CUSTOM NOTES" : "ENABLED NOTES", 16,318,117,15,
+               juce::Justification::centredLeft);
+    if (custom)
+        g.drawText("DOUBLE-CLICK TO RESET",299,318,119,15,
+                   juce::Justification::centredRight,true);
 }
 void SkellyTuneEditor::togglePitchClass(int index) {
     const int root = juce::roundToInt(parameters_.getRawParameterValue("key")->load());

@@ -70,6 +70,12 @@ public:
     bool displayedTargetPending() const noexcept { return displayedTargetPending_.load(std::memory_order_relaxed); }
     float displayedCorrectionCents() const noexcept { return displayedCorrectionCents_.load(std::memory_order_relaxed); }
 private:
+    void timerCallback() override;
+    // Shared UI/theme and optional key-link state. Audio processing reads only
+    // atomics and never touches a socket, mutex, GUI component or host params.
+    std::atomic<int> skinIndex_{1};
+    std::atomic<bool> followKey_{false};
+    std::atomic<int> linkedKey_{0};
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     skelly::Parameters currentParameters() const noexcept;
     juce::AudioBuffer<float> doubleScratch_;  // allocated ONLY in prepareToPlay

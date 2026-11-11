@@ -74,15 +74,26 @@ int main() {
                 }
             return greenPixels > 20; // neon accents must actually render
         };
+        const auto savePreview = [&] (const juce::String& name) {
+            const auto snapshot =
+                editor->createComponentSnapshot(editor->getLocalBounds(), false, 1.0f);
+            const auto file = juce::File::getCurrentWorkingDirectory().getChildFile(name);
+            auto stream = file.createOutputStream();
+            return stream != nullptr &&
+                   juce::PNGImageFormat().writeImageToStream(snapshot, *stream);
+        };
         if (!childrenInside() || !validVisual()) return 4;
+        if (!savePreview("SkellyTuneMini_UI_432.png")) return 14;
         std::cerr << "STEP: default 432x414 layout + neon rendering ok\n" << std::flush;
         editor->setSize(720, 690);
         editor->resized();
         if (!childrenInside() || !validVisual()) return 5;
+        if (!savePreview("SkellyTuneMini_UI_720.png")) return 15;
         std::cerr << "STEP: full 720x690 layout ok\n" << std::flush;
         editor->setSize(1008, 966);
         editor->resized();
         if (!childrenInside() || !validVisual()) return 6;
+        if (!savePreview("SkellyTuneMini_UI_1008.png")) return 16;
         std::cerr << "STEP: large 1008x966 layout ok\n" << std::flush;
         editor->setSize(432, 414);
         editor->resized();

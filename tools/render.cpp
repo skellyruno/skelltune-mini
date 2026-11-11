@@ -133,6 +133,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
               <<dsp.latencySamples()<<" samples; last detected pitch "
               <<dsp.lastPitch().hertz<<" Hz, target MIDI "<<dsp.currentTargetNote()
               << ", bridged tracker hops " << dsp.bridgedHops()
+              << ", protected transient samples " << dsp.preservedTransientSamples()
               << ", remembered onset decisions " << dsp.onsetMemoryAppliedHops()
               << ", assisted note transitions " << dsp.onsetAssistedTransitions()
               << ", aligned jumps " << dsp.phaseAlignedJumpCount()

@@ -74,15 +74,26 @@ int main() {
                 }
             return greenPixels > 20; // neon accents must actually render
         };
+        const auto savePreview = [&] (const juce::String& name) {
+            const auto snapshot =
+                editor->createComponentSnapshot(editor->getLocalBounds(), false, 1.0f);
+            const auto file = juce::File::getCurrentWorkingDirectory().getChildFile(name);
+            auto stream = file.createOutputStream();
+            return stream != nullptr &&
+                   juce::PNGImageFormat().writeImageToStream(snapshot, *stream);
+        };
         if (!childrenInside() || !validVisual()) return 4;
+        if (!savePreview("SkellyTuneMini_UI_432.png")) return 14;
         std::cerr << "STEP: default 432x414 layout + neon rendering ok\n" << std::flush;
         editor->setSize(720, 690);
         editor->resized();
         if (!childrenInside() || !validVisual()) return 5;
+        if (!savePreview("SkellyTuneMini_UI_720.png")) return 15;
         std::cerr << "STEP: full 720x690 layout ok\n" << std::flush;
         editor->setSize(1008, 966);
         editor->resized();
         if (!childrenInside() || !validVisual()) return 6;
+        if (!savePreview("SkellyTuneMini_UI_1008.png")) return 16;
         std::cerr << "STEP: large 1008x966 layout ok\n" << std::flush;
         editor->setSize(432, 414);
         editor->resized();
@@ -93,11 +104,16 @@ int main() {
         editor->paint(graphics);
         std::cerr << "STEP: paint ok\n" << std::flush;
         auto* speed = dynamic_cast<juce::Slider*>(editor->findChildWithID("skelly.speed"));
+        auto* a4 = dynamic_cast<juce::Slider*>(editor->findChildWithID("skelly.a4"));
         auto* key = dynamic_cast<juce::ComboBox*>(editor->findChildWithID("skelly.key"));
-        auto* bypass = dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.bypass"));
+        auto* scale = dynamic_cast<juce::ComboBox*>(editor->findChildWithID("skelly.scale"));
         auto* note = dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.note.1"));
-        if (!speed || !key || !bypass || !note) {
-            std::cerr << "FAIL: a required UI control is missing\n";
+        if (!speed || !a4 || !key || !scale || !note ||
+            editor->findChildWithID("skelly.bypass") ||
+            editor->findChildWithID("skelly.more") ||
+            editor->findChildWithID("skelly.amount") ||
+            editor->findChildWithID("skelly.mix")) {
+            std::cerr << "FAIL: mini editor controls missing or extra controls remain\n";
             return 8;
         }
         speed->setValue(7.0, juce::sendNotificationSync);
@@ -108,19 +124,20 @@ int main() {
         if (std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f)
             return 10;
         key->setSelectedId(1, juce::sendNotificationSync);
-        // Synchronous state notifications invoke the same Button::onClick
-        // and APVTS attachment paths as a mouse click, without entering a
-        // nested modal message loop (which JUCE console apps disable).
-        bypass->setToggleState(true, juce::sendNotificationSync);
-        if (processor.parameters().getRawParameterValue("bypass")->load() < 0.5f)
+        a4->setValue(442.0, juce::sendNotificationSync);
+        if (std::abs(processor.parameters().getRawParameterValue("a4")->load() - 442.0f) > 0.02f)
             return 11;
-        bypass->setToggleState(false, juce::sendNotificationSync);
-        if (processor.parameters().getRawParameterValue("bypass")->load() > 0.5f)
+        a4->setValue(440.0, juce::sendNotificationSync);
+        scale->setSelectedId(2, juce::sendNotificationSync);
+        if (std::abs(processor.parameters().getRawParameterValue("scale")->load() - 1.0f) > 0.01f)
             return 12;
+        scale->setSelectedId(1, juce::sendNotificationSync);
+        // Synchronous toggle notification exercises the piano's real onClick
+        // and DAW automation path without requiring a nested message loop.
         note->setToggleState(!note->getToggleState(), juce::sendNotificationSync);
         if (processor.parameters().getRawParameterValue("noteMask")->load() < 1.0f)
             return 13;
-        std::cerr << "STEP: slider, key selector, bypass and note clicks update DAW state\n"
+        std::cerr << "STEP: retune, A4, key, scale and piano update DAW state\n"
                   << std::flush;
         juce::AudioBuffer<float> audio(2, 256);
         audio.clear();

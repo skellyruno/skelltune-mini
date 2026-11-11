@@ -19,6 +19,16 @@ The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversize
 - **Local validation:** the extracted NoteDecision implementation passed C++17 GCC -Werror tests at 44.1/48/96 kHz; AddressSanitizer+UndefinedBehaviorSanitizer passed. An isolated CMake/CTest run passed 1/1. An isolated pitch-ratio microbenchmark was ~3x faster for that math operation, **not** the full plugin. A deterministic 2,000,000-sample transient stimulus yielded identical threshold decisions.
 - **Still unverified:** full in-repository regression suite, Windows VST3 build, FL Studio hosts, real-vocal A/B benchmarks, true wet-path latency, and plugin-wide CPU reduction. No manufacturer/plugin IDs, parameter IDs, or host delay contract were changed.
 
+## November 10, 2026 — Mini: fewer controls, quieter wet audio
+- The **only visible controls** are Retune Speed, the editable **A4 reference**, **Key**, **Scale**, and the existing interactive 12-note piano. The old Advanced window, extra tuning sliders, Mix, Amount, Bypass, and crowded status row are no longer in Mini's editor.
+- Click a piano note to enable/disable it. **Double-click a note to restore Key/Scale notes**. "Custom Notes" is indicated above the piano. The window remains 432 × 414 by default and resizes proportionally to 1008 × 966.
+- The editor always uses the shared SkellCore neon-green skull branding. The old skin state is still accepted for saved-session migration, but the skull is now a static brand mark, not another button.
+- **All legacy automatable parameter IDs remain in the processor**, including hidden Mix/Amount/Bypass and synthesis options, so older host sessions don't lose their saved settings. New instances retain the existing default full correction/full wet. A project with intentionally overridden legacy automation will continue using those values.
+- The former advanced UI for experimental PSOLA and manual SkellWorld/SkellKey opt-in is removed from Mini. Their backing processing/state code was deliberately not deleted to avoid breaking existing projects, but new users cannot enable World follow from this minimal editor.
+- The wet **reconstruction** (not input, delayed dry, or sample-accurate transient path) now passes through a causal, stereo-symmetric, two-stage 12 Hz DC blocker. Measured response: ~-16.6 dB at 5 Hz, -7.7 dB at 10 Hz, -2.7 dB at 20 Hz, and -0.29 dB at 65 Hz. It is not a replacement for diagnosis of octave tracking errors or microphone/room rumble.
+- CI checks 39 portable DSP regressions, long-silence denormal safety, raw-vocal peak/RMS integrity, loud/quiet tone gain equivalence, real-singer gain-scaled A/B, and Windows JUCE rendering / A4-key-scale-piano attachments at three sizes. The Windows job uploads PNG UI previews and a VST3 artifact (7-day retention).
+- **Limits:** Real FL Studio loading/closing, microphone loudness behavior, subjective artifact elimination, exact wet-waveform delay, and listening tests on multiple singers still need real-host evaluation. Zero ms Retune Speed is not zero host latency.
+
 ## Build and download
 On pushes to `main`, **Build SkellyTune Realtime VST3** runs on GitHub Actions and builds only the **SkellyTune Realtime** Windows VST3 (3 ms nominal dry/transient delay). Download the `SkellyTune-Realtime-Windows-VST3` artifact from the successful workflow. No Studio, Studio Fast, or Standalone files are produced.
 
@@ -35,13 +45,3 @@ The DSP engine includes 0 ms *Retune Speed* (no correction smoothing), which doe
 Do not change manufacturer/plugin codes or parameter IDs without a migration plan; existing FL Studio projects rely on them. Back up projects before changing installed VST3 versions. Third-party license notices are in `third_party`.
 
 [Patch notes](CHANGELOG_v331.md) · [FL Studio recovery](FL_STUDIO_RECOVERY.md) · [State validation](STATE_RESTORE_PATCH_REPORT.md)
-
-## SkellWorld / SkellKey link (opt-in preview)
-
-SkellyTune can follow SkellKey's confident major/minor analysis without any MIDI routing. First start the local SkellWorld hub (from the SkellCore template checkout), join both plugins, and in SkellyTune's **MORE** panel select **JOIN WORLD** then **FOLLOW SKELLKEY**. In SkellKey click **JOIN WORLD** in the footer. SkellKey sends its detected key when confidence is high and the result is stable; updates run on background/UI threads. No audio or plugin state is sent over the network.
-
-**Follow is off by default, never persisted or enabled at project load.** While active, SkellyTune uses an atomic, temporary effective-scale override. Its saved key, scale, note mask, latency and automation remain intact. On disconnect or leave it reverts to the selected manual key/scale. Custom note masks have priority; reset those before following. The older SkellKey MIDI scale transmission remains a separate option.
-
-Click the skull-key logo in SkellyTune to cycle SkellCore's four shared skins (Ossuary, Neon, Ivory, Obsidian); the existing default Neon skin is preserved. Skin changes affect UI only and persist as an optional safe saved-state property. SkellKey uses the same mark and colors.
-
-This is a developer pilot. It requires both plugins on matching shared SkellCore versions and the opt-in local hub; physical FL Studio sessions and UI click/reopen tests are still required for release.

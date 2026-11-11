@@ -7,6 +7,7 @@
 #include "CoherentMixGuard.hpp"
 #include "FormantEnvelopeGuard.hpp"
 #include "HarmonicAirGuard.hpp"
+#include "WetRumbleGuard.hpp"
 #include "PhaseCrossfadeLut.hpp"
 #include <algorithm>
 #include <array>
@@ -509,6 +510,7 @@ public:
         mixGuard_.prepare(rate_);
         formantGuard_.prepare(rate_, channels_);
         airGuard_.prepare(rate_, channels_);
+        wetRumbleGuard_.prepare(rate_);
         phaseCrossfade_.prepare();
         cycleSynth_.setClockLockedDelay(studioClock_ ? latency_ : 0);
         highBandPole_ = std::exp(-2.0*kPi*3400.0/rate_);
@@ -519,7 +521,8 @@ public:
         std::fill(history_.begin(), history_.end(), 0.0f);
         std::fill(transientMark_.begin(), transientMark_.end(), uint8_t(0));
         previousTransientInput_.fill(0.0f);
-        transientDiffPower_ = 0.0; transientHold_ = 0; transientRelease_ = 0.0;
+        transientDiffPower_ = transientInputPower_ = 0.0;
+        transientHold_ = 0; transientRelease_ = 0.0;
         preservedTransientSamples_ = 0;
         write_ = 0;
         readDelay_ = latency_ + 6.0;
@@ -561,6 +564,7 @@ public:
         formantGuard_.reset();
         formantActive_ = false;
         airGuard_.reset();
+        wetRumbleGuard_.reset();
         cycleBlend_ = 0.0;
     }
     int latencySamples() const noexcept { return latency_; }
@@ -696,16 +700,25 @@ public:
             // exact transport delay we report to the host. Store the decision
             // alongside its INPUT sample and retrieve at the same delay as dry.
             double diff = 0.0;
+            double inputSquared = 0.0;
             for (int c = 0; c < numChannels; ++c) {
                 diff = std::max(diff, std::abs(double(in[c]) - previousTransientInput_[c]));
+                inputSquared = std::max(inputSquared, double(in[c])*double(in[c]));
                 previousTransientInput_[c] = in[c];
             }
-            // Compare squared magnitudes: equivalent to the previous
-            // sqrt-based attack threshold for nonnegative diff/power, but
-            // avoids a square root on each sample of the audio callback.
+            // Loud periodic vowels must not get a different dry-transient
+            // bypass simply because their recording level was raised.
+            // Compare the incoming derivative to BOTH its recent derivative
+            // RMS and the recent source RMS, entirely in squared amplitudes.
+            // 0.70 * input power is ~0.075^2 for the existing reference
+            // vocal; scaling the source now also scales this threshold.
+            // The very low constant is a silence/noise safety floor only.
             const bool attack = diff * diff >
-                std::max(0.005625, 25.0 * std::max(0.0, transientDiffPower_));
-            // Update AFTER testing so the incoming attack cannot mask itself.
+                std::max({0.0009, 0.70 * std::max(0.0, transientInputPower_),
+                          25.0 * std::max(0.0, transientDiffPower_)});
+            // Update AFTER testing so the new attack can't mask itself.
+            transientInputPower_ += transientMeterStep *
+                (std::min(inputSquared, 4.0) - transientInputPower_);
             transientDiffPower_ += transientMeterStep *
                 (std::min(diff * diff, 1.0) - transientDiffPower_);
             if (attack) transientHold_ = int(std::lround(rate_ * 0.005));
@@ -1002,21 +1015,25 @@ public:
                 const double air = params_.airPreservation * noiseBand *
                     (1.0 - 0.96*harmonicAir);
                 const double reconstructed = wet + air*((dry - dryLow_[c]) - (wet - wetLow_[c]));
-                const double baseline = dry * (1.0 - effectiveMix_) + reconstructed * effectiveMix_;
-                // v1.4: Restore delayed consonant air in the experimental
-                // pitch-cycle path. It previously bypassed this protection,
-                // even though the realtime shifter already offered it.
+                // v1.4: Preserve consonant air in the optional cycle path too.
                 cycleLow_[c] = highBandPole_*cycleLow_[c]
                     + (1.0-highBandPole_)*double(cycleOutput[c]);
                 const double cycleReconstructed = double(cycleOutput[c])
                     + air*((dry-dryLow_[c])
                            -(double(cycleOutput[c])-cycleLow_[c]));
-                const double experimental = dry * (1.0-effectiveMix_) + cycleReconstructed*effectiveMix_;
-                const double synthesized = baseline*(1.0-safeCycleBlend) + experimental*safeCycleBlend;
+                // Filter ONLY the reconstructed wet output, with zero lookahead.
+                // A quiet subsonic component may appear at source-cycle wraps.
+                // Do not high-pass the unprocessed/delayed input, so Mix=0,
+                // bypass and sample-exact transient anchors remain bit-identical.
+                // Keep the wet filter running even while gated off, avoiding
+                // a stale DC state on the next voiced re-entry.
+                const double blendedWet = reconstructed*(1.0-safeCycleBlend)
+                                        + cycleReconstructed*safeCycleBlend;
+                const double cleanWet = wetRumbleGuard_.process(c, blendedWet);
                 dryForGuard[c] = dry;
-                wetForGuard[c] = float(reconstructed * (1.0-safeCycleBlend)
-                                       + cycleReconstructed*safeCycleBlend);
-                synthesizedForGuard[c] = float(synthesized);
+                wetForGuard[c] = float(cleanWet);
+                synthesizedForGuard[c] = float(dry*(1.0-effectiveMix_)
+                                               + cleanWet*effectiveMix_);
             }
             // v2.4: spectral-envelope matching uses delayed dry only as a
             // control reference; reweights *wet PSOLA* bands, never mixing
@@ -1143,7 +1160,7 @@ private:
     // as the unprocessed signal. All storage is allocated in prepare().
     std::vector<uint8_t> transientMark_;
     std::array<float, 2> previousTransientInput_{};
-    double transientDiffPower_ = 0.0, transientRelease_ = 0.0;
+    double transientDiffPower_ = 0.0, transientInputPower_ = 0.0, transientRelease_ = 0.0;
     int transientHold_ = 0;
     uint64_t preservedTransientSamples_ = 0;
     bool studioClock_ = false, fastStudio_ = false;
@@ -1166,6 +1183,7 @@ private:
     FormantEnvelopeGuard formantGuard_;
     bool formantActive_=false;
     HarmonicAirGuard airGuard_;
+    WetRumbleGuard wetRumbleGuard_;
     PhaseCrossfadeLut phaseCrossfade_;
     double cycleBlend_ = 0.0;
     uint64_t phaseJumpCount_ = 0;

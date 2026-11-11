@@ -167,6 +167,56 @@ int main() {
         juce::MidiBuffer midi;
         processor.processBlock(audio, midi);
         std::cerr << "STEP: processBlock ok\n" << std::flush;
+
+        if (juce::SystemStats::getEnvironmentVariable("SKELL_SYNC_HUB_TEST", {}) == "1") {
+            // End-to-end link: Hub + real WorldLink receiver + deliberately
+            // opted-in SkellKey sender, without activating Mini UI controls.
+            skellcore::world::WorldLink sender("skell.key", "Skell Key smoke sender");
+            if (!sender.join()) {
+                std::cerr << "FAIL: sender could not join hub\n"; return 23;
+            }
+            for (int i=0; i<100 &&
+                 (!sender.online() || !processor.worldLink.online()); ++i) {
+                juce::Thread::sleep(50);
+                juce::Timer::callPendingTimersSynchronously();
+            }
+            if (!sender.online() || !processor.worldLink.online()) {
+                std::cerr << "FAIL: sender/receiver never connected to hub\n";
+                return 24;
+            }
+            // Merely connecting must not change Key, Scale or A4:
+            // publisher action is explicit and must come first.
+            if (std::abs(processor.parameters().getRawParameterValue("key")->load()) > 0.01f ||
+                std::abs(processor.parameters().getRawParameterValue("scale")->load()) > 0.01f ||
+                std::abs(processor.parameters().getRawParameterValue("a4")->load() - 440.0f) > 0.05f) {
+                std::cerr << "FAIL: tuning changed before Send to Tune\n";
+                return 25;
+            }
+            juce::Thread::sleep(220); // allow hub PEER identity advertisement
+            if (!sender.publishMusicalTuning(
+                    skellcore::world::makeMusicalTuning(4, 1, 432.5))) {
+                std::cerr << "FAIL: SEND TO TUNE event could not publish\n";
+                return 26;
+            }
+            bool received = false;
+            for (int i=0;i<100;++i) {
+                juce::Thread::sleep(50);
+                juce::Timer::callPendingTimersSynchronously();
+                const auto& state = processor.parameters();
+                if (std::abs(state.getRawParameterValue("key")->load()-4.0f)<0.01f &&
+                    std::abs(state.getRawParameterValue("scale")->load()-2.0f)<0.01f &&
+                    std::abs(state.getRawParameterValue("a4")->load()-432.5f)<0.06f) {
+                    received=true; break;
+                }
+            }
+            sender.leave();
+            if (!received) {
+                std::cerr << "FAIL: Mini did not receive Key=E, Minor, A4=432.5\n";
+                return 27;
+            }
+            std::cerr << "STEP: hub verified Send to Tune -> Key/Scale/A4 without Mini controls\n"
+                      << std::flush;
+        }
         editor.reset();
         processor.releaseResources();
         std::cout << "PASS: processor startup, editor construction/layout/paint, audio callback, editor teardown\n";

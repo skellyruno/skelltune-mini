@@ -13,6 +13,21 @@ int main() {
         std::cerr << "STEP: JUCE init ok\n" << std::flush;
         SkellyTuneRealtimeProcessor processor;
         std::cerr << "STEP: processor ok\n" << std::flush;
+        if (processor.worldLink.requested() || processor.followingSkellKey() ||
+            processor.linkedMusicalKey().valid() || processor.setFollowSkellKey(true)) {
+            std::cerr << "FAIL: World/Follow unexpectedly enabled at plugin startup\n";
+            return 19;
+        }
+        // Theme is UI-only, stored in a non-automatable property. Old plugin
+        // parameter IDs remain intact after a state roundtrip.
+        processor.setSkullSkin(skellcore::ui::SkullSkin::Ossuary);
+        juce::MemoryBlock savedSkin;
+        processor.getStateInformation(savedSkin);
+        processor.setSkullSkin(skellcore::ui::SkullSkin::Neon);
+        processor.setStateInformation(savedSkin.getData(),static_cast<int>(savedSkin.getSize()));
+        if(processor.getSkullSkin()!=skellcore::ui::SkullSkin::Ossuary)return 20;
+        processor.setSkullSkin(skellcore::ui::SkullSkin::Neon);
+
         // Out-of-order 64-bit host probe must never spin in a zero-stride loop.
         juce::AudioBuffer<double> earlyAudio(2, 64);
         for (int c = 0; c < 2; ++c)

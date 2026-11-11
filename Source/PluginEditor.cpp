@@ -5,16 +5,12 @@
 #include <vector>
 
 namespace {
-const auto bg       = juce::Colour::fromRGB(8, 13, 10);
-const auto panel    = juce::Colour::fromRGB(18, 27, 20);
-const auto neon     = juce::Colour::fromRGB(144, 255, 68);
-const auto dimText  = juce::Colour::fromRGB(157, 173, 156);
-const auto light    = juce::Colour::fromRGB(236, 248, 235);
-const auto stroke   = juce::Colour::fromRGB(47, 67, 48);
+// Skin colours come from each editor's SkellCore palette (no globals).
 const char* const noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 using State = juce::AudioProcessorValueTreeState;
 
-void styleSelector(juce::ComboBox& b) {
+void styleSelector(juce::ComboBox& b,const skellcore::ui::SkullPalette& pal) {
+    const auto panel=pal.panel,neon=pal.accent,light=pal.bone;
     b.setColour(juce::ComboBox::backgroundColourId, panel);
     b.setColour(juce::ComboBox::outlineColourId, neon.withAlpha(0.40f));
     b.setColour(juce::ComboBox::textColourId, light);
@@ -22,7 +18,9 @@ void styleSelector(juce::ComboBox& b) {
     b.setJustificationType(juce::Justification::centred);
 }
 
-void styleLinear(juce::Slider& s, const juce::String& suffix) {
+void styleLinear(juce::Slider& s, const juce::String& suffix,
+                 const skellcore::ui::SkullPalette& pal) {
+    const auto neon=pal.accent,stroke=pal.line,light=pal.bone,bg=pal.background;
     s.setSliderStyle(juce::Slider::LinearHorizontal);
     s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 77, 21);
     s.setColour(juce::Slider::trackColourId, neon);
@@ -34,9 +32,12 @@ void styleLinear(juce::Slider& s, const juce::String& suffix) {
     s.setTextValueSuffix(suffix);
 }
 
-class AdvancedControls final : public juce::Component {
+class AdvancedControls final : public juce::Component, private juce::Timer {
 public:
-    explicit AdvancedControls(State& state) : state_(state) {
+    AdvancedControls(State& state,SkellyTuneRealtimeProcessor& processor,
+                     skellcore::ui::SkullPalette palette)
+        : state_(state),processor_(processor),palette_(palette) {
+        const auto dimText=palette_.boneDim,light=palette_.bone,neon=palette_.accent;
         const std::array<const char*, 8> ids {
             "transient", "air", "formantPreserve", "vibratoPreserve", "flex", "cycleStabilize", "a4", "synthesisMode"
         };
@@ -52,7 +53,7 @@ public:
             addAndMakeVisible(*label);
             labels_.push_back(std::move(label));
             auto slider = std::make_unique<juce::Slider>();
-            styleLinear(*slider, i == 4 ? " ct" : (i == 6 ? " Hz" : "%"));
+            styleLinear(*slider, i == 4 ? " ct" : (i == 6 ? " Hz" : "%"),palette_);
             addAndMakeVisible(*slider);
             sliderAttachments_.push_back(std::make_unique<State::SliderAttachment>(state_, ids[size_t(i)], *slider));
             sliders_.push_back(std::move(slider));
@@ -71,7 +72,7 @@ public:
         mode_.addItem("Realtime", 1);
         mode_.addItem("Cycle PSOLA (experimental)", 2);
 #endif
-        styleSelector(mode_);
+        styleSelector(mode_,palette_);
         addAndMakeVisible(mode_);
         modeAttachment_ = std::make_unique<State::ComboBoxAttachment>(state_, "synthesisMode", mode_);
         phase_.setButtonText("Phase-aligned cycle jumps");
@@ -79,9 +80,28 @@ public:
         phase_.setColour(juce::ToggleButton::tickColourId, neon);
         addAndMakeVisible(phase_);
         phaseAttachment_ = std::make_unique<State::ButtonAttachment>(state_, "phaseAlign", phase_);
-        setSize(370, 452);
+        worldButton_.setTooltip("Connect to the optional local SkellWorld hub. Requires the hub to be running.");
+        followButton_.setTooltip("Use SkellKey's detected key for tuning. Does not rewrite saved key/scale. Reset custom note masks first.");
+        worldButton_.onClick=[this] {
+            if(processor_.worldLink.requested())processor_.leaveWorld();
+            else processor_.joinWorld();
+            updateWorld();
+        };
+        followButton_.onClick=[this] {
+            processor_.setFollowSkellKey(!processor_.followingSkellKey());
+            updateWorld();
+        };
+        status_.setJustificationType(juce::Justification::centredLeft);
+        status_.setColour(juce::Label::textColourId,dimText);
+        addAndMakeVisible(worldButton_);
+        addAndMakeVisible(followButton_);
+        addAndMakeVisible(status_);
+        setSize(370, 530);
+        startTimerHz(4);
+        updateWorld();
     }
     void paint(juce::Graphics& g) override {
+        const auto bg=palette_.background,light=palette_.bone,dimText=palette_.boneDim;
         g.fillAll(bg);
         g.setColour(light);
         g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
@@ -100,9 +120,31 @@ public:
         labels_[7]->setBounds(16, y, getWidth()-32, 15);
         mode_.setBounds(16, y+17, getWidth()-32, 29);
         phase_.setBounds(16, y+51, getWidth()-32, 24);
+        worldButton_.setBounds(16,y+85,(getWidth()-40)/2,27);
+        followButton_.setBounds(24+(getWidth()-40)/2,y+85,(getWidth()-40)/2,27);
+        status_.setBounds(16,y+116,getWidth()-32,22);
     }
 private:
+    void timerCallback() override { updateWorld(); }
+    void updateWorld() {
+        const bool connected=processor_.worldLink.online();
+        worldButton_.setButtonText(processor_.worldLink.requested() ? "LEAVE WORLD" : "JOIN WORLD");
+        followButton_.setButtonText(processor_.followingSkellKey() ? "STOP FOLLOWING" : "FOLLOW SKELLKEY");
+        const auto key=processor_.linkedMusicalKey();
+        const bool custom=state_.getRawParameterValue("noteMask")->load()>0.5f;
+        juce::String status;
+        if(custom) status="RESET CUSTOM NOTES TO FOLLOW";
+        else if(key.valid())status="FOLLOWING  "+juce::String(key.root)+" / "+(key.mode==0?"MAJOR":"MINOR");
+        else if(processor_.followingSkellKey())status="WAITING FOR A SKELLKEY DETECTION";
+        else status=connected?"WORLD ONLINE  /  "+juce::String(processor_.worldLink.peerCount())+" PEERS":
+                 "OFFLINE  /  LOCAL HUB NOT CONNECTED";
+        if(status_.getText()!=status)status_.setText(status,juce::dontSendNotification);
+    }
     State& state_;
+    SkellyTuneRealtimeProcessor& processor_;
+    skellcore::ui::SkullPalette palette_;
+    juce::TextButton worldButton_{"JOIN WORLD"},followButton_{"FOLLOW SKELLKEY"};
+    juce::Label status_;
     std::vector<std::unique_ptr<juce::Label>> labels_;
     std::vector<std::unique_ptr<juce::Slider>> sliders_;
     std::vector<std::unique_ptr<State::SliderAttachment>> sliderAttachments_;
@@ -121,6 +163,7 @@ juce::String detectedNoteName(float hz, float referenceA) {
 
 void SkellyTuneEditor::SimpleTheme::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
                                     float pos, float start, float end, juce::Slider& slider) {
+    const auto neon=palette.accent,stroke=palette.line;
     const auto rect = juce::Rectangle<float>(float(x), float(y), float(w), float(h)).reduced(5.0f);
     const float cx = rect.getCentreX(), cy = rect.getCentreY();
     const float radius = 0.5f * std::min(rect.getWidth(), rect.getHeight());
@@ -129,7 +172,7 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(juce::Graphics& g, int x, i
     juce::Path track, active;
     track.addCentredArc(cx, cy, r, r, 0.0f, start, end, true);
     active.addCentredArc(cx, cy, r, r, 0.0f, start, start + pos * (end - start), true);
-    g.setColour(juce::Colour::fromRGB(40, 60, 43));
+    g.setColour(palette.line);
     g.strokePath(track, juce::PathStrokeType(ring, juce::PathStrokeType::curved,
                                               juce::PathStrokeType::rounded));
     g.setColour(neon.withAlpha(0.18f));
@@ -140,7 +183,7 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(juce::Graphics& g, int x, i
                                                juce::PathStrokeType::rounded));
     auto center = juce::Rectangle<float>(cx-r+ring*1.7f, cy-r+ring*1.7f,
                                           2.0f*(r-ring*1.7f), 2.0f*(r-ring*1.7f));
-    g.setColour(juce::Colour::fromRGB(5, 10, 7));
+    g.setColour(palette.background);
     g.fillEllipse(center);
     g.setColour(stroke);
     g.drawEllipse(center, 1.4f);
@@ -159,6 +202,8 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(juce::Graphics& g, int x, i
 }
 
 void SkellyTuneEditor::PitchButton::paintButton(juce::Graphics& g, bool hover, bool down) {
+    const auto& p=*palette_;
+    const auto neon=p.accent,stroke=p.line,panel=p.panel,light=p.bone,dimText=p.boneDim;
     const bool active = getToggleState();
     const auto area = getLocalBounds().toFloat().reduced(1.8f);
     g.setColour(active ? neon.withAlpha(down ? 0.28f : 0.16f) :
@@ -181,7 +226,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
                                juce::MathConstants<float>::pi * 2.77f, true);
     speed_.setLookAndFeel(&theme_);
     addAndMakeVisible(speed_);
-    styleLinear(amount_, "%"); styleLinear(mix_, "%");
+    styleLinear(amount_, "%",palette_); styleLinear(mix_, "%",palette_);
     amount_.setName("Correction Amount");
     mix_.setName("Wet/Dry Mix");
     speed_.setName("Retune Speed");
@@ -195,7 +240,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     const juce::StringArray keys {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
     for (int i=0; i<keys.size(); ++i) key_.addItem(keys[i], i+1);
     scale_.addItem("Chromatic", 1); scale_.addItem("Major", 2); scale_.addItem("Minor", 3);
-    styleSelector(key_); styleSelector(scale_);
+    styleSelector(key_,palette_); styleSelector(scale_,palette_);
     key_.setComponentID("skelly.key");
     scale_.setComponentID("skelly.scale");
     key_.setLookAndFeel(&theme_);
@@ -211,7 +256,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     // key or scale or the ComboBox attachment initializes asynchronously.
     // RESET NOTES explicitly returns to the selected key/scale preset.
     for (int i=0; i<12; ++i) {
-        notes_[size_t(i)] = std::make_unique<PitchButton>(noteNames[i]);
+        notes_[size_t(i)] = std::make_unique<PitchButton>(noteNames[i],palette_);
         addAndMakeVisible(*notes_[size_t(i)]);
         notes_[size_t(i)]->setTooltip(juce::String("Enable or disable ") + noteNames[i] + " as a correction target");
         notes_[size_t(i)]->setComponentID("skelly.note." + juce::String(i));
@@ -219,10 +264,10 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
         notes_[size_t(i)]->onClick = [this, i] { togglePitchClass(i); };
     }
     for (auto* btn : {&bypass_, &more_, &presetNotes_}) {
-        btn->setColour(juce::TextButton::buttonColourId, panel);
-        btn->setColour(juce::TextButton::buttonOnColourId, neon.withAlpha(0.20f));
-        btn->setColour(juce::TextButton::textColourOffId, dimText);
-        btn->setColour(juce::TextButton::textColourOnId, neon);
+        btn->setColour(juce::TextButton::buttonColourId, palette_.panel);
+        btn->setColour(juce::TextButton::buttonOnColourId, palette_.accent.withAlpha(0.20f));
+        btn->setColour(juce::TextButton::textColourOffId, palette_.boneDim);
+        btn->setColour(juce::TextButton::textColourOnId, palette_.accent);
         btn->setLookAndFeel(&theme_);
         addAndMakeVisible(*btn);
     }
@@ -234,7 +279,15 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     bypass_.setClickingTogglesState(true);
     bypass_.setTooltip("When bypassed, outputs the latency-compensated dry signal.");
     more_.onClick = [this] { openAdvancedControls(); };
+    skullHit_.setTooltip("Click the SKELL skull-key mark to cycle the shared SkellCore skins");
+    skullHit_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    skullHit_.onClick=[this] {
+        processor_.setSkullSkin(skellcore::ui::nextSkin(processor_.getSkullSkin()));
+        applySkullTheme();
+    };
+    addAndMakeVisible(skullHit_);
     presetNotes_.onClick = [this] { resetManualNotes(); };
+    applySkullTheme();
     refreshNotes();
     // Both enabling the resizer AND setSize can invoke resized().
     // Do neither until the last note button has been constructed.
@@ -269,6 +322,7 @@ void SkellyTuneEditor::resized() {
                         std::max(1, juce::roundToInt(h*sy)));
     };
     // Reserve enough text width for "Chromatic" at the compact size.
+    place(skullHit_, 10, 12, 40, 36);
     place(key_, 254, 28, 63, 27);
     place(scale_, 324, 28, 99, 27);
     place(speed_, 143, 123, 146, 146);
@@ -293,6 +347,8 @@ void SkellyTuneEditor::resized() {
 }
 
 void SkellyTuneEditor::paint(juce::Graphics& g) {
+    const auto bg=palette_.background,panel=palette_.panel,neon=palette_.accent;
+    const auto dimText=palette_.boneDim,light=palette_.bone,stroke=palette_.line;
     g.fillAll(bg);
     juce::Graphics::ScopedSaveState saved(g);
     g.addTransform(juce::AffineTransform::scale(
@@ -306,14 +362,12 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setColour(neon.withAlpha(0.16f));
     g.drawRoundedRectangle(juce::Rectangle<float>(9, 138, 414, 141), 9.0f, 1.0f);
 
-    // Minimal vector waveform mark, not a raster image.
-    g.setColour(neon);
-    juce::Path wave;
-    wave.startNewSubPath(15.0f, 40.0f);
-    wave.cubicTo(21, 40, 19, 18, 26, 22);
-    wave.cubicTo(33, 26, 32, 38, 43, 40);
-    g.strokePath(wave, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
-                                           juce::PathStrokeType::rounded));
+    // One shared SkellKey-derived skull-key emblem across SKELL products.
+    {
+        juce::Graphics::ScopedSaveState logoState(g);
+        g.addTransform(juce::AffineTransform::scale(0.47f).translated(12.0f,20.0f));
+        skellcore::ui::drawSkullKeyMark(g,0.f,0.f,palette_.bone,palette_.background);
+    }
     g.setColour(light);
     g.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
     g.drawText("SKELLYTUNE", 49, 12, 190, 27, juce::Justification::centredLeft, true);
@@ -415,8 +469,9 @@ void SkellyTuneEditor::resetManualNotes() {
 }
 
 void SkellyTuneEditor::refreshNotes() {
-    const int root = juce::roundToInt(parameters_.getRawParameterValue("key")->load());
-    const int scale = juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
+    const auto worldKey=processor_.linkedMusicalKey();
+    const int root = worldKey.valid() ? worldKey.root : juce::roundToInt(parameters_.getRawParameterValue("key")->load());
+    const int scale = worldKey.valid() ? (worldKey.mode==0 ? 1 : 2) : juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
     const int overrideMask = juce::roundToInt(parameters_.getRawParameterValue("noteMask")->load());
     const int mask = skelly::effectiveMask(root,scale,overrideMask);
     const bool custom = overrideMask != 0;
@@ -430,6 +485,7 @@ void SkellyTuneEditor::refreshNotes() {
 }
 
 void SkellyTuneEditor::timerCallback() {
+    if(processor_.getSkullSkin()!=lastSkin_)applySkullTheme();
     refreshNotes();
     const bool bypassed = bypass_.getToggleState();
     if (lastBypassed_ != bypassed) {
@@ -460,6 +516,25 @@ void SkellyTuneEditor::timerCallback() {
 }
 
 void SkellyTuneEditor::openAdvancedControls() {
-    auto advanced = std::make_unique<AdvancedControls>(parameters_);
+    auto advanced = std::make_unique<AdvancedControls>(parameters_,processor_,palette_);
     juce::CallOutBox::launchAsynchronously(std::move(advanced), more_.getScreenBounds(), nullptr);
+}
+
+void SkellyTuneEditor::applySkullTheme() {
+    lastSkin_=processor_.getSkullSkin();
+    palette_=skellcore::ui::skullPalette(lastSkin_);
+    theme_.palette=palette_;
+    styleSelector(key_,palette_);
+    styleSelector(scale_,palette_);
+    styleLinear(amount_,"%",palette_);
+    styleLinear(mix_,"%",palette_);
+    for (auto* b : {&bypass_,&more_,&presetNotes_}) {
+        b->setColour(juce::TextButton::buttonColourId,palette_.panel);
+        b->setColour(juce::TextButton::buttonOnColourId,palette_.accent.withAlpha(.20f));
+        b->setColour(juce::TextButton::textColourOffId,palette_.boneDim);
+        b->setColour(juce::TextButton::textColourOnId,palette_.accent);
+    }
+    speed_.repaint();
+    for(auto& b:notes_)if(b)b->repaint();
+    repaint();
 }

@@ -38,6 +38,15 @@ if(SKELLY_BUILD_PLUGIN)
         FetchContent_MakeAvailable(JUCE)
     endif()
 
+
+    # SkellCore is pinned at an immutable revision. This provides UI theme
+    # primitives and optional local WorldLink, not the imported tuning DSP.
+    FetchContent_Declare(SkellCoreShared
+        GIT_REPOSITORY https://github.com/skellyruno/skell-vst-template.git
+        GIT_TAG bca5eb7cef326772499a0b4afe0e5389db918d3a
+        SOURCE_SUBDIR SkellCore)
+    FetchContent_MakeAvailable(SkellCoreShared)
+
     function(skelly_add_plugin target bundle_id plugin_code product_name)
         juce_add_plugin(${target}
             COMPANY_NAME "Skelly Audio"
@@ -63,7 +72,8 @@ if(SKELLY_BUILD_PLUGIN)
             juce::juce_audio_processors
             juce::juce_dsp
             juce::juce_recommended_config_flags
-            juce::juce_recommended_warning_flags)
+            juce::juce_recommended_warning_flags
+            SkellCore::DSP SkellCore::UI)
         target_compile_definitions(${target} PRIVATE
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
     endfunction()
@@ -83,7 +93,8 @@ if(SKELLY_BUILD_PLUGIN)
         target_link_libraries(SkellyTuneGuiSmoke PRIVATE
             skelly_dsp juce::juce_audio_utils juce::juce_audio_processors
             juce::juce_dsp juce::juce_recommended_config_flags
-            juce::juce_recommended_warning_flags)
+            juce::juce_recommended_warning_flags
+            SkellCore::DSP SkellCore::UI)
         target_compile_definitions(SkellyTuneGuiSmoke PRIVATE
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
     endif()

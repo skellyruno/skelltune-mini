@@ -12,6 +12,7 @@ public:
     void resized() override;
 private:
     struct SimpleTheme : juce::LookAndFeel_V4 {
+        skellcore::ui::SkullPalette palette=skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
         juce::Font getTextButtonFont(juce::TextButton&, int buttonHeight) override {
@@ -31,7 +32,9 @@ private:
         }
     } theme_;
     struct PitchButton final : juce::Button {
-        explicit PitchButton(const juce::String& text) : juce::Button(text) { setButtonText(text); }
+        explicit PitchButton(const juce::String& text, const skellcore::ui::SkullPalette& skin)
+            : juce::Button(text), palette_(&skin) { setButtonText(text); }
+        const skellcore::ui::SkullPalette* palette_;
         void paintButton(juce::Graphics&, bool hover, bool down) override;
     };
     void timerCallback() override;
@@ -39,9 +42,16 @@ private:
     void togglePitchClass(int);
     void resetManualNotes();
     void openAdvancedControls();
+    void applySkullTheme();
 
     SkellyTuneRealtimeProcessor& processor_;
     juce::AudioProcessorValueTreeState& parameters_;
+    skellcore::ui::SkullPalette palette_=skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
+    skellcore::ui::SkullSkin lastSkin_=skellcore::ui::SkullSkin::Neon;
+    struct SkullHitButton final : juce::Button {
+        SkullHitButton() : juce::Button("Cycle SKELL skin") {}
+        void paintButton(juce::Graphics&, bool, bool) override {}
+    } skullHit_;
     juce::ComboBox key_, scale_;
     juce::Slider speed_, amount_, mix_;
     juce::TextButton bypass_{"BYPASS"}, more_{"MORE"}, presetNotes_{"RESET NOTES"};

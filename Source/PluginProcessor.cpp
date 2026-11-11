@@ -10,6 +10,19 @@ SkellyTuneRealtimeProcessor::SkellyTuneRealtimeProcessor()
                                       .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       state_(*this, nullptr, "STATE", createLayout()) {}
 
+SkellyTuneRealtimeProcessor::~SkellyTuneRealtimeProcessor() { leaveWorld(); }
+void SkellyTuneRealtimeProcessor::timerCallback() {
+    if(!followingSkellKey() || !worldLink.online()) {
+        linkedKey_.store(0,std::memory_order_release);
+        return;
+    }
+    skellcore::world::MusicalKey key;
+    std::uint64_t version=0;
+    if(worldLink.latestMusicalKey(key,version))
+        linkedKey_.store(key.packed(),std::memory_order_release);
+    else
+        linkedKey_.store(0,std::memory_order_release);
+}
 juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor::createLayout() {
     using F = juce::AudioParameterFloat;
     using C = juce::AudioParameterChoice;
@@ -96,9 +109,19 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
 #else
     p.experimentalCycleSynthesis = state_.getRawParameterValue("synthesisMode")->load() > 0.5f;
 #endif
-    const int key = juce::jlimit(0, 11, int(std::lround(state_.getRawParameterValue("key")->load())));
-    const int scale = juce::jlimit(0, 2, int(std::lround(state_.getRawParameterValue("scale")->load())));
+    int key = juce::jlimit(0, 11, int(std::lround(state_.getRawParameterValue("key")->load())));
+    int scale = juce::jlimit(0, 2, int(std::lround(state_.getRawParameterValue("scale")->load())));
     const int manualMask = juce::jlimit(0, 4095, int(std::lround(state_.getRawParameterValue("noteMask")->load())));
+    // One atomic read; no socket, locks, host notifications or allocations.
+    // An explicit user opt-in temporarily overrides tuning scale only.
+    // Saved key/scale parameters and any custom note mask remain untouched.
+    if (followKey_.load(std::memory_order_relaxed) && manualMask==0) {
+        const auto world=skellcore::world::unpackMusicalKey(linkedKey_.load(std::memory_order_relaxed));
+        if(world.valid()) {
+            key=world.root;
+            scale=world.mode==0 ? 1 : 2;
+        }
+    }
     p.pitchClasses = skelly::effectiveMask(key, scale, manualMask);
     // The engine's dry path retains the plugin's declared latency. Bypass
     // smoothly drops the wet mix while the detector remains warmed up.
@@ -205,7 +228,20 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
         target.setProperty(juce::Identifier("value"), *cleanValue, nullptr);
         ++restored;
     }
-    if (restored > 0) state_.replaceState(safeState);
+    // Explicitly allow one bounded UI-only property. Old presets remain valid,
+    // and no new automatable parameters or DSP preset fields are introduced.
+    bool restoredSkin=false;
+    if (incoming.hasProperty(juce::Identifier("skellSkullSkin"))) {
+        const auto candidate=decodeSavedNumber(incoming.getProperty("skellSkullSkin"));
+        if(candidate && std::isfinite(*candidate) && *candidate >= 0 && *candidate <= 3 &&
+           std::floor(*candidate)==*candidate) {
+            const auto selected=static_cast<int>(*candidate);
+            safeState.setProperty("skellSkullSkin",selected,nullptr);
+            skinIndex_.store(selected,std::memory_order_release);
+            restoredSkin=true;
+        }
+    }
+    if (restored > 0 || restoredSkin) state_.replaceState(safeState);
     // Invalid/unknown chunks do not damage the current valid state.
 }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {

@@ -35,3 +35,13 @@ The DSP engine includes 0 ms *Retune Speed* (no correction smoothing), which doe
 Do not change manufacturer/plugin codes or parameter IDs without a migration plan; existing FL Studio projects rely on them. Back up projects before changing installed VST3 versions. Third-party license notices are in `third_party`.
 
 [Patch notes](CHANGELOG_v331.md) · [FL Studio recovery](FL_STUDIO_RECOVERY.md) · [State validation](STATE_RESTORE_PATCH_REPORT.md)
+
+## SkellWorld / SkellKey link (opt-in preview)
+
+SkellyTune can follow SkellKey's confident major/minor analysis without any MIDI routing. First start the local SkellWorld hub (from the SkellCore template checkout), join both plugins, and in SkellyTune's **MORE** panel select **JOIN WORLD** then **FOLLOW SKELLKEY**. In SkellKey click **JOIN WORLD** in the footer. SkellKey sends its detected key when confidence is high and the result is stable; updates run on background/UI threads. No audio or plugin state is sent over the network.
+
+**Follow is off by default, never persisted or enabled at project load.** While active, SkellyTune uses an atomic, temporary effective-scale override. Its saved key, scale, note mask, latency and automation remain intact. On disconnect or leave it reverts to the selected manual key/scale. Custom note masks have priority; reset those before following. The older SkellKey MIDI scale transmission remains a separate option.
+
+Click the skull-key logo in SkellyTune to cycle SkellCore's four shared skins (Ossuary, Neon, Ivory, Obsidian); the existing default Neon skin is preserved. Skin changes affect UI only and persist as an optional safe saved-state property. SkellKey uses the same mark and colors.
+
+This is a developer pilot. It requires both plugins on matching shared SkellCore versions and the opt-in local hub; physical FL Studio sessions and UI click/reopen tests are still required for release.

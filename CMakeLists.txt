@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(SkellyTune VERSION 3.3.1 LANGUAGES C CXX)
 
-# Based on skell-vst-template's CMake/JUCE 8 approach. The original template's
+# Based on skellcore-vst-template's CMake/JUCE 8 approach. The original template's
 # demo gain processor has been replaced by the SkellyTune v3.3 DSP and GUI.
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,7 +42,7 @@ if(SKELLY_BUILD_PLUGIN)
     # SkellCore is pinned at an immutable revision. This provides UI theme
     # primitives and optional local WorldLink, not the imported tuning DSP.
     FetchContent_Declare(SkellCoreShared
-        GIT_REPOSITORY https://github.com/skellyruno/skell-vst-template.git
+        GIT_REPOSITORY https://github.com/skellyruno/skellcore-vst-template.git
         GIT_TAG 4c499c58cb3b2791eed2d5dcef6d8d543fcaea8d
         SOURCE_SUBDIR SkellCore)
     FetchContent_MakeAvailable(SkellCoreShared)

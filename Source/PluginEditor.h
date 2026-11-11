@@ -17,6 +17,11 @@ private:
             skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
+        juce::Font getTextButtonFont(juce::TextButton&, int height) override {
+            return juce::Font(juce::FontOptions(
+                juce::jlimit(12.0f, 26.0f, float(height) * 0.43f),
+                juce::Font::bold));
+        }
         juce::Font getComboBoxFont(juce::ComboBox& b) override {
             return juce::Font(juce::FontOptions(
                 juce::jlimit(12.0f, 22.0f, float(b.getHeight()) * 0.50f),

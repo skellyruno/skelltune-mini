@@ -14,8 +14,20 @@ SkellyTuneRealtimeProcessor::~SkellyTuneRealtimeProcessor() { leaveWorld(); }
 void SkellyTuneRealtimeProcessor::timerCallback() {
     if(!followingSkellKey() || !worldLink.online()) {
         linkedKey_.store(0,std::memory_order_release);
+        linkedTuning_.store(0,std::memory_order_release);
         return;
     }
+    skellcore::world::MusicalTuning tuning;
+    std::uint32_t tuningVersion=0;
+    // Prefer the complete atomic snapshot; an old SkellKey publisher can
+    // still provide root/mode through the legacy musical.key topic.
+    if(worldLink.latestMusicalTuning(tuning,tuningVersion)) {
+        linkedTuning_.store(skellcore::world::packMusicalTuning(tuning,1),std::memory_order_release);
+        linkedKey_.store(skellcore::world::MusicalKey{tuning.root,tuning.mode}.packed(),
+                         std::memory_order_release);
+        return;
+    }
+    linkedTuning_.store(0,std::memory_order_release);
     skellcore::world::MusicalKey key;
     std::uint64_t version=0;
     if(worldLink.latestMusicalKey(key,version))
@@ -123,6 +135,17 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
         }
     }
     p.pitchClasses = skelly::effectiveMask(key, scale, manualMask);
+    if (followKey_.load(std::memory_order_relaxed) && manualMask == 0) {
+        skellcore::world::MusicalTuning tuning;
+        std::uint32_t version=0;
+        const auto snapshot=linkedTuning_.load(std::memory_order_acquire);
+        if (skellcore::world::unpackMusicalTuning(snapshot,tuning,version)) {
+            // Never alter host-automatable A4/key/scale. Override only the
+            // DSP's transient effective values, after explicit user opt-in.
+            p.pitchClasses = int(tuning.mask);
+            p.referenceA = static_cast<float>(tuning.a4Hz());
+        }
+    }
     // The engine's dry path retains the plugin's declared latency. Bypass
     // smoothly drops the wet mix while the detector remains warmed up.
     if (state_.getRawParameterValue("bypass")->load() > 0.5f) p.mix = 0.0f;

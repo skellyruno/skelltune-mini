@@ -30,28 +30,16 @@ jobs:
           cmake --build build --config Release --target SkellyTuneGuiSmoke --parallel 2
           $exe = Get-ChildItem -Path build -File -Recurse -Filter 'SkellyTuneGuiSmoke.exe' | Select-Object -First 1
           if (-not $exe) { throw 'GUI smoke test executable missing' }
-          $hubScript = Get-ChildItem -Path build/_deps -Recurse -File -Filter skellworld_hub.py | Select-Object -First 1
-          if (-not $hubScript) { throw 'Pinned SkellCore localhost hub not found' }
-          $stdout = Join-Path $PWD 'skellworld-hub-out.log'
-          $stderr = Join-Path $PWD 'skellworld-hub-err.log'
-          $hub = Start-Process -FilePath python -ArgumentList @('-u', ('"' + $hubScript.FullName + '"')) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          # A real SkellKey sender and Mini receiver share Key/Scale/A4
+          # through a Windows Local\\ mapping. NO Python or Hub is started.
+          $env:SKELL_LOCAL_IPC_TEST = '1'
           try {
-            Start-Sleep -Milliseconds 700
-            if ($hub.HasExited) {
-              Get-Content $stdout -ErrorAction SilentlyContinue
-              Get-Content $stderr -ErrorAction SilentlyContinue
-              throw 'Local SkellWorld Hub could not start'
-            }
-            $env:SKELL_SYNC_HUB_TEST = '1'
             & $exe.FullName
             if ($LASTEXITCODE -ne 0) {
-              Get-Content $stdout -ErrorAction SilentlyContinue
-              Get-Content $stderr -ErrorAction SilentlyContinue
-              throw "GUI + SkellKey integration smoke failed: $LASTEXITCODE"
+              throw "Hubless SkellKey/Mini integration smoke failed: $LASTEXITCODE"
             }
           } finally {
-            Remove-Item Env:SKELL_SYNC_HUB_TEST -ErrorAction SilentlyContinue
-            if (-not $hub.HasExited) { Stop-Process -Id $hub.Id -Force }
+            Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
           }
       - name: Save verified Mini UI previews
         uses: actions/upload-artifact@v6

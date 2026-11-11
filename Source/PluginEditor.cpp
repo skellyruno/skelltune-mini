@@ -5,12 +5,7 @@
 #include <vector>
 
 namespace {
-const auto bg       = juce::Colour::fromRGB(8, 13, 10);
-const auto panel    = juce::Colour::fromRGB(18, 27, 20);
-const auto neon     = juce::Colour::fromRGB(144, 255, 68);
-const auto dimText  = juce::Colour::fromRGB(157, 173, 156);
-const auto light    = juce::Colour::fromRGB(236, 248, 235);
-const auto stroke   = juce::Colour::fromRGB(47, 67, 48);
+// Skin colours come from each editor's SkellCore palette (no globals).
 const char* const noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 using State = juce::AudioProcessorValueTreeState;
 
@@ -177,7 +172,7 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(juce::Graphics& g, int x, i
     juce::Path track, active;
     track.addCentredArc(cx, cy, r, r, 0.0f, start, end, true);
     active.addCentredArc(cx, cy, r, r, 0.0f, start, start + pos * (end - start), true);
-    g.setColour(juce::Colour::fromRGB(40, 60, 43));
+    g.setColour(palette.line);
     g.strokePath(track, juce::PathStrokeType(ring, juce::PathStrokeType::curved,
                                               juce::PathStrokeType::rounded));
     g.setColour(neon.withAlpha(0.18f));
@@ -188,7 +183,7 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(juce::Graphics& g, int x, i
                                                juce::PathStrokeType::rounded));
     auto center = juce::Rectangle<float>(cx-r+ring*1.7f, cy-r+ring*1.7f,
                                           2.0f*(r-ring*1.7f), 2.0f*(r-ring*1.7f));
-    g.setColour(juce::Colour::fromRGB(5, 10, 7));
+    g.setColour(palette.background);
     g.fillEllipse(center);
     g.setColour(stroke);
     g.drawEllipse(center, 1.4f);
@@ -269,10 +264,10 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
         notes_[size_t(i)]->onClick = [this, i] { togglePitchClass(i); };
     }
     for (auto* btn : {&bypass_, &more_, &presetNotes_}) {
-        btn->setColour(juce::TextButton::buttonColourId, panel);
-        btn->setColour(juce::TextButton::buttonOnColourId, neon.withAlpha(0.20f));
-        btn->setColour(juce::TextButton::textColourOffId, dimText);
-        btn->setColour(juce::TextButton::textColourOnId, neon);
+        btn->setColour(juce::TextButton::buttonColourId, palette_.panel);
+        btn->setColour(juce::TextButton::buttonOnColourId, palette_.accent.withAlpha(0.20f));
+        btn->setColour(juce::TextButton::textColourOffId, palette_.boneDim);
+        btn->setColour(juce::TextButton::textColourOnId, palette_.accent);
         btn->setLookAndFeel(&theme_);
         addAndMakeVisible(*btn);
     }

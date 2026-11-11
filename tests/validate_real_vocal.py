@@ -129,11 +129,12 @@ def compare_gain_normalized(baseline, louder, factor, report_only=False):
     print(f"Real-singer loudness A/B: normalized RMS mismatch={100*relative:.3f}% "
           f"maximum per-sample difference={maxstep:.5f} "
           f"gain={factor:.3f}x")
-    # This is a signal-safety regression, not a perceptual equivalence
-    # measurement. Moderately different gain should not change pitch-lock
-    # decisions so much that the rendered audio diverges dramatically.
-    if relative > 0.15 and not report_only:
-        raise ValueError("vocal protection became substantially level-dependent")
+    # Cycle-resynthesis can select a neighboring source period, shifting
+    # waveform phase without changing the audible level or note target.
+    # Test real-singer short-time envelopes here, and target decisions via
+    # a separate pitch-trace comparison instead of a raw sample RMSE gate.
+    if envelope_mismatch > 0.05 and not report_only:
+        raise ValueError("real-vocal gain scaling changed short-time loudness")
 
 def compare_traces(low_file, high_file):
     import csv
@@ -157,10 +158,16 @@ def compare_traces(low_file, high_file):
         if float(left["f0"]) > 65 and float(right["f0"]) > 65:
             pitches+=1
             pitch_divergence += abs(1200*math.log2(float(left["f0"])/float(right["f0"])))
+    average_wet = mixed_wet_difference / len(low)
+    average_pitch_cents = pitch_divergence / max(pitches, 1)
     print(f"Detector A/B: target mismatched frames={target_changes}/{len(low)} "
           f"pending mismatch={pending_changes} "
-          f"average wet difference={mixed_wet_difference/len(low):.4f} "
-          f"average pitch drift={pitch_divergence/max(pitches,1):.3f} cents")
+          f"average wet difference={average_wet:.4f} "
+          f"average pitch drift={average_pitch_cents:.3f} cents")
+    if (target_changes > max(4, len(low) * 0.02)
+            or pending_changes > max(4, len(low) * 0.04)
+            or average_wet > 0.04 or average_pitch_cents > 6.0):
+        raise ValueError("higher vocal level caused an unintended note/gate change")
 
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--traces":

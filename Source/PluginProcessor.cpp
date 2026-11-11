@@ -8,32 +8,84 @@
 SkellyTuneRealtimeProcessor::SkellyTuneRealtimeProcessor()
     : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
                                       .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      state_(*this, nullptr, "STATE", createLayout()) {}
+      state_(*this, nullptr, "STATE", createLayout()) {
+    // JUCE Timer callbacks run on the message thread, not the audio thread.
+    // Starting here also covers instances whose editor is never opened.
+    startTimerHz(5);
+}
 
 SkellyTuneRealtimeProcessor::~SkellyTuneRealtimeProcessor() { leaveWorld(); }
+
+// Called ONLY on the JUCE message thread after WorldLink has validated the
+// publisher's SkellKey product ID and complete key/scale/A4 payload.
+bool SkellyTuneRealtimeProcessor::applySkellKeyTuning(
+    const skellcore::world::MusicalTuning& tuning) {
+    if (!tuning.valid()) return false;
+    jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+
+    // Persist visible Key, Scale and A4 values via their existing APVTS IDs.
+    // No new automation IDs, custom masks or plugin state fields are added.
+    // Change notifications happen only when the value differs.
+    const auto syncParameter = [this](const char* id, float value) {
+        auto* parameter = state_.getParameter(id);
+        const auto* current = state_.getRawParameterValue(id);
+        if (parameter == nullptr || current == nullptr) return;
+        const float epsilon = juce::String(id) == "a4" ? 0.051f : 0.01f;
+        if (std::abs(current->load(std::memory_order_relaxed) - value) <= epsilon)
+            return;
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+        parameter->endChangeGesture();
+    };
+    syncParameter("key", float(tuning.root));
+    syncParameter("scale", float(tuning.mode + 1)); // major=1, natural minor=2
+    syncParameter("a4", float(std::round(tuning.a4Hz() * 10.0) / 10.0));
+
+    // Publish a coherent 64-bit snapshot for the realtime audio callback.
+    linkedTuning_.store(skellcore::world::packMusicalTuning(tuning,1),
+                        std::memory_order_release);
+    linkedKey_.store(skellcore::world::MusicalKey{tuning.root,tuning.mode}.packed(),
+                     std::memory_order_release);
+    return true;
+}
+
 void SkellyTuneRealtimeProcessor::timerCallback() {
-    if(!followingSkellKey() || !worldLink.online()) {
-        linkedKey_.store(0,std::memory_order_release);
-        linkedTuning_.store(0,std::memory_order_release);
+    // The listener is automatic. Its worker retries 127.0.0.1 without ever
+    // blocking audio or requesting a receiver-side JOIN/FOLLOW button.
+    if (!joinWorld()) return;
+    if (!worldLink.online()) {
+        linkedKey_.store(0, std::memory_order_release);
+        linkedTuning_.store(0, std::memory_order_release);
         return;
     }
     skellcore::world::MusicalTuning tuning;
-    std::uint32_t tuningVersion=0;
-    // Prefer the complete atomic snapshot; an old SkellKey publisher can
-    // still provide root/mode through the legacy musical.key topic.
-    if(worldLink.latestMusicalTuning(tuning,tuningVersion)) {
-        linkedTuning_.store(skellcore::world::packMusicalTuning(tuning,1),std::memory_order_release);
-        linkedKey_.store(skellcore::world::MusicalKey{tuning.root,tuning.mode}.packed(),
-                         std::memory_order_release);
+    std::uint32_t tuningVersion = 0;
+    // Full tuning packet takes priority so Key, Scale and A4 arrive together.
+    if (worldLink.latestMusicalTuning(tuning, tuningVersion)) {
+        applySkellKeyTuning(tuning);
         return;
     }
-    linkedTuning_.store(0,std::memory_order_release);
+    linkedTuning_.store(0, std::memory_order_release);
+    // Older SkellKey builds may send only musical.key. A4 stays manual.
     skellcore::world::MusicalKey key;
-    std::uint64_t version=0;
-    if(worldLink.latestMusicalKey(key,version))
-        linkedKey_.store(key.packed(),std::memory_order_release);
-    else
-        linkedKey_.store(0,std::memory_order_release);
+    std::uint64_t version = 0;
+    if (worldLink.latestMusicalKey(key, version)) {
+        linkedKey_.store(key.packed(), std::memory_order_release);
+        const auto sync = [this](const char* id, float value) {
+            auto* p = state_.getParameter(id);
+            auto* current = state_.getRawParameterValue(id);
+            if (p != nullptr && current != nullptr
+                && std::abs(current->load(std::memory_order_relaxed)-value)>0.01f) {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(p->convertTo0to1(value));
+                p->endChangeGesture();
+            }
+        };
+        sync("key", float(key.root));
+        sync("scale", float(key.mode + 1));
+    } else {
+        linkedKey_.store(0, std::memory_order_release);
+    }
 }
 juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor::createLayout() {
     using F = juce::AudioParameterFloat;
@@ -127,7 +179,7 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
     // One atomic read; no socket, locks, host notifications or allocations.
     // An explicit user opt-in temporarily overrides tuning scale only.
     // Saved key/scale parameters and any custom note mask remain untouched.
-    if (followKey_.load(std::memory_order_relaxed) && manualMask==0) {
+    if (followingSkellKey() && manualMask==0) {
         const auto world=skellcore::world::unpackMusicalKey(linkedKey_.load(std::memory_order_relaxed));
         if(world.valid()) {
             key=world.root;
@@ -135,7 +187,7 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
         }
     }
     p.pitchClasses = skelly::effectiveMask(key, scale, manualMask);
-    if (followKey_.load(std::memory_order_relaxed) && manualMask == 0) {
+    if (followingSkellKey() && manualMask == 0) {
         skellcore::world::MusicalTuning tuning;
         std::uint32_t version=0;
         const auto snapshot=linkedTuning_.load(std::memory_order_acquire);
@@ -204,6 +256,9 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     displayedCorrectionCents_.store(float(engine_.appliedCents()), std::memory_order_relaxed);
 }
 juce::AudioProcessorEditor* SkellyTuneRealtimeProcessor::createEditor() {
+    // Connect immediately for a visible editor, but do not require that
+    // editor to remain open: processor timer keeps the listener running.
+    joinWorld();
     return new SkellyTuneEditor(*this);
 }
 

@@ -13,11 +13,29 @@ int main() {
         std::cerr << "STEP: JUCE init ok\n" << std::flush;
         SkellyTuneRealtimeProcessor processor;
         std::cerr << "STEP: processor ok\n" << std::flush;
-        if (processor.worldLink.requested() || processor.followingSkellKey() ||
-            processor.linkedMusicalKey().valid() || processor.setFollowSkellKey(true)) {
-            std::cerr << "FAIL: World/Follow unexpectedly enabled at plugin startup\n";
+        // Receiver must not assume any SkellKey value until an authenticated
+        // packet is received. Joining the local hub needs no Mini control.
+        if (processor.linkedMusicalKey().valid()) {
+            std::cerr << "FAIL: invented tuning before SkellKey sent\n";
             return 19;
         }
+        const auto incoming = skellcore::world::makeMusicalTuning(7, 1, 442.4);
+        if (!processor.applySkellKeyTuning(incoming) ||
+            std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f ||
+            std::abs(processor.parameters().getRawParameterValue("scale")->load() - 2.0f) > 0.01f ||
+            std::abs(processor.parameters().getRawParameterValue("a4")->load() - 442.4f) > 0.06f) {
+            std::cerr << "FAIL: SkellKey did not synchronize Key, Scale and A4\n";
+            return 19;
+        }
+        auto malformed = incoming;
+        malformed.root = 12;
+        if (processor.applySkellKeyTuning(malformed) ||
+            std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f) {
+            std::cerr << "FAIL: accepted invalid external key\n";
+            return 21;
+        }
+        std::cerr << "STEP: verified SkellKey key/scale/A4 receive + malformed rejection\n"
+                  << std::flush;
         // Theme is UI-only, stored in a non-automatable property. Old plugin
         // parameter IDs remain intact after a state roundtrip.
         processor.setSkullSkin(skellcore::ui::SkullSkin::Ossuary);
@@ -41,7 +59,12 @@ int main() {
         std::cerr << "STEP: prepare ok\n" << std::flush;
         std::cerr << "STEP: before editor construction\n" << std::flush;
         std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
-        std::cerr << "STEP: editor constructed\n" << std::flush;
+        if (!processor.worldLink.requested() || !processor.followingSkellKey()) {
+            std::cerr << "FAIL: Mini did not start automatic SkellKey listener\n";
+            return 22;
+        }
+        std::cerr << "STEP: editor constructed and automatic listener started\n"
+                  << std::flush;
         if (!editor || editor->getWidth() < 400 || editor->getHeight() < 400)
             return 2;
         editor->resized();
@@ -144,6 +167,56 @@ int main() {
         juce::MidiBuffer midi;
         processor.processBlock(audio, midi);
         std::cerr << "STEP: processBlock ok\n" << std::flush;
+
+        if (juce::SystemStats::getEnvironmentVariable("SKELL_SYNC_HUB_TEST", {}) == "1") {
+            // End-to-end link: Hub + real WorldLink receiver + deliberately
+            // opted-in SkellKey sender, without activating Mini UI controls.
+            skellcore::world::WorldLink sender("skell.key", "Skell Key smoke sender");
+            if (!sender.join()) {
+                std::cerr << "FAIL: sender could not join hub\n"; return 23;
+            }
+            for (int i=0; i<100 &&
+                 (!sender.online() || !processor.worldLink.online()); ++i) {
+                juce::Thread::sleep(50);
+                juce::Timer::callPendingTimersSynchronously();
+            }
+            if (!sender.online() || !processor.worldLink.online()) {
+                std::cerr << "FAIL: sender/receiver never connected to hub\n";
+                return 24;
+            }
+            // Merely connecting must not change Key, Scale or A4:
+            // publisher action is explicit and must come first.
+            if (std::abs(processor.parameters().getRawParameterValue("key")->load()) > 0.01f ||
+                std::abs(processor.parameters().getRawParameterValue("scale")->load()) > 0.01f ||
+                std::abs(processor.parameters().getRawParameterValue("a4")->load() - 440.0f) > 0.05f) {
+                std::cerr << "FAIL: tuning changed before Send to Tune\n";
+                return 25;
+            }
+            juce::Thread::sleep(220); // allow hub PEER identity advertisement
+            if (!sender.publishMusicalTuning(
+                    skellcore::world::makeMusicalTuning(4, 1, 432.5))) {
+                std::cerr << "FAIL: SEND TO TUNE event could not publish\n";
+                return 26;
+            }
+            bool received = false;
+            for (int i=0;i<100;++i) {
+                juce::Thread::sleep(50);
+                juce::Timer::callPendingTimersSynchronously();
+                const auto& state = processor.parameters();
+                if (std::abs(state.getRawParameterValue("key")->load()-4.0f)<0.01f &&
+                    std::abs(state.getRawParameterValue("scale")->load()-2.0f)<0.01f &&
+                    std::abs(state.getRawParameterValue("a4")->load()-432.5f)<0.06f) {
+                    received=true; break;
+                }
+            }
+            sender.leave();
+            if (!received) {
+                std::cerr << "FAIL: Mini did not receive Key=E, Minor, A4=432.5\n";
+                return 27;
+            }
+            std::cerr << "STEP: hub verified Send to Tune -> Key/Scale/A4 without Mini controls\n"
+                      << std::flush;
+        }
         editor.reset();
         processor.releaseResources();
         std::cout << "PASS: processor startup, editor construction/layout/paint, audio callback, editor teardown\n";

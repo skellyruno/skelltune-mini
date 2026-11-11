@@ -24,10 +24,34 @@ The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversize
 - Click a piano note to enable/disable it. **Double-click a note to restore Key/Scale notes**. "Custom Notes" is indicated above the piano. The window remains 432 × 414 by default and resizes proportionally to 1008 × 966.
 - The editor always uses the shared SkellCore neon-green skull branding. The old skin state is still accepted for saved-session migration, but the skull is now a static brand mark, not another button.
 - **All legacy automatable parameter IDs remain in the processor**, including hidden Mix/Amount/Bypass and synthesis options, so older host sessions don't lose their saved settings. New instances retain the existing default full correction/full wet. A project with intentionally overridden legacy automation will continue using those values.
-- The former advanced UI for experimental PSOLA and manual SkellWorld/SkellKey opt-in is removed from Mini. Their backing processing/state code was deliberately not deleted to avoid breaking existing projects, but new users cannot enable World follow from this minimal editor.
+- The former advanced UI for experimental PSOLA and manual SkellWorld/SkellKey opt-in is removed from Mini. Its SkellKey receiver now connects automatically: the **SEND TO TUNE** button on Skell Key is the only visible trigger. Experimental DSP/state IDs are retained for old projects.
 - The wet **reconstruction** (not input, delayed dry, or sample-accurate transient path) now passes through a causal, stereo-symmetric, two-stage 12 Hz DC blocker. Measured response: ~-16.6 dB at 5 Hz, -7.7 dB at 10 Hz, -2.7 dB at 20 Hz, and -0.29 dB at 65 Hz. It is not a replacement for diagnosis of octave tracking errors or microphone/room rumble.
 - CI checks 39 portable DSP regressions, long-silence denormal safety, raw-vocal peak/RMS integrity, loud/quiet tone gain equivalence, real-singer gain-scaled A/B, and Windows JUCE rendering / A4-key-scale-piano attachments at three sizes. The Windows job uploads PNG UI previews and a VST3 artifact (7-day retention).
 - **Limits:** Real FL Studio loading/closing, microphone loudness behavior, subjective artifact elimination, exact wet-waveform delay, and listening tests on multiple singers still need real-host evaluation. Zero ms Retune Speed is not zero host latency.
+
+## Skell Key -> SkellyTune Mini automatic Send to Tune
+
+**No extra Mini controls.** SkellyTune Mini automatically listens to the local
+**SkellWorld Hub** (127.0.0.1:48673) on a non-audio thread. Open Skell Key,
+wait until it has a confirmed key, then click **SEND TO TUNE**. Only then does
+Skell Key broadcast Key, Scale and A4 (plus an absolute pitch-class mask).
+Mini receives trusted `skell.key` packets, updates its existing Key/Scale/A4
+controls and DAW parameter values, and uses a coherent atomic tuning snapshot
+for audio. The mini piano follows the transmitted scale unless it has a custom
+note selection; double-click a note to restore normal Key/Scale following.
+
+**SEND TO TUNE** stays active until turned off or Skell Key loses its
+available result. While active, newly confirmed tuning changes are forwarded
+automatically. Without a running Hub or a valid Skell Key event, Mini remains
+fully functional using its current tuning; there is no fabricated received key.
+The original VST3 IDs and parameter IDs are unchanged. Since incoming tuning
+also updates existing host parameters, the last received values remain after
+sharing stops. No audio thread performs socket operations.
+
+**Verification:** The Windows JUCE GUI smoke test checks valid and malformed
+tuning snapshots, automatic link startup, and actual message transfer through
+the pinned SkellWorld Hub with a simulated authenticated SkellKey publisher.
+FL Studio host-specific loading and session restore remain to be verified.
 
 ## Build and download
 On pushes to `main`, **Build SkellyTune Realtime VST3** runs on GitHub Actions and builds only the **SkellyTune Realtime** Windows VST3 (3 ms nominal dry/transient delay). Download the `SkellyTune-Realtime-Windows-VST3` artifact from the successful workflow. No Studio, Studio Fast, or Standalone files are produced.

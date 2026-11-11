@@ -43,7 +43,7 @@ if(SKELLY_BUILD_PLUGIN)
     # primitives and optional local WorldLink, not the imported tuning DSP.
     FetchContent_Declare(SkellCoreShared
         GIT_REPOSITORY https://github.com/skellyruno/skell-vst-template.git
-        GIT_TAG 568a17fd1956065f06d20813f5e57c3621c1cac9
+        GIT_TAG 098cf696f7e44cf5fbfe8a1566e06ac39ffbc747
         SOURCE_SUBDIR SkellCore)
     FetchContent_MakeAvailable(SkellCoreShared)
 

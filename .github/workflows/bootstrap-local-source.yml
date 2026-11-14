@@ -1,10 +1,8 @@
 name: One-time Mini offline source bootstrap
 # Only transfers the repository source because the ChatGPT build container
 # cannot reach github.com directly. NEVER used to render UI screenshots.
+# Source transferred once. Manual-only fallback; not UI rendering.
 on:
-  push:
-    paths:
-      - '.github/workflows/bootstrap-local-source.yml'
   workflow_dispatch:
 jobs:
   source-only:

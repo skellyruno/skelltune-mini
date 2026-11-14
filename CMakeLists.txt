@@ -114,9 +114,12 @@ if(SKELLY_BUILD_PLUGIN)
             "${CMAKE_CURRENT_SOURCE_DIR}/dsp")
         target_link_libraries(SkellyTuneQuick4 PRIVATE
             skelly_dsp juce::juce_audio_utils juce::juce_audio_processors
-            juce::juce_dsp juce::juce_recommended_config_flags
-            juce::juce_recommended_warning_flags
+            juce::juce_dsp juce::juce_recommended_warning_flags
             SkellCore::DSP SkellCore::UI)
+        # UI renderer only: no release-O3. Avoid unnecessary memory usage
+        # when compiling JUCE locally; the shipped VST3 keeps release flags.
+        target_compile_options(SkellyTuneQuick4 PRIVATE
+            $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O0>)
         target_compile_definitions(SkellyTuneQuick4 PRIVATE
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
     endif()

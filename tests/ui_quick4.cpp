@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <set>
 
 namespace {
 struct Scene {
@@ -28,8 +29,9 @@ bool savePng(const juce::Image& image, const juce::File& file) {
     if (!image.isValid()) return false;
     auto stream = file.createOutputStream();
     if (!stream) return false;
-    return juce::PNGImageFormat().writeImageToStream(image, *stream)
-           && stream->flush() && file.getSize() > 1000;
+    const bool written = juce::PNGImageFormat().writeImageToStream(image, *stream);
+    stream->flush();
+    return written && file.getSize() > 1000;
 }
 int colourCount(const juce::Image& image) {
     std::set<juce::uint32> colours;

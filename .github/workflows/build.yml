@@ -41,13 +41,6 @@ jobs:
           } finally {
             Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
           }
-      - name: Save verified Mini UI previews
-        uses: actions/upload-artifact@v6
-        with:
-          name: SkellyTuneMini-UI-Previews
-          path: SkellyTuneMini_UI_*.png
-          retention-days: 7
-          if-no-files-found: error
       - name: Package only SkellyTune Realtime
         shell: pwsh
         run: |

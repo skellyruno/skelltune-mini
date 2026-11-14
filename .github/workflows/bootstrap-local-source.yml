@@ -1,0 +1,30 @@
+name: One-time Mini offline source bootstrap
+# Only transfers the repository source because the ChatGPT build container
+# cannot reach github.com directly. NEVER used to render UI screenshots.
+on:
+  push:
+    paths:
+      - '.github/workflows/bootstrap-local-source.yml'
+  workflow_dispatch:
+jobs:
+  source-only:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Export exact Mini sources without Git metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive HEAD -o SkellyTuneMini-offline-source.tar
+          gzip -n SkellyTuneMini-offline-source.tar
+          test -s SkellyTuneMini-offline-source.tar.gz
+          git rev-parse HEAD > source-commit.txt
+          echo "No UI rendering or release build occurs in this job."
+      - uses: actions/upload-artifact@v6
+        with:
+          name: SkellyTuneMini-one-time-offline-source
+          path: |
+            SkellyTuneMini-offline-source.tar.gz
+            source-commit.txt
+          retention-days: 7
+          if-no-files-found: error

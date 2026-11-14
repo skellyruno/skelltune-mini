@@ -99,6 +99,28 @@ if(SKELLY_BUILD_PLUGIN)
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
     endif()
 
+    # LOCAL-ONLY real JUCE editor screenshots. Not a VST3/Standalone product,
+    # not an audio-waveform renderer, and never shipped to customers.
+    # Can build offline with -DJUCE_PATH=... and
+    # -DFETCHCONTENT_SOURCE_DIR_SKELLCORESHARED=... (pinned source).
+    option(SKELLY_BUILD_UI_QUICK4 "Build local native SkellyTune Mini UI renderer" OFF)
+    if(SKELLY_BUILD_UI_QUICK4)
+        juce_add_console_app(SkellyTuneQuick4 PRODUCT_NAME "SkellyTune Mini Quick4 UI Renderer")
+        target_sources(SkellyTuneQuick4 PRIVATE
+            tests/ui_quick4.cpp
+            Source/PluginProcessor.cpp Source/PluginProcessor.h
+            Source/PluginEditor.cpp Source/PluginEditor.h)
+        target_include_directories(SkellyTuneQuick4 PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/dsp")
+        target_link_libraries(SkellyTuneQuick4 PRIVATE
+            skelly_dsp juce::juce_audio_utils juce::juce_audio_processors
+            juce::juce_dsp juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+            SkellCore::DSP SkellCore::UI)
+        target_compile_definitions(SkellyTuneQuick4 PRIVATE
+            JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
+    endif()
+
     # Keep the v3.3 VST3 IDs unchanged so projects and presets can continue
     # recognizing the same plugin rather than the template gain plugin.
     skelly_add_plugin(SkellyTuneRealtime

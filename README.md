@@ -1,4 +1,8 @@
 # SkellTune Mini — SkellyTune v3.3.1
+
+## Current UI — capture the actual JUCE editor (not an image render)
+**When asked to show the current UI**, build `SkellyTuneQuick4` locally (`-DSKELLY_BUILD_UI_QUICK4=ON`) and run `xvfb-run -a ./SkellyTuneQuick4 --output ui-quick4`. It captures the **real C++ JUCE AudioProcessorEditor**: four screenshots plus contact sheet and manifest. `--full` does the eight-scene deep audit. This was tested locally at 4/4 scenes, about **1.3 seconds to capture** on the compiled executable. See `docs/LOCAL_UI_SCREENSHOTS.md` and `AGENTS.md` for exact build steps and truthfulness requirements. **`tools/render.cpp` generates audio WAV files, not UI screenshots**; don't generate imagined UI images. Windows VST3 build and host/DSP regression remain separate.
+
 JUCE 8 / CMake C++17 VST3 project with SkellyTune's real pitch-correction engine and compact, resizable dark/neon-green GUI (not the original gain template).
 
 The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversized, or unsupported saved parameter values without overwriting existing valid settings. **It has not yet been verified to resolve the exact Fruity Wrapper crash**; see [FL_STUDIO_RECOVERY.md](FL_STUDIO_RECOVERY.md).

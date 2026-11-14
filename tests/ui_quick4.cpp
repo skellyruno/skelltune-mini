@@ -124,7 +124,8 @@ int main(int argc, char** argv) {
         editor->setSize(sc.width,sc.height);
         editor->resized();
         // Let Mini's own timer update the real piano state on the message thread.
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(110);
+        juce::Thread::sleep(110);
+        juce::Timer::callPendingTimersSynchronously();
         auto shot=editor->createComponentSnapshot(editor->getLocalBounds(),true);
         if (!shot.isValid() || shot.getWidth()!=sc.width || shot.getHeight()!=sc.height
             || colourCount(shot)<12 || !controlsInside(*editor)) {

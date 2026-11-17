@@ -54,9 +54,32 @@ jobs:
           if ($modules.Count -ne 1) {
             throw "Expected exactly one VST3 module in bundle; found $($modules.Count)"
           }
-          $expectedSuffix = 'Contents\\x86_64-win\\SkellyTune Realtime.vst3'
-          if (-not $modules[0].FullName.EndsWith($expectedSuffix, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Unexpected VST3 module location: $($modules[0].FullName)"
+          # Compare path components through .NET path APIs instead of a
+          # hand-escaped suffix. PowerShell single-quoted strings preserve
+          # backslashes, so a doubled literal separator rejects valid bundles.
+          $expectedRelativePath = [System.IO.Path]::Combine('Contents', 'x86_64-win', 'SkellyTune Realtime.vst3')
+          function Test-ExpectedVst3ModulePath([string]$BundlePath, [string]$ModulePath) {
+            $relativePath = [System.IO.Path]::GetRelativePath($BundlePath, $ModulePath)
+            return [String]::Equals($relativePath, $expectedRelativePath, [StringComparison]::OrdinalIgnoreCase)
+          }
+
+          # Regression probes: accept the exact Windows VST3 layout and reject
+          # wrong architecture/module paths before inspecting the real bundle.
+          $probeRoot = Join-Path $env:RUNNER_TEMP 'SkellyTuneVst3PathRegression'
+          $validProbe = [System.IO.Path]::Combine($probeRoot, 'Contents', 'x86_64-win', 'SkellyTune Realtime.vst3')
+          $wrongArchProbe = [System.IO.Path]::Combine($probeRoot, 'Contents', 'x86_64-linux', 'SkellyTune Realtime.vst3')
+          $wrongModuleProbe = [System.IO.Path]::Combine($probeRoot, 'Contents', 'x86_64-win', 'OtherPlugin.vst3')
+          if (-not (Test-ExpectedVst3ModulePath $probeRoot $validProbe)) {
+            throw 'VST3 path regression: valid Windows module path was rejected'
+          }
+          if ((Test-ExpectedVst3ModulePath $probeRoot $wrongArchProbe) -or
+              (Test-ExpectedVst3ModulePath $probeRoot $wrongModuleProbe)) {
+            throw 'VST3 path regression: invalid module path was accepted'
+          }
+
+          if (-not (Test-ExpectedVst3ModulePath $bundles[0].FullName $modules[0].FullName)) {
+            $relativeActualPath = [System.IO.Path]::GetRelativePath($bundles[0].FullName, $modules[0].FullName)
+            throw "Unexpected VST3 module location: $relativeActualPath"
           }
           $bytes = [System.IO.File]::ReadAllBytes($modules[0].FullName)
           if ($bytes.Length -lt 512 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {

@@ -194,13 +194,19 @@ function Write-StateFile {
 
 function Get-RollbackPlan {
     param([Parameter(Mandatory)][string]$BackupRoot, [string]$Destination)
-    $statePath = Join-Path $BackupRoot 'active-install.json'
+    $backupFull = [IO.Path]::GetFullPath($BackupRoot)
+    if (-not (Test-Path -LiteralPath $backupFull -PathType Container)) { throw 'Install backup root is missing' }
+    Assert-NoReparsePoints -Path $backupFull
+    $statePath = Join-Path $backupFull 'active-install.json'
     if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { throw 'No SkellyTune Mini install history exists in this backup root' }
     $state = [IO.File]::ReadAllText($statePath) | ConvertFrom-Json -ErrorAction Stop
     if ($state.Schema -ne 'skellytune-mini-install/1' -or $state.Product -ne $script:ProductName) {
         throw 'Install state file has an unsupported schema or product identity'
     }
     $recordedDestination = [IO.Path]::GetFullPath([string]$state.Destination)
+    if (-not (Test-Path -LiteralPath $recordedDestination -PathType Container)) { throw 'Recorded VST3 destination is missing' }
+    $destinationItem = Get-Item -LiteralPath $recordedDestination -Force
+    if (($destinationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Recorded VST3 destination is a reparse point' }
     if (-not [string]::IsNullOrWhiteSpace($Destination) -and
         -not [string]::Equals([IO.Path]::GetFullPath($Destination), $recordedDestination, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Requested destination does not match the recorded installation path'
@@ -218,7 +224,15 @@ function Get-RollbackPlan {
     if ([string]::IsNullOrWhiteSpace($previousBundle) -or -not (Test-Path -LiteralPath $previousBundle -PathType Container)) {
         throw 'No previous version backup is recorded; there is nothing to roll back to'
     }
-    $previous = Test-InstalledBundle -BundlePath $previousBundle
+    $previousFull = [IO.Path]::GetFullPath($previousBundle)
+    $backupPrefix = $backupFull
+    if (-not $backupPrefix.EndsWith([IO.Path]::DirectorySeparatorChar)) {
+        $backupPrefix += [IO.Path]::DirectorySeparatorChar
+    }
+    if (-not $previousFull.StartsWith($backupPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Previous-version backup path is outside the configured SkellyTune Mini backup root'
+    }
+    $previous = Test-InstalledBundle -BundlePath $previousFull
     if ($previous.TreeSha256 -ne [string]$state.PreviousSha256) { throw 'Previous-version backup hash does not match install history' }
     return [pscustomobject]@{
         State = $state

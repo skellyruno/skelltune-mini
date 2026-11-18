@@ -20,6 +20,9 @@ jobs:
           python-version: "3.12"
       - name: Test strict VST3 metadata normalizer
         run: python -m unittest discover -s tests -p "test_vst3_moduleinfo.py" -v
+      - name: Test preview installer and rollback safety
+        shell: pwsh
+        run: ./release/Install-SkellyTuneMini.ps1 -SelfTest
       - name: Configure Realtime-only JUCE VST3
         shell: pwsh
         run: >-
@@ -102,6 +105,7 @@ jobs:
           Copy-Item -LiteralPath LICENSE -Destination (Join-Path $packageRoot 'LICENSE.txt')
           Copy-Item -LiteralPath release/README-WINDOWS-PREVIEW.md -Destination (Join-Path $packageRoot 'README.md')
           Copy-Item -LiteralPath release/THIRD_PARTY_NOTICES.md -Destination (Join-Path $packageRoot 'THIRD_PARTY_NOTICES.md')
+          Copy-Item -LiteralPath release/Install-SkellyTuneMini.ps1 -Destination (Join-Path $packageRoot 'Install-SkellyTuneMini.ps1')
           Copy-Item -LiteralPath third_party/HelixTune_LICENSE.txt -Destination (Join-Path $notices 'HelixTune_LICENSE.txt')
 
           $juceSource = Get-ChildItem -Path build/_deps -Directory -Filter 'juce-src' | Select-Object -First 1

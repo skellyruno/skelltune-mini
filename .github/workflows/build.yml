@@ -200,8 +200,24 @@ jobs:
         run: |
           $bundle = Join-Path $PWD 'dist/SkellyTune-Realtime-Windows-VST3/SkellyTune Realtime.vst3'
           if (-not (Test-Path -LiteralPath $bundle -PathType Container)) { throw 'Staged VST3 bundle missing before pluginval' }
-          & $env:PLUGINVAL_EXE --strictness-level 5 $bundle
-          if ($LASTEXITCODE -ne 0) { throw "pluginval strictness 5 failed: exit code $LASTEXITCODE" }
+
+          # Use a Process object so the exit code is read only after pluginval exits.
+          # This avoids treating an unset PowerShell $LASTEXITCODE as a validator failure.
+          $stdout = Join-Path $env:RUNNER_TEMP 'pluginval.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'pluginval.stderr.log'
+          $argumentLine = '--strictness-level 5 "' + $bundle + '"'
+          $process = Start-Process -FilePath $env:PLUGINVAL_EXE -ArgumentList $argumentLine `
+            -WorkingDirectory $PWD.Path -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+
+          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+          if ($null -eq $process.ExitCode) {
+            throw 'pluginval process did not provide an exit code after waiting for completion'
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "pluginval strictness 5 failed: exit code $($process.ExitCode)"
+          }
       - uses: actions/upload-artifact@v6
         with:
           retention-days: 7

@@ -95,7 +95,7 @@ function Read-ModuleIdentity {
         throw 'VST3 moduleinfo vendor must be Skelly Audio'
     }
     $classes = @($document.Classes)
-    if ($classes.Count -lt 2) { throw 'VST3 moduleinfo must contain audio and controller classes' }
+    if ($classes.Count -ne 2) { throw 'VST3 moduleinfo must contain exactly one audio processor and one controller class' }
     $ids = [System.Collections.Generic.List[string]]::new()
     $categories = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($class in $classes) {
@@ -405,12 +405,21 @@ function Invoke-RollbackInternal {
 }
 
 function Write-TestModuleInfo {
-    param([string]$BundlePath, [string]$Version, [switch]$DuplicateIds)
+    param([string]$BundlePath, [string]$Version, [switch]$DuplicateIds, [switch]$ExtraClass)
     $secondId = if ($DuplicateIds) { 'ABCDEF019182FAEB536B6C79536B5254' } else { 'ABCDEF011234ABCD536B6C79536B5254' }
     $classes = @(
         [ordered]@{ CID = 'ABCDEF019182FAEB536B6C79536B5254'; Category = 'Audio Module Class'; Name = $script:ProductName; Vendor = 'Skelly Audio'; Version = $Version },
         [ordered]@{ CID = $secondId; Category = 'Component Controller Class'; Name = $script:ProductName; Vendor = 'Skelly Audio'; Version = $Version }
     )
+    if ($ExtraClass) {
+        $classes += [ordered]@{
+            CID = 'ABCDEF019182FAEB536B6C79536B5255'
+            Category = 'Factory Preset Class'
+            Name = $script:ProductName
+            Vendor = 'Skelly Audio'
+            Version = $Version
+        }
+    }
     $document = [ordered]@{
         Name = $script:ProductName
         Version = $Version
@@ -496,6 +505,10 @@ function Invoke-SelfTest {
         Write-TestModuleInfo -BundlePath $bundle -Version '3.3.1' -DuplicateIds
         Write-TestChecksumManifest -Root $packageRoot
         Assert-TestFails -Action { Test-PreviewPackage -PackageRoot $packageRoot } -Label 'duplicate class IDs rejected'
+
+        Write-TestModuleInfo -BundlePath $bundle -Version '3.3.1' -ExtraClass
+        Write-TestChecksumManifest -Root $packageRoot
+        Assert-TestFails -Action { Test-PreviewPackage -PackageRoot $packageRoot } -Label 'unexpected third VST3 class rejected'
 
         Write-TestModuleInfo -BundlePath $bundle -Version '3.3.1'
         $module = Join-Path $bundle 'Contents/x86_64-win/SkellyTune Realtime.vst3'

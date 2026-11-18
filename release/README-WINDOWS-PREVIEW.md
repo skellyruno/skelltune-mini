@@ -13,7 +13,30 @@ The GitHub Actions artifact itself is the downloadable ZIP. Its root contains th
 
 ## Installation for testing
 
-Copy the entire SkellyTune Realtime.vst3 folder into a VST3 scan directory used by your host, then rescan plugins. Keep the existing installed version until the new copy has been checked. To roll back, remove only this preview bundle and restore the previously retained version.
+1. Close FL Studio and any other host that may have the plugin loaded.
+2. Extract the complete artifact ZIP to a temporary folder. Keep the VST3 bundle, installer script, build information, checksum manifest and notices together.
+3. Open **PowerShell 7 as Administrator** for the standard all-users VST3 location. The script does not self-elevate.
+4. Preview the operation first:
+
+   > .\Install-SkellyTuneMini.ps1 -PackageRoot . -WhatIf
+
+5. After reviewing the validation output, run the explicit install and confirm the PowerShell approval prompt:
+
+   > .\Install-SkellyTuneMini.ps1 -PackageRoot .
+
+The installer rechecks the package manifest, product/version/vendor and VST3 class IDs, bundle layout, and AMD64 PE32+ module. It stages the bundle beside the destination, verifies its tree hash, and only then swaps it into place. If a matching SkellyTune Realtime version already exists, it first creates and hash-verifies a backup under %LOCALAPPDATA%\Skelly\Backups\SkellyTuneMini. It refuses to replace a different or malformed plugin identity. A custom scan directory can be supplied with -Destination.
+
+### Rollback
+
+If a previous version was present during installation, preview and run:
+
+> .\Install-SkellyTuneMini.ps1 -Rollback -WhatIf
+>
+> .\Install-SkellyTuneMini.ps1 -Rollback
+
+Rollback verifies that the installed bundle still matches the exact hash recorded by the installer and that the previous backup also matches its recorded hash. If the installed bundle changed after installation, rollback refuses to overwrite it. The newer bundle is retained as a reversible backup. A first-time install has no earlier version to restore.
+
+The script never installs automatically during a build. Building or downloading the preview does not change the machine. Avoid duplicate copies with the same VST3 identity in multiple host scan locations.
 
 ## Verification boundary
 

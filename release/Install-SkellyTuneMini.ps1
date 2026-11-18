@@ -11,6 +11,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:ProductName = 'SkellyTune Realtime'
 $script:BundleName = 'SkellyTune Realtime.vst3'
+$script:FailBeforeInstallSwap = $false
+$script:FailBeforeRollbackSwap = $false
 
 function Assert-NoReparsePoints {
     param([Parameter(Mandatory)][string]$Path)
@@ -296,6 +298,8 @@ function Invoke-InstallInternal {
     $stateTemp = Join-Path $backupFull ('active-install.' + $id + '.tmp')
     $null = New-Item -ItemType Directory -Path $stageRoot
     $committed = $false
+    $oldMoved = $false
+    $newMoved = $false
     try {
         Copy-Item -LiteralPath $package.BundlePath -Destination $stageRoot -Recurse
         $stageBundle = Join-Path $stageRoot $script:BundleName
@@ -313,18 +317,23 @@ function Invoke-InstallInternal {
             UpdatedUtc = (Get-Date).ToUniversalTime().ToString('o')
         }
         Write-StateFile -Path $stateTemp -State $state
-        if (Test-Path -LiteralPath $target) { Move-Item -LiteralPath $target -Destination $swapPath }
+        if ($script:FailBeforeInstallSwap) { throw 'Injected self-test failure before install swap' }
+        if (Test-Path -LiteralPath $target) {
+            Move-Item -LiteralPath $target -Destination $swapPath
+            $oldMoved = $true
+        }
         Move-Item -LiteralPath $stageBundle -Destination $target
+        $newMoved = $true
         if ((Get-TreeSha256 -Path $target) -ne $package.TreeSha256) { throw 'Installed VST3 hash does not match the validated package' }
         Move-Item -LiteralPath $stateTemp -Destination $statePath -Force
         $committed = $true
     } catch {
-        if (Test-Path -LiteralPath $target) {
+        if ($newMoved -and (Test-Path -LiteralPath $target)) {
             $failedDir = Join-Path $backupFull ('failed-install-' + $id)
             $null = New-Item -ItemType Directory -Path $failedDir -Force
             Move-Item -LiteralPath $target -Destination $failedDir
         }
-        if ((Test-Path -LiteralPath $swapPath) -and -not (Test-Path -LiteralPath $target)) {
+        if ($oldMoved -and (Test-Path -LiteralPath $swapPath) -and -not (Test-Path -LiteralPath $target)) {
             Move-Item -LiteralPath $swapPath -Destination $target
         }
         throw
@@ -352,6 +361,8 @@ function Invoke-RollbackInternal {
     $stateTemp = Join-Path $backupFull ('active-install.' + $id + '.tmp')
     $null = New-Item -ItemType Directory -Path $stageRoot
     $null = New-Item -ItemType Directory -Path $forwardDir
+    $currentMoved = $false
+    $restoredMoved = $false
     try {
         Copy-Item -LiteralPath $plan.PreviousBundle -Destination $stageRoot -Recurse
         $stageBundle = Join-Path $stageRoot $script:BundleName
@@ -369,17 +380,20 @@ function Invoke-RollbackInternal {
             UpdatedUtc = (Get-Date).ToUniversalTime().ToString('o')
         }
         Write-StateFile -Path $stateTemp -State $newState
+        if ($script:FailBeforeRollbackSwap) { throw 'Injected self-test failure before rollback swap' }
         Move-Item -LiteralPath $plan.Target -Destination $forwardDir
+        $currentMoved = $true
         Move-Item -LiteralPath $stageBundle -Destination $plan.Target
+        $restoredMoved = $true
         if ((Get-TreeSha256 -Path $plan.Target) -ne $plan.PreviousSha256) { throw 'Restored VST3 hash mismatch' }
         Move-Item -LiteralPath $stateTemp -Destination $plan.StatePath -Force
     } catch {
-        if (Test-Path -LiteralPath $plan.Target) {
+        if ($restoredMoved -and (Test-Path -LiteralPath $plan.Target)) {
             $failedDir = Join-Path $backupFull ('failed-rollback-' + $id)
             $null = New-Item -ItemType Directory -Path $failedDir -Force
             Move-Item -LiteralPath $plan.Target -Destination $failedDir
         }
-        if ((Test-Path -LiteralPath $forwardBundle) -and -not (Test-Path -LiteralPath $plan.Target)) {
+        if ($currentMoved -and (Test-Path -LiteralPath $forwardBundle) -and -not (Test-Path -LiteralPath $plan.Target)) {
             Move-Item -LiteralPath $forwardBundle -Destination $plan.Target
         }
         throw
@@ -499,12 +513,22 @@ function Invoke-SelfTest {
 
         $null = New-Item -ItemType Directory -Path $destination -Force
         $null = Write-TestBundle -Root $destination -Version '3.3.0'
+        $script:FailBeforeInstallSwap = $true
+        Assert-TestFails -Action { Invoke-InstallInternal -PackageRoot $packageRoot -Destination $destination -BackupRoot $backupRoot } -Label 'pre-swap install failure is reported'
+        $script:FailBeforeInstallSwap = $false
+        $preSwapInstall = Test-InstalledBundle -BundlePath (Join-Path $destination $script:BundleName)
+        Assert-Test -Condition ($preSwapInstall.Version -eq '3.3.0') -Label 'pre-swap install failure preserves existing version'
         Invoke-InstallInternal -PackageRoot $packageRoot -Destination $destination -BackupRoot $backupRoot
         $target = Join-Path $destination $script:BundleName
         $installed = Test-InstalledBundle -BundlePath $target
         Assert-Test -Condition ($installed.Version -eq '3.3.1') -Label 'new preview installed'
         $state = [IO.File]::ReadAllText((Join-Path $backupRoot 'active-install.json')) | ConvertFrom-Json
         Assert-Test -Condition (Test-Path -LiteralPath $state.PreviousBundle -PathType Container) -Label 'previous version backup retained'
+        $script:FailBeforeRollbackSwap = $true
+        Assert-TestFails -Action { Invoke-RollbackInternal -BackupRoot $backupRoot -Destination $destination } -Label 'pre-swap rollback failure is reported'
+        $script:FailBeforeRollbackSwap = $false
+        $preSwapRollback = Test-InstalledBundle -BundlePath $target
+        Assert-Test -Condition ($preSwapRollback.Version -eq '3.3.1') -Label 'pre-swap rollback failure preserves current version'
 
         Invoke-RollbackInternal -BackupRoot $backupRoot -Destination $destination
         $restored = Test-InstalledBundle -BundlePath $target

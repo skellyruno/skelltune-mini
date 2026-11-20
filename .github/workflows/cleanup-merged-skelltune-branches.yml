@@ -92,6 +92,17 @@ jobs:
               }
 
               try {
+                // Re-read the ref immediately before deletion. If it moved
+                // after the comparison, retain it rather than deleting new work.
+                const latestRef = await github.rest.git.getRef({
+                  owner,
+                  repo,
+                  ref: `heads/${name}`
+                });
+                if (latestRef.data.object.sha !== branch.commit.sha) {
+                  retained.push({ name, reason: "branch moved during cleanup" });
+                  continue;
+                }
                 await github.rest.git.deleteRef({
                   owner,
                   repo,

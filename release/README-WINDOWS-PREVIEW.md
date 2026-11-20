@@ -6,6 +6,7 @@ This is a **CI preview package for compatibility testing**, not a commercial rel
 
 - SkellyTune Realtime.vst3/ — one Windows x64 VST3 bundle.
 - BUILD-INFO.txt — source commit, workflow run, JUCE/SkellCore pins and build time.
+- ARTIFACT-ACCESS.json — repository visibility and the product ZIP upload decision for this exact run.
 - SHA256SUMS.txt — SHA-256 hashes for every packaged file except the checksum manifest itself.
 - LICENSE.txt and THIRD_PARTY_NOTICES/ — project and dependency notices.
 

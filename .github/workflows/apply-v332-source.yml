@@ -1,0 +1,113 @@
+name: Apply SkellyTune Mini v3.3.2 source patch
+
+on:
+  push:
+    branches:
+      - feature/skelltune-mini-v332-20261120
+    paths:
+      - ".github/patches/v332/**"
+      - ".github/workflows/apply-v332-source.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: skelltune-mini-v332-source-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patch branch
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+
+      - name: Verify and safely apply v3.3.2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          find .github/patches/v332 -maxdepth 1 -type f -name 'part-*.b64' -print0 | sort -z | xargs -0 cat > /tmp/skelltune-v332.payload.b64
+          test "$(wc -c < /tmp/skelltune-v332.payload.b64)" -eq 76892
+          base64 --decode /tmp/skelltune-v332.payload.b64 > /tmp/skelltune-v332.payload.tar.gz
+          echo "f8c1d8f7cfde57a0d7662321e9772a4848d1838b37a4e11417fc8d5d01446e1a  /tmp/skelltune-v332.payload.tar.gz" | sha256sum --check -
+
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import shutil
+          import tarfile
+
+          allowed = {
+              "CMakeLists.txt",
+              "README.md",
+              "CHANGELOG_v332.md",
+              "Source/PluginEditor.cpp",
+              "Source/PluginEditor.h",
+              "Source/PluginProcessor.cpp",
+              "cmake/SkellyDSPTests.cmake",
+              "dsp/NoteDecision.hpp",
+              "dsp/PeriodTable.hpp",
+              "dsp/RealtimeTuner.hpp",
+              "dsp/SafePresetValue.hpp",
+              "tests/test_preset_safety.cpp",
+              "tests/test_v39_note_change_hold.cpp",
+              "tests/test_v40_octave_and_hysteresis.cpp",
+              "tests/test_v41_keep_wet_through_zero.cpp",
+              "tests/test_v42_testtune.cpp",
+              "tools/render.cpp",
+          }
+          root = Path.cwd().resolve()
+          seen = set()
+          with tarfile.open("/tmp/skelltune-v332.payload.tar.gz", "r:gz") as archive:
+              for member in archive.getmembers():
+                  name = member.name
+                  while name.startswith("./"):
+                      name = name[2:]
+                  if not name:
+                      continue
+                  path = PurePosixPath(name)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"Unsafe archive path: {member.name}")
+                  if member.isdir():
+                      if not any(item.startswith(name.rstrip("/") + "/") for item in allowed):
+                          raise SystemExit(f"Unexpected archive directory: {member.name}")
+                      continue
+                  if not member.isfile() or name not in allowed:
+                      raise SystemExit(f"Unexpected archive member: {member.name}")
+                  target = (root / Path(*path.parts)).resolve()
+                  if root not in target.parents and target != root:
+                      raise SystemExit(f"Archive path escaped repository: {member.name}")
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  source = archive.extractfile(member)
+                  if source is None:
+                      raise SystemExit(f"Unreadable archive member: {member.name}")
+                  with source, target.open("wb") as output:
+                      shutil.copyfileobj(source, output)
+                  seen.add(name)
+          missing = allowed - seen
+          if missing:
+              raise SystemExit(f"Patch is missing expected files: {sorted(missing)}")
+
+          # Bring existing release-package self-tests and preview docs forward
+          # with the source version. Keep 3.3.0 references: they model rollback.
+          for name in (
+              "release/Install-SkellyTuneMini.ps1",
+              "release/README-WINDOWS-PREVIEW.md",
+              "tests/test_vst3_moduleinfo.py",
+          ):
+              path = root / name
+              text = path.read_text(encoding="utf-8")
+              path.write_text(text.replace("3.3.1", "3.3.2"), encoding="utf-8")
+          PY
+
+          # Remove the one-shot transfer payload and this helper workflow.
+          rm -rf .github/patches/v332
+          rm .github/workflows/apply-v332-source.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m "Integrate SkellyTune Mini v3.3.2 DSP and TESTTUNE"
+          git push origin HEAD:feature/skelltune-mini-v332-20261120

@@ -51,6 +51,18 @@ jobs:
           } finally {
             Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
           }
+      - name: Upload real JUCE editor screenshots for inspection
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTuneMini-Windows-Actual-JUCE-Screenshots-v3.3.2
+          path: |
+            SkellyTuneMini_UI_432.png
+            SkellyTuneMini_UI_720.png
+            SkellyTuneMini_UI_1008.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Stage and verify a flat Windows VST3 preview
         id: stage-package
         shell: pwsh

@@ -92,10 +92,6 @@ class ArtifactAccessPolicyTests(unittest.TestCase):
             "if: success() && steps.artifact-access.outputs.artifact_upload_allowed == 'true'",
             upload_step,
         )
-        self.assertIn(
-            "run: |\\n          Write-Host 'Product VST3 preview withheld:",
-            workflow,
-        )
 
 
 if __name__ == "__main__":

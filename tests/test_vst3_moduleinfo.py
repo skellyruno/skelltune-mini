@@ -64,8 +64,10 @@ class Vst3ModuleInfoTests(unittest.TestCase):
             validate_moduleinfo(document, "SkellyTune Realtime", "3.3.2")
 
     def test_rejects_version_mismatch(self) -> None:
+        document = valid_moduleinfo()
+        document["Version"] = "3.3.1"
         with self.assertRaisesRegex(ValueError, "Version must match"):
-            validate_moduleinfo(valid_moduleinfo(), "SkellyTune Realtime", "3.3.2")
+            validate_moduleinfo(document, "SkellyTune Realtime", "3.3.2")
 
     def test_reads_project_version_from_cmake(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

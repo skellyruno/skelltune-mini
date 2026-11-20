@@ -45,6 +45,8 @@ def main() -> int:
     parser.add_argument("--visibility", default="unknown")
     parser.add_argument("--private-flag", default="false")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--github-output", type=Path, default=None,
+                        help="Optional GitHub Actions output file for step outputs")
     args = parser.parse_args()
 
     result = resolve_policy(args.visibility, args.private_flag)
@@ -54,6 +56,12 @@ def main() -> int:
         encoding="utf-8",
         newline="\n",
     )
+    if args.github_output is not None:
+        args.github_output.parent.mkdir(parents=True, exist_ok=True)
+        allowed = "true" if result["artifact_upload_allowed"] else "false"
+        with args.github_output.open("a", encoding="utf-8") as output:
+            output.write(f"artifact_upload_allowed={allowed}\n")
+
     print(json.dumps(result, sort_keys=True))
     return 0
 

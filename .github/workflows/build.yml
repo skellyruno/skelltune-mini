@@ -63,6 +63,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Resolve fail-closed product artifact access policy
+        id: artifact-access
+        shell: pwsh
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility || 'unknown' }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          $policyPath = Join-Path $PWD 'dist/SkellyTune-Realtime-Windows-VST3/ARTIFACT-ACCESS.json'
+          python tools/artifact_access_policy.py --visibility "$env:REPOSITORY_VISIBILITY" --private-flag "$env:REPOSITORY_PRIVATE" --output "$policyPath" --github-output "$env:GITHUB_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { throw 'Product artifact access policy evaluation failed' }
+
       - name: Stage and verify a flat Windows VST3 preview
         id: stage-package
         shell: pwsh
@@ -238,9 +249,16 @@ jobs:
             throw "pluginval strictness 5 failed: exit code $($process.ExitCode)"
           }
       - name: Upload repository-scoped Windows VST3 preview
+        if: success() && steps.artifact-access.outputs.artifact_upload_allowed == 'true'
         uses: actions/upload-artifact@v6
         with:
           retention-days: 7
           name: SkellyTune-Realtime-Windows-VST3-Preview
           path: dist/SkellyTune-Realtime-Windows-VST3/
           if-no-files-found: error
+
+      - name: Withhold product preview outside private repositories
+        if: success() && steps.artifact-access.outputs.artifact_upload_allowed != 'true'
+        shell: pwsh
+        run: |
+          Write-Host 'Product VST3 preview withheld: repository visibility is not confirmed private.'

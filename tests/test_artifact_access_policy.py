@@ -55,5 +55,44 @@ class ArtifactAccessPolicyTests(unittest.TestCase):
             self.assertFalse(written["artifact_upload_allowed"])
 
 
+    def test_cli_exports_github_output_for_public_and_private_repositories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = Path(__file__).resolve().parents[1] / "tools" / "artifact_access_policy.py"
+
+            public_output = root / "public" / "GITHUB_OUTPUT"
+            subprocess.run(
+                [sys.executable, str(script), "--visibility", "public",
+                 "--private-flag", "false", "--output", str(root / "public" / "policy.json"),
+                 "--github-output", str(public_output)],
+                check=True, capture_output=True, text=True,
+            )
+            self.assertEqual(public_output.read_text(encoding="utf-8").strip(),
+                             "artifact_upload_allowed=false")
+
+            private_output = root / "private" / "GITHUB_OUTPUT"
+            subprocess.run(
+                [sys.executable, str(script), "--visibility", "private",
+                 "--private-flag", "true", "--output", str(root / "private" / "policy.json"),
+                 "--github-output", str(private_output)],
+                check=True, capture_output=True, text=True,
+            )
+            self.assertEqual(private_output.read_text(encoding="utf-8").strip(),
+                             "artifact_upload_allowed=true")
+
+    def test_workflow_gates_product_upload_on_policy_output(self):
+        workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "build.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        self.assertIn("id: artifact-access", workflow)
+        self.assertIn("--github-output", workflow)
+        upload_step = workflow.split(
+            "- name: Upload repository-scoped Windows VST3 preview", 1
+        )[1].split("\n      - name:", 1)[0]
+        self.assertIn(
+            "if: success() && steps.artifact-access.outputs.artifact_upload_allowed == 'true'",
+            upload_step,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

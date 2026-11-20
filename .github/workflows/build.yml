@@ -260,4 +260,5 @@ jobs:
       - name: Withhold product preview outside private repositories
         if: success() && steps.artifact-access.outputs.artifact_upload_allowed != 'true'
         shell: pwsh
-        run: Write-Host 'Product VST3 preview withheld: repository visibility is not confirmed private.'
+        run: |
+          Write-Host 'Product VST3 preview withheld: repository visibility is not confirmed private.'

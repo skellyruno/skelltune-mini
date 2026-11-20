@@ -142,6 +142,21 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     a4Attachment_ = std::make_unique<State::SliderAttachment>(
         parameters_, "a4", a4_);
 
+    // TESTTUNE: a lit button means the alternate algorithm is active.
+    testTune_.setClickingTogglesState(true);
+    testTune_.setColour(juce::TextButton::buttonColourId, palette_.panel);
+    testTune_.setColour(juce::TextButton::buttonOnColourId, palette_.accent.withAlpha(0.35f));
+    testTune_.setColour(juce::TextButton::textColourOffId, palette_.boneDim);
+    testTune_.setColour(juce::TextButton::textColourOnId, palette_.accent);
+    testTune_.setName("TestTune algorithm");
+    testTune_.setComponentID("skelly.testtune");
+    testTune_.setTooltip("Alternate algorithm for A/B testing: snaps to the nearest in-scale note "
+                         "(measured in samples per cycle) with no hysteresis. Off = standard algorithm.");
+    testTune_.setLookAndFeel(&theme_);
+    addAndMakeVisible(testTune_);
+    testTuneAttachment_ = std::make_unique<State::ButtonAttachment>(
+        parameters_, "testTune", testTune_);
+
     for (int i=0; i<12; ++i) {
         notes_[size_t(i)] =
             std::make_unique<PitchButton>(noteNames[i], palette_);
@@ -165,6 +180,7 @@ SkellyTuneEditor::~SkellyTuneEditor() {
     a4_.setLookAndFeel(nullptr);
     key_.setLookAndFeel(nullptr);
     scale_.setLookAndFeel(nullptr);
+    testTune_.setLookAndFeel(nullptr);
 }
 void SkellyTuneEditor::resized() {
     const float sx = float(getWidth()) / 432.0f;
@@ -178,6 +194,7 @@ void SkellyTuneEditor::resized() {
     a4_.setTextBoxStyle(juce::Slider::TextBoxLeft, false,
                         std::max(83, juce::roundToInt(83.0f*sx)),
                         std::max(30, juce::roundToInt(30.0f*sy)));
+    place(testTune_, 318, 19, 98, 28);   // header row, right of the MINI label
     place(key_, 18, 95, 90, 33);
     place(scale_, 119, 95, 151, 33);
     place(a4_, 290, 95, 122, 33);

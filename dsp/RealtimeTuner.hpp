@@ -3,6 +3,7 @@
 // SkellyTune Realtime: original, causal pitch-correction proof-of-concept.
 // Copyright 2026. See LICENSE. All audio-thread operations are allocation-free after prepare().
 #include "NoteDecision.hpp"
+#include "PeriodTable.hpp"
 #include "CausalCycleSynth.hpp"
 #include "CoherentMixGuard.hpp"
 #include "FormantEnvelopeGuard.hpp"
@@ -19,6 +20,17 @@
 namespace skelly {
 static constexpr double kPi = 3.14159265358979323846;
 
+constexpr double kHoldActiveMaxCents = 150.0;
+constexpr double kVowelNoiseDeadZone = 0.25;
+constexpr bool kKeepWetThroughZeroCorrection = true;
+constexpr double kZeroHoldSeconds = 0.120; // correction must stay ~0 this long before returning to exact dry
+// Minimum CMND advantage (0..1) a doubled lag needs before the tracker reports the octave
+// below. 0.035 was effectively noise (a barely audible sub-harmonic); 0.07 is the highest
+// value at which the v1.7 weak-fundamental test (v17) still passes, so keep margin below it.
+constexpr double kOctaveEvidence = 0.06;
+// Same, when the tracker was already locked at the shorter period within the last ~60 ms.
+constexpr double kOctaveContinuityEvidence = 0.15;
+
 struct Parameters {
     float speedMs = 25.0f;       // correction slew 0..200 ms; zero bypasses cent smoothing
     float amount = 1.0f;         // 0..1
@@ -33,6 +45,11 @@ struct Parameters {
     float formantPreservation = 0.0f; // 0..1; broad-envelope wet-only restoration in PSOLA mode
     bool experimentalCycleSynthesis = false; // selectable, not certified fixed-latency
     uint16_t pitchClasses = 0x0fff; // C=bit0, C#=bit1, ... B=bit11
+    // "testtune": alternate target-note selection. Builds a table of in-scale note PERIODS from the
+    // scale mask (PeriodTable) and snaps each pitch estimate to the nearest period, with no
+    // hysteresis, pending state or note-hold logic. Everything else (tracker, gating, shifter) is
+    // shared with the default algorithm, so it is a clean A/B. Default off.
+    bool testTune = false;
 };
 
 struct PitchEstimate {
@@ -263,6 +280,15 @@ private:
     float past(int lag) const noexcept {
         return samples_[(write_ - 1 - lag) & (int(samples_.size()) - 1)];
     }
+    // Depth of the CMND valley at `lag` after quadratic interpolation, so the result does
+    // not depend on where the true period falls between integer lags.
+    double valleyDepth(int lag) const noexcept {
+        const double a = cmnd_[lag-1], b = cmnd_[lag], c = cmnd_[lag+1];
+        const double denom = a - 2.0*b + c;
+        if (denom <= 1e-9) return b;
+        const double offset = std::clamp(0.5 * (a - c) / denom, -0.5, 0.5);
+        return std::min(b, b - 0.25 * (a - c) * offset);
+    }
     PitchEstimate analyze() noexcept {
         if (decimated_ < uint64_t(window_ + highLag_ + 3)) return {};
         double energy = 0.0;
@@ -276,6 +302,7 @@ private:
             // return: force a complete recalculation on the next voiced hop.
             initializedDifference_ = false;
             differenceAge_ = 0;
+            goodLag_ = 0;
             return {};
         }
 
@@ -337,15 +364,30 @@ private:
                 if (candidate > best + 2 && candidate < highLag_ - 1 &&
                     cmnd_[candidate] < cmnd_[slower]) slower = candidate;
             }
-            const double octaveEvidence = double(cmnd_[best]) - double(cmnd_[slower]);
+            // v3.3.2: compare INTERPOLATED valley depths. Lags are integers at the 12 kHz
+            // analysis rate, so a true period at a fractional lag (e.g. 48.6) is sampled
+            // with a large rounding error at 1x but a small one at 2x (97.2). On clean
+            // voiced audio that produced 0.035-0.05 of fake "octave evidence" and a
+            // ~25 ms octave-down lock at 0.99 confidence mid-note.
+            const double octaveEvidence = valleyDepth(best) - valleyDepth(slower);
             // Require meaningful evidence, not a fractional-lag interpolation
             // difference or rounding noise between equal minima.
-            if (octaveEvidence > 0.035 && cmnd_[slower] < 0.13f &&
+            // Continuity: if we were locked at (about) this same short period moments ago,
+            // an octave-down switch mid-note needs far stronger evidence than at a fresh
+            // note onset, where the choice is genuinely ambiguous.
+            const bool lockedAtShortPeriod = goodLag_ > 0 && goodAgeHops_ <= kGoodLagMaxAgeHops &&
+                std::abs(best - goodLag_) <= std::max(2, goodLag_ / 16);
+            const double requiredEvidence = lockedAtShortPeriod
+                ? kOctaveContinuityEvidence : kOctaveEvidence;
+            if (octaveEvidence > requiredEvidence && cmnd_[slower] < 0.13f &&
                 cmnd_[slower] <= cmnd_[slower-1] && cmnd_[slower] <= cmnd_[slower+1]) {
                 best = slower;
             }
         }
         const float confidence = std::clamp(1.0f - cmnd_[best], 0.0f, 1.0f);
+        if (goodAgeHops_ < 1000000) ++goodAgeHops_;
+        if (confidence >= 0.85f) { goodLag_ = best; goodAgeHops_ = 0; }
+        else if (goodAgeHops_ > kGoodLagMaxAgeHops) goodLag_ = 0;
         if (confidence < minimumConfidence_) return {0.0f, confidence, false};
         // Quadratic peak interpolation in the CMND valley.
         double lag = best;
@@ -358,6 +400,8 @@ private:
         return {f0, confidence, std::isfinite(f0) && f0 >= 65.0f && f0 <= 850.0f};
     }
     float minimumConfidence_ = 0.62f;
+    static constexpr int kGoodLagMaxAgeHops = 45; // ~60 ms at 12 kHz / 16-sample hops
+    int goodLag_ = 0, goodAgeHops_ = 1000000;
     int factor_ = 4, lowLag_ = 14, highLag_ = 200, window_ = 288, hop_ = 16;
     int fastWindow_ = 168, steadyWindow_ = 168, slowWindow_ = 288;
     int stableHops_ = 0;
@@ -563,6 +607,7 @@ public:
         mixGuard_.reset();
         formantGuard_.reset();
         formantActive_ = false;
+        nearZeroSamples_ = 0;
         airGuard_.reset();
         wetRumbleGuard_.reset();
         cycleBlend_ = 0.0;
@@ -591,6 +636,10 @@ public:
     void setHarmonicAwareWetGateEnabled(bool enabled) noexcept { harmonicWetGateEnabled_ = enabled; }
     // Experimental A/B only. Enable only after real-vocal benchmarking.
     void setProvisionalTransitionEnabled(bool enabled) noexcept { provisionalTransitionEnabled_ = enabled; }
+    // When a new note is still being confirmed, keep tuning toward the note that is
+    // currently held (provided the singer is still near it) instead of dropping to
+    // uncorrected dry audio. Disable only for A/B comparison.
+    void setHoldActiveNoteWhilePending(bool enabled) noexcept { holdActiveWhilePending_ = enabled; }
     void setGlottalCycleEvidenceEnabled(bool enabled) noexcept { cycleSynth_.setClosureEvidenceEnabled(enabled); }
     void setStudioPhaseLockResearchEnabled(bool enabled) noexcept {
         cycleSynth_.setStrongerConcurrentPhaseEnabled(enabled);
@@ -743,13 +792,27 @@ public:
                     e.valid && e.confidence >= 0.85f && onsetHoldSamples_ > 0 &&
                     onsetCue_.score() < 0.72f;
                 const int priorTarget = targetNote_;
-                const auto result = notes_.update(e.valid ? e.hertz : 0.0,
+                auto result = notes_.update(e.valid ? e.hertz : 0.0,
                     e.valid ? e.confidence : 0.0,
                     rememberedOnset ? 0.72 : double(onsetCue_.score()),
                     uint32_t(tracker_.hopHostSamples()), params_.pitchClasses, params_.referenceA,
                     params_.speedMs <= 1.5f && params_.amount >= 0.995f &&
                     params_.mix >= 0.995f && params_.flexCents <= 0.01f &&
                     params_.vibratoPreservation <= 0.01f);
+                if (params_.testTune && e.valid && result.voiced && e.hertz > 0.0f) {
+                    // testtune: nearest in-scale note in the PERIOD domain (samples per cycle).
+                    // Falls back to the default decision when the table is empty (invalid sample
+                    // rate / reference, or no enabled notes).
+                    periodTable_.rebuild(rate_, double(params_.referenceA), params_.pitchClasses);
+                    const int index = periodTable_.nearest(rate_ / double(e.hertz));
+                    if (index >= 0) {
+                        const int note = periodTable_.note(index);
+                        result.changed = note != priorTarget;
+                        result.targetMidi = note;
+                        result.pending = false;
+                        result.provisionalMidi = -1;
+                    }
+                }
                 if (rememberedOnset) {
                     ++onsetMemoryAppliedHops_;
                     if (result.changed && priorTarget >= 0 && result.targetMidi != priorTarget)
@@ -757,9 +820,22 @@ public:
                 }
                 targetNote_ = result.targetMidi;
                 targetPending_ = result.pending;
+
                 const int workingTarget = provisionalTransitionEnabled_ && e.valid &&
                     result.provisionalMidi >= 0 ? result.provisionalMidi : targetNote_;
-                const bool usableTarget = !result.pending ||
+                // While NoteDecision confirms a new note, the previously held note is
+                // still the best tuned target as long as the singer is within ~1.5
+                // semitones of it. Dropping to dry here leaks the raw glide pitch at
+                // every note change (audible as a stutter between notes).
+                bool holdActive = false;
+                if (holdActiveWhilePending_ && result.pending && e.valid && result.voiced &&
+                    targetNote_ >= 0 && e.confidence >= 0.6f && e.hertz > 0.0f) {
+                    const double activeHz = params_.referenceA *
+                        std::pow(2.0, (targetNote_ - 69) / 12.0);
+                    const double activeErr = 1200.0 * std::log2(activeHz / double(e.hertz));
+                    holdActive = std::abs(activeErr) <= kHoldActiveMaxCents;
+                }
+                const bool usableTarget = !result.pending || holdActive ||
                     (provisionalTransitionEnabled_ && result.provisionalMidi >= 0);
                 // Both detector and musical controller must accept this frame.
                 // A low-confidence provisional F0 must not be pitched toward a
@@ -853,7 +929,14 @@ public:
             const double harmonicEvidence = (harmonicWetGateEnabled_ && voiced_) ?
                 std::clamp(airGuard_.periodicity(),0.0,1.0) : 0.0;
             const double adjustedNoise = noiseScore * (1.0-0.85*harmonicEvidence);
-            const double noiseAttenuation = std::clamp(1.0 - double(params_.transientProtection) * adjustedNoise, 0.0, 1.0);
+            // Ordinary vowel brightness/breath (adjusted noise below ~0.25) must not bleed
+            // unshifted dry audio under the corrected voice: the dry copy sits at the
+            // ORIGINAL pitch and is audible as a detuned ghost. Real sibilants and
+            // consonants score far above this and are still attenuated; consonant air
+            // is restored by the separate air lane below.
+            const double gatedNoise = std::max(0.0, adjustedNoise - kVowelNoiseDeadZone) /
+                (1.0 - kVowelNoiseDeadZone);
+            const double noiseAttenuation = std::clamp(1.0 - double(params_.transientProtection) * gatedNoise, 0.0, 1.0);
             const double targetGate = (voiced_ && targetNote_ >= 0) ? double(params_.mix) * noiseAttenuation : 0.0;
             voiceMix_ = voiceMix_ * gateSmooth + targetGate * (1.0 - gateSmooth);
             // Make unity correction genuinely transparent: no variable-delay
@@ -861,9 +944,22 @@ public:
             // the read head stranded at an arbitrary source age after tuning.
             // Fade the wet path out before re-centering the grain scheduler.
             const double centsMagnitude = std::abs(cents_);
-            const double wetNeeded = zeroSpeed && hard
-                ? std::clamp((centsMagnitude - 0.08) / 0.50, 0.0, 1.0)
-                : std::clamp((centsMagnitude - 0.30) / 1.70, 0.0, 1.0);
+            // v3.3.2: stay on the wet path while the needed correction merely PASSES THROUGH zero.
+            // Fading to dry there crossfades two copies of the voice that sit at DIFFERENT delays (the
+            // wet read head is typically a fraction of a period from the dry tap), which mangles a cycle
+            // or two at every note centre a singer sweeps through (vibrato, slides). At ~0 cents the wet
+            // path is just a constant delay: transparent and phase-continuous. Only after the correction
+            // has stayed near zero for kZeroHoldSeconds (genuinely in tune) do we hand off to the exact
+            // delayed dry signal and recentre the read head, as before. An explicit Amount of ~0 goes dry.
+            const double nearZeroCents = zeroSpeed && hard ? 0.58 : 2.0;
+            if (centsMagnitude < nearZeroCents) { if (nearZeroSamples_ < (1 << 30)) ++nearZeroSamples_; }
+            else nearZeroSamples_ = 0;
+            const bool keepWet = kKeepWetThroughZeroCorrection && params_.amount > 0.01f &&
+                voiced_ && targetNote_ >= 0 && nearZeroSamples_ < int(rate_ * kZeroHoldSeconds);
+            const double wetNeeded = keepWet ? 1.0
+                : (zeroSpeed && hard
+                    ? std::clamp((centsMagnitude - 0.08) / 0.50, 0.0, 1.0)
+                    : std::clamp((centsMagnitude - 0.30) / 1.70, 0.0, 1.0));
             const double wetTarget = voiceMix_ * wetNeeded;
             effectiveMix_ = effectiveMix_ * unitySmooth + wetTarget * (1.0 - unitySmooth);
             // Only recenter after the residual wet path has become inaudible.
@@ -1178,6 +1274,9 @@ private:
     std::array<double,2> dryLow_{}, wetLow_{}, cycleLow_{};
     bool harmonicWetGateEnabled_ = true;
     bool provisionalTransitionEnabled_ = false;
+    bool holdActiveWhilePending_ = true;
+    PeriodTable periodTable_;
+    int nearZeroSamples_ = 0;
     CausalCycleSynth cycleSynth_;
     CoherentMixGuard mixGuard_;
     FormantEnvelopeGuard formantGuard_;

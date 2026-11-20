@@ -16,7 +16,7 @@ struct SavedParameter {
     bool integer;
 };
 
-inline constexpr std::array<SavedParameter, 16> kSavedParameters {{
+inline constexpr std::array<SavedParameter, 17> kSavedParameters {{
     {"speed", 0.0, 200.0, false},
     {"amount", 0.0, 100.0, false},
     {"mix", 0.0, 100.0, false},
@@ -33,6 +33,7 @@ inline constexpr std::array<SavedParameter, 16> kSavedParameters {{
     {"scale", 0.0, 2.0, true},
     {"noteMask", 0.0, 4095.0, true},
     {"bypass", 0.0, 1.0, true},
+    {"testTune", 0.0, 1.0, true},
 }};
 
 // Strict locale-independent number parser (no NaN, infinity, or trailing text).

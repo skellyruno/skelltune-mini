@@ -491,8 +491,8 @@ function Invoke-SelfTest {
     $backupRoot = Join-Path $root 'Backups'
     try {
         $null = New-Item -ItemType Directory -Path $packageRoot -Force
-        $bundle = Write-TestBundle -Root $packageRoot -Version '3.3.1'
-        $buildLines = @('Product: SkellyTune Realtime', 'Version: 3.3.1', 'Target: Windows x64 VST3')
+        $bundle = Write-TestBundle -Root $packageRoot -Version '3.3.2'
+        $buildLines = @('Product: SkellyTune Realtime', 'Version: 3.3.2', 'Target: Windows x64 VST3')
         [IO.File]::WriteAllLines((Join-Path $packageRoot 'BUILD-INFO.txt'), $buildLines, [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $packageRoot 'LICENSE.txt'), 'test license')
         [IO.File]::WriteAllText((Join-Path $packageRoot 'THIRD_PARTY_NOTICES.md'), 'test notices')
@@ -500,17 +500,17 @@ function Invoke-SelfTest {
         [IO.File]::WriteAllText((Join-Path $packageRoot 'THIRD_PARTY_NOTICES/JUCE-LICENSE.md'), 'test JUCE notice')
         Write-TestChecksumManifest -Root $packageRoot
         $package = Test-PreviewPackage -PackageRoot $packageRoot
-        Assert-Test -Condition ($package.Version -eq '3.3.1') -Label 'valid package accepted'
+        Assert-Test -Condition ($package.Version -eq '3.3.2') -Label 'valid package accepted'
 
-        Write-TestModuleInfo -BundlePath $bundle -Version '3.3.1' -DuplicateIds
+        Write-TestModuleInfo -BundlePath $bundle -Version '3.3.2' -DuplicateIds
         Write-TestChecksumManifest -Root $packageRoot
         Assert-TestFails -Action { Test-PreviewPackage -PackageRoot $packageRoot } -Label 'duplicate class IDs rejected'
 
-        Write-TestModuleInfo -BundlePath $bundle -Version '3.3.1' -ExtraClass
+        Write-TestModuleInfo -BundlePath $bundle -Version '3.3.2' -ExtraClass
         Write-TestChecksumManifest -Root $packageRoot
         Assert-TestFails -Action { Test-PreviewPackage -PackageRoot $packageRoot } -Label 'unexpected third VST3 class rejected'
 
-        Write-TestModuleInfo -BundlePath $bundle -Version '3.3.1'
+        Write-TestModuleInfo -BundlePath $bundle -Version '3.3.2'
         $module = Join-Path $bundle 'Contents/x86_64-win/SkellyTune Realtime.vst3'
         Write-TestPe -Path $module -Machine 0xaa64
         Write-TestChecksumManifest -Root $packageRoot
@@ -534,21 +534,21 @@ function Invoke-SelfTest {
         Invoke-InstallInternal -PackageRoot $packageRoot -Destination $destination -BackupRoot $backupRoot
         $target = Join-Path $destination $script:BundleName
         $installed = Test-InstalledBundle -BundlePath $target
-        Assert-Test -Condition ($installed.Version -eq '3.3.1') -Label 'new preview installed'
+        Assert-Test -Condition ($installed.Version -eq '3.3.2') -Label 'new preview installed'
         $state = [IO.File]::ReadAllText((Join-Path $backupRoot 'active-install.json')) | ConvertFrom-Json
         Assert-Test -Condition (Test-Path -LiteralPath $state.PreviousBundle -PathType Container) -Label 'previous version backup retained'
         $script:FailBeforeRollbackSwap = $true
         Assert-TestFails -Action { Invoke-RollbackInternal -BackupRoot $backupRoot -Destination $destination } -Label 'pre-swap rollback failure is reported'
         $script:FailBeforeRollbackSwap = $false
         $preSwapRollback = Test-InstalledBundle -BundlePath $target
-        Assert-Test -Condition ($preSwapRollback.Version -eq '3.3.1') -Label 'pre-swap rollback failure preserves current version'
+        Assert-Test -Condition ($preSwapRollback.Version -eq '3.3.2') -Label 'pre-swap rollback failure preserves current version'
 
         Invoke-RollbackInternal -BackupRoot $backupRoot -Destination $destination
         $restored = Test-InstalledBundle -BundlePath $target
         Assert-Test -Condition ($restored.Version -eq '3.3.0') -Label 'rollback restores previous version'
         Invoke-RollbackInternal -BackupRoot $backupRoot -Destination $destination
         $forward = Test-InstalledBundle -BundlePath $target
-        Assert-Test -Condition ($forward.Version -eq '3.3.1') -Label 'rollback is reversible and preserves newer version'
+        Assert-Test -Condition ($forward.Version -eq '3.3.2') -Label 'rollback is reversible and preserves newer version'
 
         $module = Join-Path $target 'Contents/x86_64-win/SkellyTune Realtime.vst3'
         $moduleBytes = [IO.File]::ReadAllBytes($module)

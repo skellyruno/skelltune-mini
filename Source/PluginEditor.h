@@ -56,8 +56,15 @@ private:
         keyAttachment_, scaleAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         speedAttachment_, a4Attachment_;
+    // TESTTUNE switch: toggles the alternate algorithm (APVTS id "testTune").
+    juce::TextButton testTune_{"TESTTUNE"};
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> testTuneAttachment_;
     std::array<std::unique_ptr<PitchButton>, 12> notes_;
     int lastMask_ = -1;
     bool lastCustomMask_ = false;
+    // Every control sets a tooltip (including the note double-click hint), but a
+    // component only shows one if a TooltipWindow exists. Declared last so it is
+    // destroyed before the controls it describes.
+    juce::TooltipWindow tooltipWindow_{this, 600};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SkellyTuneEditor)
 };

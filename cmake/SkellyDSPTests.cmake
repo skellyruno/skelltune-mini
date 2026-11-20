@@ -218,3 +218,19 @@ add_test(NAME dsp_v37_wet_rumble COMMAND dsp_v37_wet_rumble)
 add_executable(dsp_v38_loud_voice tests/test_v38_loud_voice.cpp)
 target_link_libraries(dsp_v38_loud_voice PRIVATE skelly_dsp)
 add_test(NAME dsp_v38_loud_voice COMMAND dsp_v38_loud_voice)
+
+add_executable(dsp_v39_tests tests/test_v39_note_change_hold.cpp)
+target_link_libraries(dsp_v39_tests PRIVATE skelly_dsp)
+add_test(NAME dsp_v39_note_change_hold COMMAND dsp_v39_tests)
+
+add_executable(dsp_v40_tests tests/test_v40_octave_and_hysteresis.cpp)
+target_link_libraries(dsp_v40_tests PRIVATE skelly_dsp)
+add_test(NAME dsp_v40_octave_and_hysteresis COMMAND dsp_v40_tests)
+
+add_executable(dsp_v41_tests tests/test_v41_keep_wet_through_zero.cpp)
+target_link_libraries(dsp_v41_tests PRIVATE skelly_dsp)
+add_test(NAME dsp_v41_keep_wet_through_zero COMMAND dsp_v41_tests)
+
+add_executable(dsp_v42_tests tests/test_v42_testtune.cpp)
+target_link_libraries(dsp_v42_tests PRIVATE skelly_dsp)
+add_test(NAME dsp_v42_testtune COMMAND dsp_v42_tests)

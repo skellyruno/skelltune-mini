@@ -5,16 +5,26 @@ on:
     branches: [main, master]
   pull_request:
 
-# Cancel superseded runs on the same branch/event; preserve latest evidence.
+# Cancel superseded PR runs only. Never cancel main or manual verification.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Test strict VST3 metadata normalizer
+        run: python -m unittest discover -s tests -p "test_vst3_moduleinfo.py" -v
+      - name: Test fail-closed product artifact access policy
+        run: python -m unittest discover -s tests -p "test_artifact_access_policy.py" -v
+      - name: Test preview installer and rollback safety
+        shell: pwsh
+        run: ./release/Install-SkellyTuneMini.ps1 -SelfTest
       - name: Configure Realtime-only JUCE VST3
         shell: pwsh
         run: >-
@@ -31,7 +41,7 @@ jobs:
           $exe = Get-ChildItem -Path build -File -Recurse -Filter 'SkellyTuneGuiSmoke.exe' | Select-Object -First 1
           if (-not $exe) { throw 'GUI smoke test executable missing' }
           # A real SkellKey sender and Mini receiver share Key/Scale/A4
-          # through a Windows Local\\ mapping. NO Python or Hub is started.
+          # through a Windows Local\ mapping. NO Python or Hub is started.
           $env:SKELL_LOCAL_IPC_TEST = '1'
           try {
             & $exe.FullName
@@ -41,19 +51,216 @@ jobs:
           } finally {
             Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
           }
-      - name: Package only SkellyTune Realtime
+      - name: Upload real JUCE editor screenshots for inspection
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTuneMini-Windows-Actual-JUCE-Screenshots-v3.3.2
+          path: |
+            SkellyTuneMini_UI_432.png
+            SkellyTuneMini_UI_720.png
+            SkellyTuneMini_UI_1008.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stage and verify a flat Windows VST3 preview
+        id: stage-package
+        shell: pwsh
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility || 'unknown' }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private || false }}
+          SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_CHECKOUT_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundles = @(Get-ChildItem -Path build -Recurse -Directory -Filter 'SkellyTune Realtime.vst3' |
+            Where-Object { $_.FullName -match '[\\/]Release[\\/]VST3[\\/]' })
+          if ($bundles.Count -ne 1) {
+            throw "Expected exactly one Release VST3 bundle; found $($bundles.Count)"
+          }
+
+          $sourceModules = @(Get-ChildItem -LiteralPath $bundles[0].FullName -Recurse -File -Filter '*.vst3')
+          if ($sourceModules.Count -ne 1) {
+            throw "Expected exactly one VST3 module in source bundle; found $($sourceModules.Count)"
+          }
+          $expectedRelativePath = [System.IO.Path]::Combine('Contents', 'x86_64-win', 'SkellyTune Realtime.vst3')
+          $sourceRelativePath = [System.IO.Path]::GetRelativePath($bundles[0].FullName, $sourceModules[0].FullName)
+          if (-not [String]::Equals($sourceRelativePath, $expectedRelativePath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unexpected source VST3 module location: $sourceRelativePath"
+          }
+
+          $packageRoot = Join-Path $PWD 'dist/SkellyTune-Realtime-Windows-VST3'
+          $packageBundle = Join-Path $packageRoot 'SkellyTune Realtime.vst3'
+          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+          Copy-Item -LiteralPath $bundles[0].FullName -Destination $packageBundle -Recurse -Force
+
+          $module = Join-Path $packageBundle 'Contents/x86_64-win/SkellyTune Realtime.vst3'
+          $moduleInfo = Join-Path $packageBundle 'Contents/Resources/moduleinfo.json'
+          if (-not (Test-Path -LiteralPath $module -PathType Leaf)) { throw 'Staged Windows VST3 module is missing' }
+          if (-not (Test-Path -LiteralPath $moduleInfo -PathType Leaf)) { throw 'Staged moduleinfo.json is missing' }
+
+          python tools/normalize_vst3_moduleinfo.py --path "$moduleInfo" --cmake-file CMakeLists.txt --expected-name "SkellyTune Realtime"
+          if ($LASTEXITCODE -ne 0) { throw 'Strict VST3 module metadata normalization failed' }
+
+          $bytes = [System.IO.File]::ReadAllBytes($module)
+          if ($bytes.Length -lt 512 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+            throw 'Missing Windows MZ header'
+          }
+          $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+          if ($pe -lt 64 -or $pe + 26 -gt $bytes.Length) { throw 'Invalid PE offset' }
+          if ($bytes[$pe] -ne 0x50 -or $bytes[$pe+1] -ne 0x45 -or
+              $bytes[$pe+2] -ne 0 -or $bytes[$pe+3] -ne 0 -or
+              [BitConverter]::ToUInt16($bytes, $pe+4) -ne 0x8664 -or
+              [BitConverter]::ToUInt16($bytes, $pe+24) -ne 0x20b) {
+            throw 'Not an AMD64 PE32+ module'
+          }
+
+          # Keep all required notices beside the VST3 bundle.
+          $notices = Join-Path $packageRoot 'THIRD_PARTY_NOTICES'
+          New-Item -ItemType Directory -Force -Path $notices | Out-Null
+          Copy-Item -LiteralPath LICENSE -Destination (Join-Path $packageRoot 'LICENSE.txt')
+          Copy-Item -LiteralPath release/README-WINDOWS-PREVIEW.md -Destination (Join-Path $packageRoot 'README.md')
+          Copy-Item -LiteralPath release/THIRD_PARTY_NOTICES.md -Destination (Join-Path $packageRoot 'THIRD_PARTY_NOTICES.md')
+          Copy-Item -LiteralPath release/Install-SkellyTuneMini.ps1 -Destination (Join-Path $packageRoot 'Install-SkellyTuneMini.ps1')
+          Copy-Item -LiteralPath third_party/HelixTune_LICENSE.txt -Destination (Join-Path $notices 'HelixTune_LICENSE.txt')
+
+          $juceSource = Get-ChildItem -Path build/_deps -Directory -Filter 'juce-src' | Select-Object -First 1
+          if (-not $juceSource) { throw 'Pinned JUCE source directory was not found' }
+          $juceLicense = Join-Path $juceSource.FullName 'LICENSE.md'
+          if (-not (Test-Path -LiteralPath $juceLicense -PathType Leaf)) { throw 'JUCE license notice missing from dependency checkout' }
+          Copy-Item -LiteralPath $juceLicense -Destination (Join-Path $notices 'JUCE-LICENSE.md')
+
+          $coreLicense = Get-ChildItem -Path build/_deps -Recurse -File -Filter 'SkellyTune-MIT.txt' | Select-Object -First 1
+          if (-not $coreLicense) { throw 'Pinned SkellCore MIT notice was not found' }
+          Copy-Item -LiteralPath $coreLicense.FullName -Destination (Join-Path $notices 'SkellCore-MIT.txt')
+
+          $vst3License = Get-ChildItem -Path $juceSource.FullName -Recurse -File -Filter 'LICENSE.txt' |
+            Where-Object { $_.FullName -match '[\\/]VST3_SDK[\\/]' } | Select-Object -First 1
+          if ($vst3License) {
+            Copy-Item -LiteralPath $vst3License.FullName -Destination (Join-Path $notices 'VST3-SDK-LICENSE.txt')
+          }
+
+          $cmakeText = Get-Content -LiteralPath CMakeLists.txt -Raw
+          $versionMatch = [regex]::Match($cmakeText, 'project\s*\(\s*SkellyTune\s+VERSION\s+([0-9.]+)')
+          if (-not $versionMatch.Success) { throw 'Could not read plugin version from CMakeLists.txt' }
+          $juceTagMatch = [regex]::Match($cmakeText, 'GIT_TAG\s+([0-9.]+)')
+          $coreTagMatch = [regex]::Match($cmakeText, 'SkellCoreShared[\s\S]*?GIT_TAG\s+([0-9a-f]{40})')
+          $juceRevision = (& git -C $juceSource.FullName rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve JUCE dependency commit' }
+          $coreSource = Get-ChildItem -Path build/_deps -Directory -Filter 'skellcoreshared-src' | Select-Object -First 1
+          if (-not $coreSource) { throw 'Pinned SkellCore source directory was not found' }
+          $coreRevision = (& git -C $coreSource.FullName rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve SkellCore dependency commit' }
+
+          $accessPath = Join-Path $packageRoot 'ARTIFACT-ACCESS.json'
+          $policyOutput = & python tools/artifact_access_policy.py --visibility $env:REPOSITORY_VISIBILITY --private-flag $env:REPOSITORY_PRIVATE --output $accessPath
+          if ($LASTEXITCODE -ne 0) { throw 'Product artifact access policy evaluation failed' }
+          $policy = $policyOutput | ConvertFrom-Json
+          $artifactUploadAllowed = [bool]$policy.artifact_upload_allowed
+          "artifact_upload_allowed=$($artifactUploadAllowed.ToString().ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          $buildInfo = @(
+            'Product: SkellyTune Realtime'
+            "Version: $($versionMatch.Groups[1].Value)"
+            'Target: Windows x64 VST3'
+            "Source head commit: $env:SOURCE_HEAD_SHA"
+            "CI checkout commit: $env:CI_CHECKOUT_SHA"
+            "Source ref: $env:SOURCE_REF"
+            "Workflow ref: $env:GITHUB_REF"
+            "GitHub Actions run: $env:GITHUB_RUN_ID"
+            "Run number: $env:GITHUB_RUN_NUMBER"
+            "Run attempt: $env:GITHUB_RUN_ATTEMPT"
+            "Built UTC: $([DateTime]::UtcNow.ToString('o'))"
+            "JUCE tag: $($juceTagMatch.Groups[1].Value)"
+            "JUCE resolved commit: $juceRevision"
+            "SkellCore pinned commit: $($coreTagMatch.Groups[1].Value)"
+            "SkellCore resolved commit: $coreRevision"
+            "Repository visibility: $($policy.repository_visibility)"
+            "Artifact access: $($policy.artifact_access)"
+            "Artifact upload allowed: $($artifactUploadAllowed.ToString().ToLowerInvariant())"
+            'Configuration: Release'
+            'Pluginval version: v2.0.0-beta3'
+            'Pluginval archive SHA-256: da158e918b60430c6a5223cd99cc2e746bda604e583258c400898caf4e95c523'
+            'Pluginval strictness level: 5'
+          )
+          $buildInfo | Set-Content -LiteralPath (Join-Path $packageRoot 'BUILD-INFO.txt') -Encoding utf8
+
+          $checksumPath = Join-Path $packageRoot 'SHA256SUMS.txt'
+          $checksumLines = foreach ($file in (Get-ChildItem -LiteralPath $packageRoot -Recurse -File |
+            Where-Object { $_.FullName -ne $checksumPath } | Sort-Object FullName)) {
+            $relative = [System.IO.Path]::GetRelativePath($packageRoot, $file.FullName).Replace('\', '/')
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $relative"
+          }
+          $checksumLines | Set-Content -LiteralPath $checksumPath -Encoding utf8
+
+          foreach ($line in (Get-Content -LiteralPath $checksumPath)) {
+            $separator = $line.IndexOf('  ')
+            if ($separator -ne 64) { throw "Invalid checksum manifest line: $line" }
+            $expectedHash = $line.Substring(0, 64)
+            $relativePath = $line.Substring(66)
+            $targetPath = Join-Path $packageRoot $relativePath
+            if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) { throw "Checksum target missing: $relativePath" }
+            $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant()
+            if ($actualHash -ne $expectedHash) { throw "Checksum mismatch: $relativePath" }
+          }
+
+          $packageBundles = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -Directory -Filter '*.vst3')
+          $packageModules = @(Get-ChildItem -LiteralPath $packageBundle -Recurse -File -Filter '*.vst3')
+          $nestedZips = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -File -Filter '*.zip')
+          if ($packageBundles.Count -ne 1 -or $packageModules.Count -ne 1 -or $nestedZips.Count -ne 0) {
+            throw "Package layout invalid: bundles=$($packageBundles.Count), modules=$($packageModules.Count), nested ZIPs=$($nestedZips.Count)"
+          }
+          Get-ChildItem -LiteralPath $packageRoot -Recurse -File | Measure-Object -Property Length -Sum
+      - name: Download pinned pluginval 2.0.0-beta3
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $bundles = @(Get-ChildItem -Path build -Recurse -Directory -Filter '*.vst3' |
-            Where-Object { $_.Name -eq 'SkellyTune Realtime.vst3' -and $_.FullName -match '[\\/]Release[\\/]' })
-          if ($bundles.Count -ne 1) {
-            throw "Expected exactly one SkellyTune Realtime Release VST3 bundle; found $($bundles.Count)"
+          $archive = Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip'
+          Invoke-WebRequest -Uri 'https://github.com/Tracktion/pluginval/releases/download/v2.0.0-beta3/pluginval_Windows.zip' -OutFile $archive
+          $expectedSha256 = 'da158e918b60430c6a5223cd99cc2e746bda604e583258c400898caf4e95c523'
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) { throw "pluginval archive SHA-256 mismatch: $actualSha256" }
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'pluginval-2.0.0-beta3'
+          Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot -Force
+          $pluginval = Get-ChildItem -LiteralPath $toolRoot -Recurse -File -Filter 'pluginval.exe' | Select-Object -First 1
+          if (-not $pluginval) { throw 'Pinned pluginval.exe was not found in the verified release archive' }
+          "PLUGINVAL_EXE=$($pluginval.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run pluginval strictness 5
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $PWD 'dist/SkellyTune-Realtime-Windows-VST3/SkellyTune Realtime.vst3'
+          if (-not (Test-Path -LiteralPath $bundle -PathType Container)) { throw 'Staged VST3 bundle missing before pluginval' }
+
+          # Use a Process object so the exit code is read only after pluginval exits.
+          # This avoids treating an unset PowerShell $LASTEXITCODE as a validator failure.
+          $stdout = Join-Path $env:RUNNER_TEMP 'pluginval.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'pluginval.stderr.log'
+          $argumentLine = '--strictness-level 5 "' + $bundle + '"'
+          $process = Start-Process -FilePath $env:PLUGINVAL_EXE -ArgumentList $argumentLine `
+            -WorkingDirectory $PWD.Path -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+
+          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+          if ($null -eq $process.ExitCode) {
+            throw 'pluginval process did not provide an exit code after waiting for completion'
           }
-          Compress-Archive -LiteralPath $bundles[0].FullName -DestinationPath dist/SkellyTune-Realtime-Windows-VST3.zip -Force
-      - uses: actions/upload-artifact@v6
+          if ($process.ExitCode -ne 0) {
+            throw "pluginval strictness 5 failed: exit code $($process.ExitCode)"
+          }
+      - name: Upload repository-scoped Windows VST3 preview
+        if: ${{ steps.stage-package.outputs.artifact_upload_allowed == 'true' }}
+        uses: actions/upload-artifact@v6
         with:
           retention-days: 7
-          name: SkellyTune-Realtime-Windows-VST3
-          path: dist/SkellyTune-Realtime-Windows-VST3.zip
+          name: SkellyTune-Realtime-Windows-VST3-Preview
+          path: dist/SkellyTune-Realtime-Windows-VST3/
           if-no-files-found: error
+      - name: Withhold product VST3 artifact for non-private repository
+        if: ${{ steps.stage-package.outputs.artifact_upload_allowed != 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host "Product VST3 artifact withheld: repository visibility is not verified private."
+          Write-Host "Windows build, package validation and pluginval completed without publishing the product ZIP."

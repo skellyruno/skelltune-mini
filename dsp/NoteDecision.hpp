@@ -7,6 +7,7 @@
 #include <limits>
 
 namespace skelly_research {
+constexpr double kBoundaryHysteresisCents = 25.0;
 class NoteDecision final {
 public:
     struct Result {
@@ -138,8 +139,19 @@ public:
                 // 32 ms unless accompanied by a genuine attack. Fast behavior is
                 // enabled ONLY for explicit maximum-speed/full-wet settings.
                 const int distance = std::abs(candidate - activeNote_);
+                // v3.3.2 boundary hysteresis. A voice hovering within ~25 cents of the
+                // boundary between two scale notes (e.g. D# between D and E) used to flip
+                // the target every wobble because ANY excursion past the boundary
+                // committed after 8 ms: two audible pitch hops per reversal. The fast
+                // commit now needs the pitch decisively past the boundary; otherwise we
+                // need sustained evidence. Genuine note changes land far past the margin.
+                const double activeCents = 1200.0 *
+                    std::log2(f0Hz / (a4Hz * std::pow(2.0, (activeNote_ - 69) / 12.0)));
+                const double pastBoundaryCents =
+                    0.5 * (std::abs(activeCents) - std::abs(candidateCents));
+                const bool decisivelyPast = pastBoundaryCents >= kBoundaryHysteresisCents;
                 const double seconds = (aggressiveRetune && confidence >= 0.82)
-                    ? (distance >= 2 ? 0.008 : 0.095) : 0.065;
+                    ? (distance >= 2 ? (decisivelyPast ? 0.008 : 0.120) : 0.095) : 0.065;
                 if ((centeredAdjacent || stableOffCenterAdjacent ||
                      pendingSamples_ >= toSamples(seconds)) &&
                     confidence >= (aggressiveRetune ? 0.82 : 0.65)) {

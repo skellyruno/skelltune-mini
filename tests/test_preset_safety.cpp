@@ -12,7 +12,9 @@ int main() {
         ++checks;
         if (!pass) { std::cerr << "FAIL: " << name << '\n'; std::exit(1); }
     };
-    require(kSavedParameters.size() == 16, "parameter count");
+    require(kSavedParameters.size() == 17, "parameter count"); // v3.3.2: + testTune
+    require(sanitizedSavedValue("testTune", 0.5) == 1.0, "testTune bool rounded");
+    require(sanitizedSavedValue("testTune", -3.0) == 0.0, "testTune clamped low");
     require(parseSavedNumber("25.5") == 25.5, "decimal parse");
     require(parseSavedNumber("0") == 0.0, "true zero parse");
     require(parseSavedNumber("1.25e2") == 125.0, "scientific parse");

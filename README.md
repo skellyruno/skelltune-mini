@@ -1,11 +1,14 @@
-# SkellTune Mini — SkellyTune v3.3.1
+# SkellTune Mini — SkellyTune v3.3.2
 
 ## Current UI — capture the actual JUCE editor (not an image render)
 **When asked to show the current UI**, build `SkellyTuneQuick4` locally (`-DSKELLY_BUILD_UI_QUICK4=ON`) and run `xvfb-run -a ./SkellyTuneQuick4 --output ui-quick4`. It captures the **real C++ JUCE AudioProcessorEditor**: four screenshots plus contact sheet and manifest. `--full` does the eight-scene deep audit. This was tested locally at 4/4 scenes, about **1.3 seconds to capture** on the compiled executable. See `docs/LOCAL_UI_SCREENSHOTS.md` and `AGENTS.md` for exact build steps and truthfulness requirements. **`tools/render.cpp` generates audio WAV files, not UI screenshots**; don't generate imagined UI images. Windows VST3 build and host/DSP regression remain separate.
 
 JUCE 8 / CMake C++17 VST3 project with SkellyTune's real pitch-correction engine and compact, resizable dark/neon-green GUI (not the original gain template).
 
-The FL Studio saved-state crash mitigation in v3.3.1 rejects malformed, oversized, or unsupported saved parameter values without overwriting existing valid settings. **It has not yet been verified to resolve the exact Fruity Wrapper crash**; see [FL_STUDIO_RECOVERY.md](FL_STUDIO_RECOVERY.md).
+## v3.3.2 update
+The v3.3.2 source adds the octave-down lock correction, pending-note hold, boundary hysteresis, wet-through-zero continuity, the optional TESTTUNE A/B algorithm (off by default), and four additional DSP regressions. See [CHANGELOG_v332.md](CHANGELOG_v332.md) for the measured changes and limitations.
+
+The v3.3.1 FL Studio saved-state crash mitigation rejects malformed, oversized, or unsupported saved parameter values without overwriting existing valid settings. **It has not yet been verified to resolve the exact Fruity Wrapper crash**; see [FL_STUDIO_RECOVERY.md](FL_STUDIO_RECOVERY.md).
 
 ## November 7, 2026 — compact UI / low-overhead DSP refinements
 - The editor opens at **432 × 414**, with aspect-locked resizing up to **1008 × 966**. Selector widths, scalable text buttons, retune hierarchy, note-state labels, and pitch confidence have been refined.
@@ -61,7 +64,7 @@ Windows shared memory with no SkellWorld Hub or Python process.
 FL Studio host-specific loading and session restore remain to be verified.
 
 ## Build and download
-On pushes to `main`, **Build SkellyTune Realtime VST3** runs on GitHub Actions and builds only the **SkellyTune Realtime** Windows VST3 (3 ms nominal dry/transient delay). Download the `SkellyTune-Realtime-Windows-VST3` artifact from the successful workflow. No Studio, Studio Fast, or Standalone files are produced.
+On pushes to `main`, **Build SkellyTune Realtime VST3** runs on GitHub Actions and builds only the **SkellyTune Realtime** Windows VST3 (3 ms nominal dry/transient delay). The workflow validates the Windows module, editor startup, metadata and pluginval. A product ZIP is uploaded only when the repository is verified private; public, internal, or unknown visibility deliberately withholds it. No Studio, Studio Fast, or Standalone files are produced.
 
 To run portable C++ DSP tests locally (without JUCE):
 ```sh
@@ -75,4 +78,4 @@ The DSP engine includes 0 ms *Retune Speed* (no correction smoothing), which doe
 ### Compatibility
 Do not change manufacturer/plugin codes or parameter IDs without a migration plan; existing FL Studio projects rely on them. Back up projects before changing installed VST3 versions. Third-party license notices are in `third_party`.
 
-[Patch notes](CHANGELOG_v331.md) · [FL Studio recovery](FL_STUDIO_RECOVERY.md) · [State validation](STATE_RESTORE_PATCH_REPORT.md)
+[v3.3.2 patch notes](CHANGELOG_v332.md) · [v3.3.1 patch notes](CHANGELOG_v331.md) · [FL Studio recovery](FL_STUDIO_RECOVERY.md) · [State validation](STATE_RESTORE_PATCH_REPORT.md)

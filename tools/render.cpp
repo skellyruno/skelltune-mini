@@ -156,6 +156,7 @@ int main(int argc,char**argv) {
     if(argc>6)p.vibratoPreservation=std::stof(argv[6])/100.0f;
     if(argc>7)p.flexCents=std::stof(argv[7]);
     if(argc>8)p.pitchClasses=uint16_t(std::stoul(argv[8]));
+    if (std::getenv("SKELLY_TESTTUNE")) p.testTune = true;
     if(argc>9)p.cycleLevelStabilization=std::stof(argv[9])/100.0f;
     if(argc>10)p.experimentalCycleSynthesis=(std::stoi(argv[10])!=0);
     if(argc>11)p.airPreservation=std::clamp(std::stof(argv[11])/100.0f,0.0f,1.0f);

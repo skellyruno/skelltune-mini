@@ -13,6 +13,11 @@ int main() {
         std::cerr << "STEP: JUCE init ok\n" << std::flush;
         SkellyTuneRealtimeProcessor processor;
         std::cerr << "STEP: processor ok\n" << std::flush;
+        if (processor.getNumPrograms() != 1 || processor.getProgramName(0).trim().isEmpty()) {
+            std::cerr << "FAIL: VST3 default program must have a non-empty name\n";
+            return 28;
+        }
+        std::cerr << "STEP: VST3 default program name ok\n" << std::flush;
         // Receiver must not assume any SkellKey value until an authenticated
         // packet is received. Joining the local hub needs no Mini control.
         if (processor.linkedMusicalKey().valid()) {

@@ -129,6 +129,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
         "Enabled Notes Mask (0 = follow scale)", 0, 4095, 0));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"bypass", 1},
         "Bypass", false));
+    // Alternate algorithm for A/B testing: nearest in-scale note in the PERIOD domain, no
+    // hysteresis. Off by default; the standard algorithm is unchanged when this is off.
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"testTune", 1},
+        "TestTune Algorithm", false));
     return layout;
 }
 
@@ -168,6 +172,7 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
     p.cycleLevelStabilization = state_.getRawParameterValue("cycleStabilize")->load()/100.0f;
     p.phaseAlignedJumps = state_.getRawParameterValue("phaseAlign")->load() > 0.5f;
     p.referenceA = state_.getRawParameterValue("a4")->load();
+    p.testTune = state_.getRawParameterValue("testTune")->load() > 0.5f;
 #if (defined(SKELLY_STUDIO_PROFILE) && SKELLY_STUDIO_PROFILE) || (defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE)
     p.experimentalCycleSynthesis = true; // Separate instance, locked timebase.
 #else

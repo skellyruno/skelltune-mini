@@ -50,9 +50,9 @@ def main() -> int:
     result = resolve_policy(args.visibility, args.private_flag)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        json.dumps(result, indent=2) + "\\n",
+        json.dumps(result, indent=2) + "\n",
         encoding="utf-8",
-        newline="\\n",
+        newline="\n",
     )
     print(json.dumps(result, sort_keys=True))
     return 0

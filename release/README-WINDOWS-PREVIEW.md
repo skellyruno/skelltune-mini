@@ -1,6 +1,6 @@
 # SkellyTune Realtime 3.3.1 — Windows x64 VST3 preview
 
-This is a **CI preview package for compatibility testing**, not a commercial release. It is produced from a public GitHub repository and is not an access-restricted private download.
+This is a **CI preview package for compatibility testing**, not a commercial release. The workflow records the repository's actual visibility and uploads the product ZIP only when both GitHub's visibility and private flag identify a private repository. On public, internal, or unknown visibility, the Windows build and validation still run but the product ZIP is withheld. Previously uploaded artifacts are not made private by this guard and remain accessible under the access rules of their original run.
 
 ## Contents
 
@@ -9,7 +9,7 @@ This is a **CI preview package for compatibility testing**, not a commercial rel
 - SHA256SUMS.txt — SHA-256 hashes for every packaged file except the checksum manifest itself.
 - LICENSE.txt and THIRD_PARTY_NOTICES/ — project and dependency notices.
 
-The GitHub Actions artifact itself is the downloadable ZIP. Its root contains the VST3 bundle and notices; it must not contain a second ZIP nested inside it.
+When repository-scoped upload is allowed, the GitHub Actions artifact itself is the downloadable ZIP. Its root contains the VST3 bundle and notices; it must not contain a second ZIP nested inside it. If the repository is public, internal, or has unknown visibility, no product ZIP is uploaded.
 
 ## Installation for testing
 

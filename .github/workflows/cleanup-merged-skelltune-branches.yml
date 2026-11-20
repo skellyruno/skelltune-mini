@@ -1,0 +1,125 @@
+name: One-shot cleanup of merged SkellTune branches
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cleanup-merged-skelltune-branches.yml"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete only merged or fully integrated branches
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const repository = await github.rest.repos.get({ owner, repo });
+            const defaultBranch = repository.data.default_branch;
+            const mainRef = await github.rest.git.getRef({
+              owner,
+              repo,
+              ref: `heads/${defaultBranch}`
+            });
+            const mainSha = mainRef.data.object.sha;
+
+            // Never remove default, production, development, or trunk aliases.
+            const keep = new Set([
+              defaultBranch, "main", "master", "production", "prod",
+              "develop", "development"
+            ]);
+
+            const [branches, openPulls, allPulls] = await Promise.all([
+              github.paginate(github.rest.repos.listBranches, {
+                owner, repo, per_page: 100
+              }),
+              github.paginate(github.rest.pulls.list, {
+                owner, repo, state: "open", per_page: 100
+              }),
+              github.paginate(github.rest.pulls.list, {
+                owner, repo, state: "all", per_page: 100
+              })
+            ]);
+
+            const openHeads = new Set(openPulls.map(p => p.head.ref));
+            const mergedHeadShas = new Map();
+            for (const pr of allPulls) {
+              if (!pr.merged_at || !pr.head?.ref || !pr.head?.sha) continue;
+              if (!mergedHeadShas.has(pr.head.ref)) {
+                mergedHeadShas.set(pr.head.ref, new Set());
+              }
+              mergedHeadShas.get(pr.head.ref).add(pr.head.sha);
+            }
+
+            const deleted = [];
+            const retained = [];
+            for (const branch of branches) {
+              const name = branch.name;
+              if (keep.has(name) || branch.protected || openHeads.has(name)) {
+                retained.push({ name, reason: "protected/default/open PR" });
+                continue;
+              }
+
+              let safeToDelete = mergedHeadShas.get(name)?.has(branch.commit.sha) === true;
+              let reason = safeToDelete ? "merged PR head" : "";
+
+              // Also allow superseded draft stacks, but only when the exact
+              // branch tip is already an ancestor of the current default tip.
+              if (!safeToDelete) {
+                try {
+                  const comparison = await github.rest.repos.compareCommits({
+                    owner,
+                    repo,
+                    base: branch.commit.sha,
+                    head: mainSha
+                  });
+                  safeToDelete = comparison.data.status === "ahead" ||
+                                 comparison.data.status === "identical";
+                  if (safeToDelete) reason = "branch tip is contained in main";
+                } catch (error) {
+                  core.warning(`Could not prove ancestry for ${name}: ${error.message}`);
+                }
+              }
+
+              if (!safeToDelete) {
+                retained.push({ name, reason: "branch contains unmerged commits" });
+                continue;
+              }
+
+              try {
+                await github.rest.git.deleteRef({
+                  owner,
+                  repo,
+                  ref: `heads/${name}`
+                });
+                deleted.push({ name, reason });
+              } catch (error) {
+                core.warning(`Could not delete ${name}: ${error.message}`);
+                retained.push({ name, reason: "GitHub refused deletion" });
+              }
+            }
+
+            core.info(`Deleted ${deleted.length} fully integrated branch(es): ${JSON.stringify(deleted)}`);
+            core.info(`Retained ${retained.length} branch(es): ${JSON.stringify(retained)}`);
+
+            // This is a one-shot workflow. Remove the helper from main after
+            // completion; GITHUB_TOKEN commits do not recursively trigger push workflows.
+            const helperPath = ".github/workflows/cleanup-merged-skelltune-branches.yml";
+            const helper = await github.rest.repos.getContent({
+              owner, repo, path: helperPath, ref: defaultBranch
+            });
+            if (!Array.isArray(helper.data) && helper.data.type === "file") {
+              await github.rest.repos.deleteFile({
+                owner,
+                repo,
+                path: helperPath,
+                sha: helper.data.sha,
+                branch: defaultBranch,
+                message: "chore: remove one-shot merged-branch cleanup workflow"
+              });
+            }

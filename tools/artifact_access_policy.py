@@ -59,8 +59,8 @@ def main() -> int:
     if args.github_output is not None:
         args.github_output.parent.mkdir(parents=True, exist_ok=True)
         allowed = "true" if result["artifact_upload_allowed"] else "false"
-        with args.github_output.open("a", encoding="utf-8", newline="\\n") as output:
-            output.write(f"artifact_upload_allowed={allowed}\\n")
+        with args.github_output.open("a", encoding="utf-8") as output:
+            output.write(f"artifact_upload_allowed={allowed}\n")
 
     print(json.dumps(result, sort_keys=True))
     return 0

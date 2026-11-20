@@ -87,7 +87,7 @@ class ArtifactAccessPolicyTests(unittest.TestCase):
         self.assertIn("--github-output", workflow)
         upload_step = workflow.split(
             "- name: Upload repository-scoped Windows VST3 preview", 1
-        )[1].split("\\n      - name:", 1)[0]
+        )[1].split("\n      - name:", 1)[0]
         self.assertIn(
             "if: success() && steps.artifact-access.outputs.artifact_upload_allowed == 'true'",
             upload_step,

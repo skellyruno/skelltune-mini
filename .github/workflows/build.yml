@@ -67,8 +67,6 @@ jobs:
         id: stage-package
         shell: pwsh
         env:
-          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility || 'unknown' }}
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private || false }}
           SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           CI_CHECKOUT_SHA: ${{ github.sha }}
           SOURCE_REF: ${{ github.head_ref || github.ref_name }}
@@ -153,14 +151,6 @@ jobs:
           $coreRevision = (& git -C $coreSource.FullName rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Could not resolve SkellCore dependency commit' }
 
-          $accessPath = Join-Path $packageRoot 'ARTIFACT-ACCESS.json'
-          $policyOutput = & python tools/artifact_access_policy.py --visibility $env:REPOSITORY_VISIBILITY --private-flag $env:REPOSITORY_PRIVATE --output $accessPath
-          if ($LASTEXITCODE -ne 0) { throw 'Product artifact access policy evaluation failed' }
-          $policy = $policyOutput | ConvertFrom-Json
-          $artifactUploadAllowed = [bool]$policy.artifact_upload_allowed
-          "artifact_upload_allowed=$($artifactUploadAllowed.ToString().ToLowerInvariant())" |
-            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
           $buildInfo = @(
             'Product: SkellyTune Realtime'
             "Version: $($versionMatch.Groups[1].Value)"
@@ -177,9 +167,6 @@ jobs:
             "JUCE resolved commit: $juceRevision"
             "SkellCore pinned commit: $($coreTagMatch.Groups[1].Value)"
             "SkellCore resolved commit: $coreRevision"
-            "Repository visibility: $($policy.repository_visibility)"
-            "Artifact access: $($policy.artifact_access)"
-            "Artifact upload allowed: $($artifactUploadAllowed.ToString().ToLowerInvariant())"
             'Configuration: Release'
             'Pluginval version: v2.0.0-beta3'
             'Pluginval archive SHA-256: da158e918b60430c6a5223cd99cc2e746bda604e583258c400898caf4e95c523'
@@ -251,16 +238,9 @@ jobs:
             throw "pluginval strictness 5 failed: exit code $($process.ExitCode)"
           }
       - name: Upload repository-scoped Windows VST3 preview
-        if: ${{ steps.stage-package.outputs.artifact_upload_allowed == 'true' }}
         uses: actions/upload-artifact@v6
         with:
           retention-days: 7
           name: SkellyTune-Realtime-Windows-VST3-Preview
           path: dist/SkellyTune-Realtime-Windows-VST3/
           if-no-files-found: error
-      - name: Withhold product VST3 artifact for non-private repository
-        if: ${{ steps.stage-package.outputs.artifact_upload_allowed != 'true' }}
-        shell: pwsh
-        run: |
-          Write-Host "Product VST3 artifact withheld: repository visibility is not verified private."
-          Write-Host "Windows build, package validation and pluginval completed without publishing the product ZIP."

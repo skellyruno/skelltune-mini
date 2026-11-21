@@ -1,28 +1,26 @@
-# SkellyTune Mini v3.3.2 — update verification snapshot
+# SkellyTune Mini v3.3.2 — repository update
 
-This report records validation performed against the uploaded `skelltune-mini-v332-META-TEST-ONLY.zip` source snapshot. It is not a claim that the full uploaded archive has been imported into this repository branch.
+## Source sync
+The v3.3.2 META test archive has been synced into this branch for review:
+- Adds the isolated \`dsp/MetaTest.hpp\` experimental engine and \`tests/test_v43_meta.cpp\` characterization suite.
+- Adds a third REGULAR / TESTTUNE / META algorithm selector in the editor and routes audio to META only in explicitly META-enabled builds.
+- Adds optional offline render switches for META A/B testing.
+- Documents known detector/smoother limitations and benchmark observations in \`META_TEST_NOTES.md\`.
+- Keeps \`SKELLY_META_TEST\` disabled by default and emits a CMake warning when explicitly enabled.
+- Includes the validation snapshot in this report.
 
-## Release-safety change in this branch
+The repository-only Windows build workflow, installer/rollback code, third-party notices, artifact-access policy helper, and associated tests were preserved from GitHub main. The truncated archive copy of \`CHANGELOG_v331.md\` was deliberately not used.
 
-- Added the opt-in `SKELLY_META_TEST` CMake option with a default of `OFF`.
-- When explicitly enabled, CMake emits a warning that META is test-only and must not be released.
-- No existing plugin IDs, parameter IDs, preset/state formats, automation IDs, or latency declarations were intentionally changed by this guard.
+## Validation from the uploaded source snapshot
+- Standard portable DSP suite with META disabled: **43/43 tests passed**.
+- Separate META characterization build: **1/1 test passed** with explicit \`SKELLY_META_TEST=ON\`.
+- Real-vocal G-major test render: **92.469%** voiced frames within 25 cents; peak **0.893306**; no clipped samples.
+- +10% input-level stability check: **1.284%** 20 ms output-envelope mismatch after gain normalization.
+- 48 kHz isolated engine benchmark: approximately **1.37% of one core** (not a plugin-wide host measurement).
+- Nominal declared DSP delay: 144 samples / 3.0 ms at 48 kHz (not host-measured latency).
 
-## Validation recorded for the uploaded source snapshot
+## Release / test boundary
+META is research-only. Its own documentation reports weaker pitch scores than the standard engine on the three comparison clips, a few milliseconds of uncompensated latency, and no explicit unvoiced handling. Never distribute a build configured with \`SKELLY_META_TEST=ON\`. The standard engine remains the default path.
 
-- Portable DSP suite: **43/43 CTest tests passed** with `SKELLY_META_TEST=OFF`.
-- META characterization test: **1/1 passed** when built separately with explicit `SKELLY_META_TEST=ON`.
-- Real-vocal G-major comparison: **92.469%** of voiced frames within 25 cents; peak **0.893306**; no samples above full scale.
-- +10% input-level stability check: **1.284%** 20 ms envelope mismatch after gain normalization.
-- Isolated 48 kHz engine benchmark: **0.136588 CPU seconds** over the 10-second simulation (about **1.37% of one core**; not a plugin-wide host measurement).
-- Declared nominal DSP delay: **144 samples / 3.0 ms at 48 kHz**; not a host-measured plugin latency result.
-
-## Still unverified
-
-- JUCE 8.0.12 and pinned SkellCore could not be fetched in the validation environment because `github.com` DNS resolution failed. Quick4 was not built and no UI captures are claimed.
-- No Windows x64 VST3 build, FL Studio load/save test, Fruity Wrapper crash reproduction, or owner-PC host acceptance was completed.
-- The uploaded source archive contains additional source/test changes not included in this small repository guard commit. Those need a separate source-sync review before merging.
-
-## META rule
-
-Normal builds must leave `SKELLY_META_TEST` unset. Only isolated A/B or characterization builds may set `-DSKELLY_META_TEST=ON`. Never distribute a META-enabled build.
+## CI and remaining host validation
+The portable DSP GitHub Actions checks on this branch have passed. The Windows JUCE/VST3 build, actual editor startup, screenshot capture, package verification, and pluginval are still in progress at the time of this report. FL Studio load/save and Fruity Wrapper crash reproduction still require owner-host testing. No Windows VST3 release is being claimed by this PR.

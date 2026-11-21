@@ -133,6 +133,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
     // hysteresis. Off by default; the standard algorithm is unchanged when this is off.
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"testTune", 1},
         "TestTune Algorithm", false));
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    // TEST-ONLY: the Meta engine. Not persisted in saved sessions (not in the saved-state allow-list).
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"meta", 1},
+        "Meta Algorithm (test only)", false));
+#endif
     return layout;
 }
 
@@ -145,6 +150,10 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
 #else
     engine_.prepare(sampleRate, getTotalNumInputChannels());
 #endif
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    meta_.prepare(sampleRate);
+    metaWasActive_ = false;
+#endif
     // Both modes share the same sample-accurate dry/transient transport delay.
     // Wet tonal cycles are nonlinearly time-warped; their source age is NOT PDC.
     // Mode automation must not trigger a host latency change on the audio thread.
@@ -153,7 +162,12 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     jassert(realtime.reportedSamples == cycle.reportedSamples);
     setLatencySamples(realtime.reportedSamples);
 }
-void SkellyTuneRealtimeProcessor::releaseResources() { engine_.reset(); }
+void SkellyTuneRealtimeProcessor::releaseResources() {
+    engine_.reset();
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    meta_.reset();
+#endif
+}
 bool SkellyTuneRealtimeProcessor::isBusesLayoutSupported(const BusesLayout& l) const {
     return l.getMainInputChannelSet() == l.getMainOutputChannelSet() &&
        (l.getMainOutputChannelSet() == juce::AudioChannelSet::mono() ||
@@ -213,6 +227,15 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() <= 0) return;
     engine_.setParameters(currentParameters());
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    if (state_.getRawParameterValue("meta")->load() > 0.5f) {
+        if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
+        float* io[2] = { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
+        runMeta(io, ch, b.getNumSamples());
+        return;
+    }
+    if (metaWasActive_) { engine_.reset(); metaWasActive_ = false; }
+#endif
     std::array<const float*, 2> in { b.getReadPointer(0), ch == 2 ? b.getReadPointer(1) : nullptr };
     std::array<float*, 2> out { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
     engine_.process(in.data(), out.data(), b.getNumSamples(), ch);
@@ -246,13 +269,26 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
                                 ch == 2 ? doubleScratch_.getReadPointer(1) : nullptr};
         float* dst[2] = {doubleScratch_.getWritePointer(0),
                          ch == 2 ? doubleScratch_.getWritePointer(1) : nullptr};
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        if (state_.getRawParameterValue("meta")->load() > 0.5f) {
+            if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
+            runMeta(dst, ch, n);
+        } else {
+            if (metaWasActive_) { engine_.reset(); metaWasActive_ = false; }
+            engine_.process(src, dst, n, ch);
+        }
+#else
         engine_.process(src, dst, n, ch);
+#endif
         for (int c = 0; c < ch; ++c) {
             double* dest = b.getWritePointer(c, offset);
             const float* frame = doubleScratch_.getReadPointer(c);
             for (int i = 0; i < n; ++i) dest[i] = double(frame[i]);
         }
     }
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    if (metaWasActive_) return;   // runMeta() already published the meter values
+#endif
     const auto pitch = engine_.lastPitch();
     displayedPitchHz_.store(pitch.valid ? pitch.hertz : 0.0f, std::memory_order_relaxed);
     displayedConfidence_.store(pitch.valid ? pitch.confidence : 0.0f, std::memory_order_relaxed);
@@ -260,6 +296,24 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     displayedTargetPending_.store(engine_.targetPending(), std::memory_order_relaxed);
     displayedCorrectionCents_.store(float(engine_.appliedCents()), std::memory_order_relaxed);
 }
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int frames) {
+    const auto p = currentParameters();
+    // The reconstruction's smoother speed has its own unit; speedMs / 8 is an arbitrary test mapping.
+    meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA), double(p.amount),
+                        double(p.speedMs) / 8.0);
+    const bool bypass = state_.getRawParameterValue("bypass")->load() > 0.5f;
+    meta_.process(io, channels, frames, bypass);
+    const double hz = meta_.detectedHz(), targetHz = meta_.targetHz();
+    const bool voiced = hz > 0.0 && targetHz > 0.0;
+    displayedPitchHz_.store(voiced ? float(hz) : 0.0f, std::memory_order_relaxed);
+    displayedConfidence_.store(voiced ? float(meta_.lastConfidence()) : 0.0f, std::memory_order_relaxed);
+    displayedTargetNote_.store(voiced ? int(std::lround(69.0 + 12.0 * std::log2(targetHz / double(p.referenceA)))) : -1,
+                               std::memory_order_relaxed);
+    displayedTargetPending_.store(false, std::memory_order_relaxed);
+    displayedCorrectionCents_.store(voiced ? float(meta_.shiftCents()) : 0.0f, std::memory_order_relaxed);
+}
+#endif
 juce::AudioProcessorEditor* SkellyTuneRealtimeProcessor::createEditor() {
     // Connect immediately for a visible editor, but do not require that
     // editor to remain open: processor timer keeps the listener running.

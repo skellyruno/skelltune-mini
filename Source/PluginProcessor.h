@@ -5,6 +5,9 @@
 #include <SkellCore/SkullTheme.h>
 #include <juce_events/juce_events.h>
 #include <atomic>
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+#include "../dsp/MetaTest.hpp"   // TEST-ONLY engine. Never ship a build that defines SKELLY_META_TEST.
+#endif
 
 class SkellyTuneRealtimeProcessor final : public juce::AudioProcessor, private juce::Timer {
 public:
@@ -34,7 +37,7 @@ public:
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int index) override { return index == 0 ? "Default" : juce::String{}; }
+    const juce::String getProgramName(int) override { return {}; }
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
@@ -87,6 +90,11 @@ private:
     juce::AudioBuffer<float> doubleScratch_;  // allocated ONLY in prepareToPlay
     juce::AudioProcessorValueTreeState state_;
     skelly::RealtimeTuner engine_;
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    skelly::MetaTest meta_;
+    bool metaWasActive_ = false;   // audio thread only
+    void runMeta(float* const* io, int channels, int frames);
+#endif
     std::atomic<float> displayedPitchHz_{0.0f};
     std::atomic<float> displayedConfidence_{0.0f};
     std::atomic<int> displayedTargetNote_{-1};

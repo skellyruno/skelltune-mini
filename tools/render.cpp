@@ -1,6 +1,10 @@
 #include "RealtimeTuner.hpp"
+#ifdef SKELLY_META_TEST
+#include "MetaTest.hpp"   // TEST-ONLY engine, see dsp/MetaTest.hpp
+#endif
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -94,8 +98,24 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         dsp.setHardTuneOnsetMemoryEnabled(false);
     if (std::getenv("SKELLY_V30_PROVISIONAL")) dsp.setProvisionalTransitionEnabled(true);
     if (std::getenv("SKELLY_V30_GLOTTAL")) dsp.setGlottalCycleEvidenceEnabled(true);
+#ifdef SKELLY_META_TEST
+    // SKELLY_META=1 routes audio through the test-only Meta engine instead of the standard one.
+    // SKELLY_META_FILE_DETECTOR=1 : use the reconstruction's own detector (as written; finds no pitch)
+    // SKELLY_META_AS_WRITTEN=1    : smoother fed the snapped target (as written; makes no correction)
+    // SKELLY_META_SPEED=<x>       : override the smoother speed (default speedMs / 8)
+    skelly::MetaTest meta; const bool useMeta = std::getenv("SKELLY_META") != nullptr;
+    if (useMeta) {
+        meta.prepare(double(w.rate));
+        meta.setFileDetector(std::getenv("SKELLY_META_FILE_DETECTOR") != nullptr);
+        meta.setSmoothDetected(std::getenv("SKELLY_META_AS_WRITTEN") == nullptr);
+        const double speed = std::getenv("SKELLY_META_SPEED") ? std::atof(std::getenv("SKELLY_META_SPEED"))
+                                                               : double(p.speedMs) / 8.0;
+        meta.setParameters(p.pitchClasses, double(p.referenceA), double(p.amount), speed);
+    }
+#endif
     const size_t total=w.samples.size()/size_t(w.channels);
-    constexpr int block=64;
+    const int block = std::getenv("SKELLY_BLOCK") ? std::max(16, std::atoi(std::getenv("SKELLY_BLOCK"))) : 64;
+    std::vector<double> blockSeconds;   // per-block wall time, printed when SKELLY_TIMING is set
     std::vector<float> inputA(block),inputB(block),outputA(block),outputB(block);
     std::ofstream trace;
     if(const char* name=std::getenv("SKELLY_TRACE")) {
@@ -109,7 +129,17 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         }
         const float* src[2]={inputA.data(),inputB.data()};
         float* dst[2]={outputA.data(),outputB.data()};
+        const auto timingStart = std::chrono::steady_clock::now();
+#ifdef SKELLY_META_TEST
+        if (useMeta) {
+            std::copy(inputA.begin(), inputA.begin() + len, outputA.begin());
+            std::copy(inputB.begin(), inputB.begin() + len, outputB.begin());
+            float* io[2] = {outputA.data(), outputB.data()};
+            meta.process(io, w.channels, len);
+        } else
+#endif
         dsp.process(src,dst,len,w.channels);
+        blockSeconds.push_back(std::chrono::duration<double>(std::chrono::steady_clock::now() - timingStart).count());
         if (trace && offset%256==0) {
             const auto est=dsp.lastPitch();
             trace << double(offset+len)/w.rate << ',' << est.hertz << ',' << est.confidence << ','
@@ -141,6 +171,17 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
               << ", source-cycle mismatch reduction " << dsp.phaseMatchGainPercent() << "%"
               << ", experimental grains " << dsp.cycleSynthStatus().spawned
               << ", maximum formant-band gain " << dsp.maximumFormantGain() << "\n";
+    if (std::getenv("SKELLY_TIMING") && !blockSeconds.empty()) {
+        const size_t slowest = size_t(std::max_element(blockSeconds.begin(), blockSeconds.end()) - blockSeconds.begin());
+        std::cerr << "TIMING slowest block index " << slowest << " of " << blockSeconds.size() << "\n";
+        std::sort(blockSeconds.begin(), blockSeconds.end());
+        const double budget = double(block) / double(w.rate);
+        const auto at = [&](double q) { return blockSeconds[std::min(blockSeconds.size() - 1, size_t(q * double(blockSeconds.size())))]; };
+        std::cerr << "TIMING block=" << block << " budget_ms=" << budget * 1000.0
+                  << " median_ms=" << at(0.5) * 1000.0 << " p99_ms=" << at(0.99) * 1000.0
+                  << " max_ms=" << blockSeconds.back() * 1000.0
+                  << " max_as_percent_of_budget=" << 100.0 * blockSeconds.back() / budget << "\n";
+    }
     return output;
 }
 int main(int argc,char**argv) {

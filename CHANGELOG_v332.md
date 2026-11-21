@@ -88,3 +88,13 @@ Independent synthetic checks: clean-voice sweep 99.9% -> 100.0% octave-correct; 
   still ~2-4 points behind the commercial plugins on pitch score.
 - Three real clips (one voice type per scale) plus synthetic voices; scored with my own tools. No listening test.
 - No JUCE / VST3 / Windows / FL Studio build was available here.
+
+
+## META (TEST ONLY) — v3.3.2 research branch
+
+An experimental port of the user's reconstructed `metatune.cpp` pipeline is included solely for isolated A/B characterization. It is guarded by the opt-in CMake option `SKELLY_META_TEST` (default OFF); the guarded source deliberately refuses to compile without the option. A test-build-only third algorithm segment appears next to REGULAR and TESTTUNE, and the offline render tool accepts `SKELLY_META`, `SKELLY_META_FILE_DETECTOR`, `SKELLY_META_AS_WRITTEN`, and `SKELLY_META_SPEED` switches.
+
+The file reconstruction's own detector was measured to find almost no pitch on the tested voiced tones, and its as-written smoother feed produces no correction. The test UI defaults instead to the standard causal pitch tracker and the detected-period smoother, solely to make the reconstruction's remaining signal path comparable. META is not saved into preset state, is not latency-compensated, can shift consonants during unvoiced gaps, and must never be shipped. The working experimental mode also measured below the standard engine and commercial references on the three sample clips. See `META_TEST_NOTES.md` for measurements and characterization-test details.
+
+The normal build remains unchanged when `SKELLY_META_TEST` is OFF. Original VST3 IDs, host parameter IDs, preset formats and the standard DSP engine remain intact.
+

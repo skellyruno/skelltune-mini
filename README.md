@@ -79,3 +79,9 @@ The DSP engine includes 0 ms *Retune Speed* (no correction smoothing), which doe
 Do not change manufacturer/plugin codes or parameter IDs without a migration plan; existing FL Studio projects rely on them. Back up projects before changing installed VST3 versions. Third-party license notices are in `third_party`.
 
 [v3.3.2 patch notes](CHANGELOG_v332.md) · [v3.3.1 patch notes](CHANGELOG_v331.md) · [FL Studio recovery](FL_STUDIO_RECOVERY.md) · [State validation](STATE_RESTORE_PATCH_REPORT.md)
+
+
+## META research path (test only)
+
+The reconstructed META algorithm is preserved only as an opt-in experiment. The standard/release build does not compile it: leave `SKELLY_META_TEST` unset (default OFF). To run isolated characterization only, configure with `-DSKELLY_META_TEST=ON`; CMake warns that this build must not be distributed. Read [META_TEST_NOTES.md](META_TEST_NOTES.md) for the detector and smoother findings, A/B results, and known latency/unvoiced limitations. The standard REGULAR and TESTTUNE modes remain the supported paths.
+

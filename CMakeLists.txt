@@ -10,6 +10,12 @@ option(SKELLY_BUILD_PLUGIN "Build SkellyTune JUCE VST3" ON)
 option(SKELLY_BUILD_DSP_TESTS "Build portable DSP tests and analysis tools" OFF)
 option(SKELLY_BUILD_STUDIO "Include the separate 50 ms Studio plugin" OFF)
 option(SKELLY_BUILD_STUDIO_FAST "Include the separate 40 ms Studio Fast plugin" OFF)
+# TEST ONLY. Experimental META implementation must never be enabled in distributable builds.
+option(SKELLY_META_TEST "TEST ONLY: include the experimental META engine. Never ship." OFF)
+if(SKELLY_META_TEST)
+    message(WARNING "SKELLY_META_TEST is ON: this build contains test-only META code. Do not release it.")
+    add_compile_definitions(SKELLY_META_TEST=1)
+endif()
 
 add_library(skelly_dsp INTERFACE)
 target_include_directories(skelly_dsp INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/dsp")

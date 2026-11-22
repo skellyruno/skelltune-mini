@@ -64,6 +64,7 @@ public:
         // startup period that can bend its leading vowel. A real unvoiced
         // pause can re-arm the same causal one-shot without allocations.
         rearmOnVoiced_ = true; unvoicedHops_ = 0;
+        grainJumps_ = grainJumpCrossfades_ = 0;
         tracker_.prepare(double(sr_)); est_ = {};
         for (int l = 0; l < kLanes; ++l) { pos_[l] = out_[l] = 0.0; fade_[l] = flen_[l] = 0; }
         std::memset(anal_.data(), 0, sizeof(float) * anal_.size());
@@ -81,6 +82,11 @@ public:
     }
     void setSmoothDetected(bool on) { smoothDetected_ = on; }
     void setFileDetector(bool on) { fileDetector_ = on; }
+    // A/B test hook only; not a host parameter and never changed from
+    // the audio thread. The safe default fades every grain read-head jump.
+    void setJumpCrossfadeEnabled(bool on) { jumpCrossfadeEnabled_ = on; }
+    uint64_t grainJumps() const noexcept { return grainJumps_; }
+    uint64_t grainJumpCrossfades() const noexcept { return grainJumpCrossfades_; }
 
     // Introspection for tests.
     double lastRawLag() const { return raw_; }
@@ -124,8 +130,26 @@ public:
                     flen_[l] = fade_[l] = static_cast<uint32_t>(pt);
                 }
                 const double d = double(w) - pos_[l];
-                if (d > base + pin)      { out_[l] = pos_[l]; pos_[l] += pin; }
-                else if (d < base)       { out_[l] = pos_[l]; pos_[l] -= pin; }
+                // The original reconstruction only crossfaded the very first
+                // grain. Later one-period read-head jumps were *hard* switches
+                // (k=1) and could create a large click at any pitch drift.
+                // Carry the old head forward while blending toward the new
+                // one over a bounded pitch period. Each lane remains lock-free.
+                const bool jumpForward = d > base + pin;
+                const bool jumpBackward = d < base;
+                if (jumpForward || jumpBackward) {
+                    out_[l] = pos_[l];
+                    pos_[l] += jumpForward ? pin : -pin;
+                    ++grainJumps_;
+                    if (jumpCrossfadeEnabled_) {
+                        const uint32_t length = uint32_t(std::clamp(
+                            std::lround(pt), 16l, 512l));
+                        flen_[l] = fade_[l] = length;
+                        ++grainJumpCrossfades_;
+                    } else {
+                        flen_[l] = fade_[l] = 0;
+                    }
+                }
                 if (pos_[l] > double(w)) pos_[l] = double(w);
                 if (pos_[l] < double(w) - kRing + 8.0) pos_[l] = double(w) - kRing + 8.0;
 
@@ -291,7 +315,9 @@ private:
     uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0, speed_ = 0.5, speedScale_ = 1.0, lowLatency_ = 0.0;
     bool smoothDetected_ = true, fileDetector_ = false, tableDirty_ = true;
     bool rearmOnVoiced_ = true;
+    bool jumpCrossfadeEnabled_ = true;
     uint32_t unvoicedHops_ = 0;
+    uint64_t grainJumps_ = 0, grainJumpCrossfades_ = 0;
     skelly::CausalPitchTracker tracker_; skelly::PitchEstimate est_{};
     double f1_ = 0, f2_ = 0, c50_ = 0.99, c70_ = 0.2, curveRef_ = 1.0;
     double raw_ = 0, sel_ = 0, log_ = 0, period_ = 200, ratio_ = 1, target_ = 0, conf_ = 0, smooth_ = 0;

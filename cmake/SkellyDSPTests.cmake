@@ -241,6 +241,11 @@ if(SKELLY_META_TEST)
     target_link_libraries(dsp_v43_meta PRIVATE skelly_dsp)
     add_test(NAME dsp_v43_meta COMMAND dsp_v43_meta)
 
+    # Regress the actual Meta read-head jump bug; research engine only.
+    add_executable(dsp_v44_meta_grain tests/test_v44_meta_grain.cpp)
+    target_link_libraries(dsp_v44_meta_grain PRIVATE skelly_dsp)
+    add_test(NAME dsp_v44_meta_grain COMMAND dsp_v44_meta_grain)
+
     # Full three-way deterministic synthetic vocal rendering and metrics.
     # Never runs inside the host audio thread and never distributes Meta DSP.
     add_executable(three_mode_ab tools/three_mode_ab.cpp)

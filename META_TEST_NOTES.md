@@ -180,3 +180,15 @@ source audio, and bundles the existing Auto-Tune Pro benchmark reference.
 `validate_real_vocal.py` asserts finite samples, same duration/channels,
 bounded level and waveform steps. The result is a real-singer A/B, but not
 a verified perceptual ranking or an FL Studio latency/PDC test.
+
+### META grain-click root-cause fix
+
+The real-vocal three-way comparison at 10ms found a large instantaneous
+same-channel step near 7.515s. The reconstruction only set its grain fade
+once on initial startup: subsequent one-period read-head jumps switched
+directly to the new head at full gain. META now starts a bounded 16–512
+sample raised-cosine crossfade at **every** such jump. No allocations,
+locks or host latency changes were introduced. A test-only A/B switch
+and `dsp_v44_meta_grain` verify jump/fade accounting and safe output.
+Real-vocal float32 renders must be compared again after this change;
+reduced audible clicks and corrected META PDC are not assumed.

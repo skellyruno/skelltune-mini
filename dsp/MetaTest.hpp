@@ -39,6 +39,7 @@ namespace skelly {
 
 class MetaTest {
 public:
+    static constexpr double kPi = 3.14159265358979323846264338327950288;
     static constexpr int kLanes = 2, kRing = 8192, kRingM = kRing - 1;
     static constexpr int kOctaves = 7, kSemis = 12, kMaxEntry = kOctaves * kSemis;   // 84
     static constexpr double kBaseDly = 120.0, kFloor = 8.0;
@@ -124,7 +125,7 @@ public:
                 double k = 1.0;
                 if (fade_[l]) {
                     const double g = 1.0 - double(fade_[l]) / double(flen_[l] + 1);
-                    k = 0.5 - 0.5 * std::cos(M_PI * g);
+                    k = 0.5 - 0.5 * std::cos(kPi * g);
                     if (--fade_[l] == 0) out_[l] = pos_[l];
                 }
                 const double a = tap(ring_[l].data(), out_[l]);
@@ -142,8 +143,8 @@ private:
     void setFilter() {
         const double sr = double(sr_);
         const double hp = 60.0, lp = std::min(2000.0, sr * 0.45);
-        c50_ = 1.0 / (1.0 + 2.0 * M_PI * hp / sr);
-        const double k = 2.0 * M_PI * lp / sr;
+        c50_ = 1.0 / (1.0 + 2.0 * kPi * hp / sr);
+        const double k = 2.0 * kPi * lp / sr;
         c70_ = k / (1.0 + k);
     }
     float prefilter(float x) {

@@ -187,9 +187,9 @@ void SkellyTuneEditor::PitchButton::paintButton(
     const float glowValue = juce::jlimit(0.0f, 1.0f, glow);
     const float lift = down ? -0.05f : hover ? 0.10f : 0.0f;
 
-    // A precise, dimensional, playable note pad rather than an empty ring:
-    // selected tones look active, disabled notes stay legible, live targets
-    // have a subtle glow, and hover/press feedback is consistent at all sizes.
+    // A precise, dimensional, playable note pad rather than an empty ring.
+    // Live-input and live-target states must stay plainly visible at the
+    // minimum 432px Mini editor size, not only on a high-DPI display.
     const float inputLight = juce::jlimit(0.0f, 1.0f, inputGlow);
     if (enabled || glowValue > 0.015f || inputLight > 0.015f) {
         const float haloAlpha = std::min(0.25f, 0.06f +
@@ -205,11 +205,27 @@ void SkellyTuneEditor::PitchButton::paintButton(
         top, centre.x, area.getY(),
         bottom, centre.x, area.getBottom(), false));
     g.fillEllipse(area);
+    // Paint a clearly lit central lens as well as the tiny LEDs.
+    // Input = pale white/mint; corrected target = neon green.
+    // Deliberately moderate alpha to keep note text legible and the
+    // approved dark aesthetic intact, even when both lights coincide.
+    if (glowValue > 0.015f) {
+        g.setColour(p.accent.withAlpha(0.12f + 0.40f * glowValue));
+        g.fillEllipse(area.reduced(3.5f * scale));
+    }
+    if (inputLight > 0.015f) {
+        g.setColour(p.bone.withAlpha(0.09f + 0.31f * inputLight));
+        g.fillEllipse(area.reduced(4.0f * scale));
+    }
 
     // Outer selection ring, then an extremely restrained inner specular rim.
-    g.setColour(enabled ? p.accent.withAlpha(down ? 0.82f : 0.94f)
-                        : (hover ? p.boneDim.brighter(0.55f) : p.line.brighter(0.32f)));
-    g.drawEllipse(area, std::max(1.4f, 1.65f * scale));
+    const auto outerInk = glowValue > 0.03f ? p.accent :
+        inputLight > 0.03f ? p.bone :
+        enabled ? p.accent.withAlpha(down ? 0.82f : 0.94f) :
+        (hover ? p.boneDim.brighter(0.55f) : p.line.brighter(0.32f));
+    g.setColour(outerInk);
+    g.drawEllipse(area, std::max(1.4f,
+        (glowValue > 0.03f || inputLight > 0.03f ? 2.5f : 1.65f) * scale));
     g.setColour(enabled ? p.accent.withAlpha(0.19f + 0.25f * glowValue)
                         : p.boneDim.withAlpha(0.07f));
     g.drawEllipse(area.reduced(3.2f * scale), std::max(0.7f, 0.85f * scale));
@@ -224,7 +240,7 @@ void SkellyTuneEditor::PitchButton::paintButton(
         g.setColour(p.accent.withAlpha(0.16f + 0.45f * glowValue));
         g.drawEllipse(area.expanded(1.5f * scale), std::max(1.2f, 1.55f * scale));
         // Green LED at the bottom: the *output target* of tuning.
-        const float led = std::max(2.0f, 3.0f * scale);
+        const float led = std::max(2.7f, 4.7f * scale);
         g.setColour(p.accent.withAlpha(0.55f + 0.45f * glowValue));
         g.fillEllipse(centre.x - led * 0.5f, area.getBottom() - 1.1f * led,
                       led, led);
@@ -234,13 +250,14 @@ void SkellyTuneEditor::PitchButton::paintButton(
         // the green output target. Both show when they are the same note.
         g.setColour(p.bone.withAlpha(0.12f + 0.45f * inputLight));
         g.drawEllipse(area.reduced(1.8f * scale), std::max(1.1f, 1.4f * scale));
-        const float led = std::max(1.8f, 2.8f * scale);
+        const float led = std::max(2.5f, 4.4f * scale);
         g.setColour(p.bone.withAlpha(0.40f + 0.60f * inputLight));
         g.fillEllipse(centre.x - led * 0.5f, area.getY() + 1.0f * scale,
                       led, led);
     }
 
-    g.setColour(enabled ? p.bone : p.boneDim.withAlpha(0.88f));
+    g.setColour((enabled || inputLight > 0.04f || glowValue > 0.04f)
+        ? p.bone : p.boneDim.withAlpha(0.88f));
     g.setFont(juce::Font(juce::FontOptions(
         juce::jlimit(10.0f, 29.0f, float(getHeight()) * 0.38f),
         enabled ? juce::Font::bold : juce::Font::plain)));

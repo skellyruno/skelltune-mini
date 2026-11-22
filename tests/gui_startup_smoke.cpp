@@ -1,4 +1,5 @@
 #include "../Source/PluginProcessor.h"
+#include "../dsp/ScaleMask.hpp" // real effectiveMask() under mode-switch smoke
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <iostream>
 #include <memory>
@@ -275,8 +276,13 @@ int main() {
                 }
                 processor.processBlock(audio, midi);
             }
-            juce::Thread::sleep(80);
-            juce::Timer::callPendingTimersSynchronously();
+            // Timer callbacks are intentionally asynchronous; a single
+            // synchronous flush after sleeping may deliver just one trace
+            // point. Advance at least three genuine message-thread ticks.
+            for (int tick = 0; tick < 3; ++tick) {
+                juce::Thread::sleep(40);
+                juce::Timer::callPendingTimersSynchronously();
+            }
             if (processor.displayedPitchHz() < 175.0f ||
                 processor.displayedTargetNote() < 0) return false;
             const int inputPc = juce::roundToInt(
@@ -334,6 +340,10 @@ int main() {
             std::cerr << "FAIL: META -> REGULAR reset lost host tuning (32-bit)\n";
             return 44;
         }
+        // Exercise the third leg of the 3-way selector as well:
+        // META -> TESTTUNE must reapply both the algorithm and saved
+        // retune/key settings on the FIRST 64-bit callback.
+        if (testParam) testParam->setValueNotifyingHost(1.0f);
         juce::AudioBuffer<double> doubleAudio(2, 256);
         doubleAudio.clear();
         metaParam->setValueNotifyingHost(1.0f);
@@ -342,10 +352,12 @@ int main() {
         processor.processBlock(doubleAudio, midi);
         snapshot = processor.regularEngineParametersForLabTests();
         if (std::abs(snapshot.speedMs - 7.0f) > 0.02f ||
-            snapshot.pitchClasses != expectedMask) {
-            std::cerr << "FAIL: META -> REGULAR reset lost host tuning (64-bit)\n";
+            snapshot.pitchClasses != expectedMask ||
+            !snapshot.testTune) {
+            std::cerr << "FAIL: META -> TESTTUNE reset lost host tuning (64-bit)\n";
             return 45;
         }
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
         speedForSwitch->setValueNotifyingHost(
             speedForSwitch->convertTo0to1(25.0f));
         key->setSelectedId(1, juce::sendNotificationSync);

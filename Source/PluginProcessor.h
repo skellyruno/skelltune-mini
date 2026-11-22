@@ -108,6 +108,10 @@ private:
     std::atomic<std::uint64_t> linkedTuning_{0}; // all of scale + A4 + key in one atomic
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     skelly::Parameters currentParameters() const noexcept;
+    // JUCE standalone GUI smoke invokes prepareToPlay directly; JUCE's
+    // host-managed getSampleRate() may still be zero. Always use the
+    // actual rate passed to prepareToPlay for DSP and edit boundaries.
+    double preparedAudioRate_ = 0.0;
     juce::AudioBuffer<float> doubleScratch_;  // allocated ONLY in prepareToPlay
     juce::AudioProcessorValueTreeState state_;
     skelly::RealtimeTuner engine_;

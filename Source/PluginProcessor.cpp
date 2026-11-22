@@ -142,6 +142,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
 }
 
 void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockSize) {
+    preparedAudioRate_ = (std::isfinite(sampleRate) && sampleRate > 0.0) ?
+        sampleRate : 0.0;
     doubleScratch_.setSize(2, juce::jlimit(1, 16384, maxBlockSize), false, true, false);
 #if defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
     engine_.prepare(sampleRate, getTotalNumInputChannels(), true, true);
@@ -163,6 +165,7 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     setLatencySamples(realtime.reportedSamples);
 }
 void SkellyTuneRealtimeProcessor::releaseResources() {
+    preparedAudioRate_ = 0.0;
     engine_.reset();
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     meta_.reset();
@@ -224,7 +227,7 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
 }
 void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
     int64_t positionMs=-1;
-    const double rate=getSampleRate();
+    const double rate=preparedAudioRate_;
     if(rate>0.0) {
         if(auto* playhead=getPlayHead()) {
             const auto pos=playhead->getPosition();
@@ -246,7 +249,7 @@ void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
 void SkellyTuneRealtimeProcessor::processEditedAudio(
     float* const* io,int channels,int frames,int blockOffset,bool useMeta) {
     if(frames<=0||getSampleRate()<=0.0)return;
-    const double rate=getSampleRate();
+    const double rate=preparedAudioRate_;
     const auto blockMs=displayedHostMs_.load(std::memory_order_relaxed);
     for(int offset=0;offset<frames;) {
         const int absolute=blockOffset+offset;

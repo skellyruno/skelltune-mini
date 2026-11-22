@@ -318,3 +318,14 @@ if(SKELLY_META_TEST)
     target_link_libraries(dsp_v56_meta_stereo PRIVATE skelly_dsp)
     add_test(NAME dsp_v56_meta_stereo COMMAND dsp_v56_meta_stereo)
 endif()
+
+# Fast path for the vast majority of audio with no recorded manual edits.
+add_executable(dsp_v58_edit_fastpath tests/test_v58_edit_fastpath.cpp)
+target_link_libraries(dsp_v58_edit_fastpath PRIVATE skelly_dsp)
+add_test(NAME dsp_v58_edit_fastpath COMMAND dsp_v58_edit_fastpath)
+if(SKELLY_META_TEST)
+    # Research-only: original Hann grain fade vs prepared lookup curve.
+    add_executable(dsp_v57_meta_fade_lut tests/test_v57_meta_fade_lut.cpp)
+    target_link_libraries(dsp_v57_meta_fade_lut PRIVATE skelly_dsp)
+    add_test(NAME dsp_v57_meta_fade_lut COMMAND dsp_v57_meta_fade_lut)
+endif()

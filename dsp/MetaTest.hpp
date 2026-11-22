@@ -28,6 +28,7 @@
 #endif
 
 #include "RealtimeTuner.hpp"   // CausalPitchTracker (optional working detector)
+#include "PhaseCrossfadeLut.hpp"
 #include <algorithm>
 #include <array>
 #include <cfloat>
@@ -58,6 +59,7 @@ public:
         // from prepareToPlay, NEVER from the audio callback's mode switch.
         tracker_.prepare(double(sr_));
         stereoRouter_.prepare(double(sr_));
+        phaseCrossfade_.prepare(); // precompute Hann outside realtime process
         reset();
     }
     void reset() {
@@ -288,8 +290,9 @@ public:
 
                 double k = 1.0;
                 if (fade_[l]) {
-                    const double g = 1.0 - double(fade_[l]) / double(flen_[l] + 1);
-                    k = 0.5 - 0.5 * std::cos(kPi * g);
+                    // Same Hann phase trajectory, without an audio-thread cosine.
+                    k = phaseCrossfade_.blend(int(flen_[l] - fade_[l]),
+                                              int(flen_[l] + 1));
                     if (--fade_[l] == 0) out_[l] = pos_[l];
                 }
                 const double a = tap(ring_[l].data(), out_[l], highQualityInterpolation_);
@@ -522,6 +525,7 @@ private:
     bool rearmOnVoiced_ = true;
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;
+    PhaseCrossfadeLut phaseCrossfade_;
     uint32_t unvoicedHops_ = 0;
     uint32_t dryDelaySamples_ = 144;
     double wetBlend_ = 0.0;

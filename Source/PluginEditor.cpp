@@ -554,8 +554,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     // 432x414 Mini interface, host preset and automation remain identical.
     analyzerToggle_.setComponentID("skelly.analyzerToggle");
     analyzerToggle_.setName("Expand pitch graph");
-    analyzerToggle_.setTooltip("Open a live note pitch graph. Drag note lines to pan the view; "
-                               "double-click the graph to follow the voice. View only.");
+    analyzerToggle_.setTooltip("Open the pitch editor. Drag a voiced note to retune; "
+                               "use UNDO or CLEAR to manage edits.");
     analyzerToggle_.setColour(juce::TextButton::buttonColourId,
                              palette_.panel.brighter(0.10f));
     analyzerToggle_.setColour(juce::TextButton::buttonOnColourId,
@@ -625,7 +625,7 @@ void SkellyTuneEditor::toggleAnalyzer() {
         "Expand the live pitch editor; edits apply to all three algorithms.");
     // Change only editor dimensions. This setting isn't in saved APVTS
     // state and can never invalidate an old FL Studio project.
-    const int referenceHeight = analyzerExpanded_ ? 620 : 414;
+    const int referenceHeight = analyzerExpanded_ ? 700 : 414;
     const int originalWidth = getWidth();
     // JUCE's setResizeLimits() can immediately enforce the MINIMUM size.
     // Change the aspect ratio FIRST and preserve the original width from
@@ -643,7 +643,7 @@ void SkellyTuneEditor::toggleAnalyzer() {
 
 void SkellyTuneEditor::resized() {
     const float sx = float(getWidth()) / 432.0f;
-    const float sy = float(getHeight()) / (analyzerExpanded_ ? 620.0f : 414.0f);
+    const float sy = float(getHeight()) / (analyzerExpanded_ ? 700.0f : 414.0f);
     const auto place = [sx,sy](juce::Component& c, float x, float y, float w, float h) {
         c.setBounds(juce::roundToInt(x*sx), juce::roundToInt(y*sy),
             std::max(1,juce::roundToInt(w*sx)), std::max(1,juce::roundToInt(h*sy)));
@@ -685,10 +685,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     juce::Graphics::ScopedSaveState save(g);
     g.addTransform(juce::AffineTransform::scale(
         float(getWidth())/432.0f,
-        float(getHeight())/(analyzerExpanded_ ? 620.0f : 414.0f)));
+        float(getHeight())/(analyzerExpanded_ ? 700.0f : 414.0f)));
     g.setColour(palette_.line);
     g.drawRoundedRectangle(juce::Rectangle<float>(5,5,422,
-        analyzerExpanded_ ? 610.0f : 404.0f),10.0f,1.0f);
+        analyzerExpanded_ ? 690.0f : 404.0f),10.0f,1.0f);
 
     // The shared SkellCore skull is branding only, not another control.
     {
@@ -782,10 +782,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     }
 
     if (analyzerExpanded_) {
-        const auto panelRect = juce::Rectangle<float>(13.0f,416.0f,406.0f,194.0f);
+        const auto panelRect = juce::Rectangle<float>(13.0f,416.0f,406.0f,274.0f);
         g.setGradientFill(juce::ColourGradient(
             panel.brighter(0.12f),13.0f,416.0f,
-            panel.darker(0.14f),419.0f,610.0f,false));
+            panel.darker(0.14f),419.0f,690.0f,false));
         g.fillRoundedRectangle(panelRect,9.0f);
         g.setColour(palette_.line.withAlpha(0.80f));
         g.drawRoundedRectangle(panelRect,9.0f,0.85f);
@@ -801,17 +801,17 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                    210,422,87,17,juce::Justification::centredRight);
         // Eight semitones of real note-space. Dragged voiced lines
         // record host-timed pitch edits, never change published APVTS IDs.
-        constexpr float top=451.0f,bottom=569.0f;
+        constexpr float top=451.0f,bottom=649.0f;
         constexpr float left=54.0f,right=405.0f;
         const auto noteY=[this](float midi) noexcept {
-            return 510.0f-(midi-graphCenterMidi_)*((569.0f-451.0f)/8.0f);
+            return 550.0f-(midi-graphCenterMidi_)*((649.0f-451.0f)/8.0f);
         };
         g.setColour(bg.withAlpha(0.70f));
-        g.fillRoundedRectangle(juce::Rectangle<float>(49.0f,446.0f,360.0f,128.0f),5.0f);
+        g.fillRoundedRectangle(juce::Rectangle<float>(49.0f,446.0f,360.0f,208.0f),5.0f);
         for(int second=1;second<3;++second) {
             const float x=54.0f+(405.0f-54.0f)*float(second)/3.0f;
             g.setColour(palette_.line.withAlpha(0.26f));
-            g.drawVerticalLine(juce::roundToInt(x),451.0f,569.0f);
+            g.drawVerticalLine(juce::roundToInt(x),451.0f,649.0f);
             g.setFont(juce::Font(juce::FontOptions(8.1f)));
             g.setColour(muted.withAlpha(0.70f));
             g.drawText(juce::String(second-3)+"s",
@@ -824,10 +824,17 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
             const float y=noteY(float(note));
             if(y<top||y>bottom)continue;
             const bool targetRow=voicedFade_>0.05f&&note==lastTarget_;
-            g.setColour(targetRow?accent.withAlpha(0.40f):palette_.line.withAlpha(0.33f));
-            g.drawLine(left,y,right,y,targetRow?1.45f:0.65f);
-            g.setColour(targetRow?accent:muted.withAlpha(0.87f));
-            g.setFont(juce::Font(juce::FontOptions(9.0f,juce::Font::bold)));
+            const bool octaveRow=(note%12)==0;
+            if(octaveRow) {
+                const float y0=std::max(top,y-10.0f), y1=std::min(bottom,y+10.0f);
+                g.setColour(palette_.line.withAlpha(0.14f));
+                g.fillRect(left,y0,right-left,std::max(0.0f,y1-y0));
+            }
+            g.setColour(targetRow?accent.withAlpha(0.48f):
+                        palette_.line.withAlpha(octaveRow?0.62f:0.32f));
+            g.drawLine(left,y,right,y,targetRow?1.55f:(octaveRow?1.0f:0.65f));
+            g.setColour(targetRow?accent:(octaveRow?text:muted.withAlpha(0.87f)));
+            g.setFont(juce::Font(juce::FontOptions(10.0f,juce::Font::bold)));
             g.drawText(noteLabel(note),17,int(y-7.0f),34,14,
                        juce::Justification::centredRight);
         }
@@ -887,7 +894,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                 (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
             if(firstTime>=0&&lastTime>firstTime) {
                 juce::Graphics::ScopedSaveState clipEdits(g);
-                g.reduceClipRegion(juce::Rectangle<int>(54,451,352,119));
+                g.reduceClipRegion(juce::Rectangle<int>(54,451,352,199));
                 for(int i=0;i<skelly::PitchEditTimeline::kCapacity;++i) {
                     const auto edit=processor_.pitchEdits().get(i);
                     if(!edit.valid()||edit.endMs<firstTime||
@@ -912,29 +919,29 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         }
         g.setColour(text.withAlpha(0.90f));
         g.setFont(juce::Font(juce::FontOptions(9.4f,juce::Font::bold)));
-        g.drawText("WHITE  INPUT",24,580,104,15,juce::Justification::centredLeft);
+        g.drawText("WHITE  INPUT",24,660,104,15,juce::Justification::centredLeft);
         g.setColour(accent);
-        g.drawText("GREEN  EST. OUTPUT",129,580,159,15,juce::Justification::centredLeft);
+        g.drawText("GREEN  EST. OUTPUT",129,660,159,15,juce::Justification::centredLeft);
         g.setColour(muted.brighter(0.27f));
-        g.drawText("TARGET  LINE",301,580,103,15,juce::Justification::centredRight);
+        g.drawText("TARGET  LINE",301,660,103,15,juce::Justification::centredRight);
         g.setColour(muted);
         g.setFont(juce::Font(juce::FontOptions(9.4f)));
         g.drawText("DRAG PITCH TO EDIT  •  RIGHT-CLICK ERASES  •  DOUBLE-CLICK FOLLOWS",
-                   20,596,390,13,juce::Justification::centred);
+                   20,676,390,13,juce::Justification::centred);
 
     }
 }
 bool SkellyTuneEditor::graphHit(juce::Point<float> position) const noexcept {
     if (!analyzerExpanded_ || getWidth() <= 0 || getHeight() <= 0) return false;
     const float x=position.x*432.0f/float(getWidth());
-    const float y=position.y*620.0f/float(getHeight());
-    return x>=49.0f&&x<=409.0f&&y>=446.0f&&y<=574.0f;
+    const float y=position.y*700.0f/float(getHeight());
+    return x>=49.0f&&x<=409.0f&&y>=446.0f&&y<=654.0f;
 }
 bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
     if(!graphHit(position)||analyzerSamples_<2||
        processor_.displayedHostMs()<0)return false;
     const float x=position.x*432.0f/float(getWidth());
-    const float y=position.y*620.0f/float(getHeight());
+    const float y=position.y*700.0f/float(getHeight());
     const int count=analyzerSamples_;
     const int pick=juce::jlimit(0,count-1,juce::roundToInt(
         (x-54.0f)*float(count-1)/(405.0f-54.0f)));
@@ -943,8 +950,8 @@ bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
     const float pitch=analyzerOutputMidi_[size_t(index)];
     const int64_t stamp=analyzerHostMs_[size_t(index)];
     if(pitch<0.0f||stamp<0)return false;
-    const float pitchY=510.0f-(pitch-graphCenterMidi_)*118.0f/8.0f;
-    if(std::abs(y-pitchY)>12.0f)return false;
+    const float pitchY=550.0f-(pitch-graphCenterMidi_)*198.0f/8.0f;
+    if(std::abs(y-pitchY)>10.0f)return false;
     const int note=analyzerTargetMidi_[size_t(index)];
     if(note<0)return false;
     // Select the entire visible contiguous note, not an unrelated
@@ -1002,7 +1009,7 @@ void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
     repaint();
 }
 void SkellyTuneEditor::mouseDrag(const juce::MouseEvent& e) {
-    const float notePixels=std::max(1.0f,118.0f*float(getHeight())/620.0f);
+    const float notePixels=std::max(1.0f,198.0f*float(getHeight())/700.0f);
     if(graphEditing_) {
         graphEditMidi_=juce::jlimit(24,107,juce::roundToInt(
             graphDragStartMidi_+(graphDragStartY_-e.position.y)*8.0f/notePixels));
@@ -1155,7 +1162,7 @@ void SkellyTuneEditor::updateLiveFeedback() {
     analyzerToggle_.getProperties().set("graphFollow",graphFollow_);
     analyzerToggle_.getProperties().set("graphCenter",double(graphCenterMidi_));
     if (analyzerExpanded_)
-        repaint(0, int(416.0f*float(getHeight())/620.0f),
+        repaint(0, int(416.0f*float(getHeight())/700.0f),
                 getWidth(),getHeight());
     const float oldConfidence = liveConfidence_;
     liveConfidence_ += (confidence - liveConfidence_) * (voiced ? 0.40f : 0.18f);

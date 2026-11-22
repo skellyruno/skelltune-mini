@@ -25,12 +25,15 @@ public:
     void set(int i,PitchEditRecord r) noexcept {
         if(i<0||i>=kCapacity)return;
         if(!acceptable(r))r={};
+        const bool wasValid=get(i).valid();
         Slot& s=slots_[std::size_t(i)];
         s.seq.fetch_add(1,std::memory_order_acq_rel);
         s.start.store(r.startMs,std::memory_order_relaxed);
         s.end.store(r.endMs,std::memory_order_relaxed);
         s.note.store(r.targetMidi,std::memory_order_relaxed);
         s.seq.fetch_add(1,std::memory_order_release);
+        if(wasValid != r.valid())
+            activeCount_.fetch_add(r.valid()?1:-1,std::memory_order_release);
     }
     PitchEditRecord get(int i) const noexcept {
         if(i<0||i>=kCapacity)return {};
@@ -44,7 +47,8 @@ public:
         return seq1==seq2 && acceptable(r) ? r : PitchEditRecord{};
     }
     int targetAt(int64_t hostMs) const noexcept {
-        if(hostMs<0)return -1;
+        // Unedited vocal: avoid scanning 48 atomics on every host buffer.
+        if(hostMs<0 || activeCount_.load(std::memory_order_acquire)==0)return -1;
         for(int i=kCapacity-1;i>=0;--i) {
             const auto r=get(i);
             if(r.valid() && hostMs>=r.startMs && hostMs<r.endMs)
@@ -56,7 +60,7 @@ public:
     // the DSP split a host buffer exactly at edit boundaries rather than
     // waiting for the next block, without per-sample 48-slot scanning.
     int64_t nextBoundaryAfter(int64_t hostMs) const noexcept {
-        if(hostMs<0)return -1;
+        if(hostMs<0 || activeCount_.load(std::memory_order_acquire)==0)return -1;
         int64_t next=-1;
         for(int i=0;i<kCapacity;++i) {
             const auto r=get(i);
@@ -126,5 +130,8 @@ private:
         std::atomic<int> note{-1};
     };
     std::array<Slot,kCapacity> slots_{};
+    // UI/state thread is the sole writer. Release follows the slot's
+    // final even sequence number, so audio observes a published edit.
+    std::atomic<int> activeCount_{0};
  };
 } // namespace skelly

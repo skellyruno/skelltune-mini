@@ -168,6 +168,52 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
         int(cx-radius)+innerMargin, int(cy)+juce::roundToInt(15.0f * uiScale),
         textWidth, juce::roundToInt(20.0f * uiScale)),
         juce::Justification::centred, true);
+
+    // An actual message-thread pitch trace lives inside the dial; it
+    // represents recent detected cents from the chosen target, not a
+    // fake waveform or audio-level animation. Both 432px and 1008px
+    // editors preserve the same relative trace geometry.
+    const float alpha = juce::jlimit(0.0f, 1.0f, voiceAlpha);
+    const float conf = juce::jlimit(0.0f, 1.0f, confidence);
+    const juce::String signal = alpha < 0.16f ? "LISTENING" :
+        conf < 0.68f ? "ACQUIRING" :
+        std::abs(deviationCents) <= 8.0f ? "ON NOTE" : "CORRECTING";
+    g.setColour((alpha > 0.18f ? palette.accent : palette.boneDim)
+                .withAlpha(alpha > 0.18f ? 0.90f : 0.60f));
+    g.setFont(juce::Font(juce::FontOptions(
+        juce::jlimit(8.5f, 24.0f, 9.0f * uiScale), juce::Font::bold)));
+    g.drawText(signal, juce::Rectangle<int>(
+        int(cx-radius)+innerMargin, int(cy)+juce::roundToInt(35.5f * uiScale),
+        textWidth, juce::roundToInt(12.0f * uiScale)),
+        juce::Justification::centred, true);
+
+    const float left = cx - 42.0f * uiScale;
+    const float right = cx + 42.0f * uiScale;
+    const float traceY = cy + 56.0f * uiScale;
+    const float traceH = 7.0f * uiScale;
+    g.setColour(palette.line.withAlpha(0.65f));
+    g.drawLine(left, traceY, right, traceY, std::max(0.8f, uiScale * 0.7f));
+    if (trailCount >= 2) {
+        juce::Path trace;
+        for (int i = 0; i < 32; ++i) {
+            const int index = (trailHead + i) % 32; // oldest to newest
+            const float value = juce::jlimit(-1.0f, 1.0f, pitchTrail[size_t(index)]);
+            const float px = left + (right-left)*float(i)/31.0f;
+            const float py = traceY - value*traceH;
+            if (i == 0) trace.startNewSubPath(px, py);
+            else trace.lineTo(px, py);
+        }
+        g.setColour(palette.bone.withAlpha(0.18f + 0.66f * alpha));
+        g.strokePath(trace, juce::PathStrokeType(
+            std::max(1.1f, 1.35f * uiScale),
+            juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        const int mostRecent = (trailHead + 31) % 32;
+        const float markerY = traceY -
+            juce::jlimit(-1.0f, 1.0f, pitchTrail[size_t(mostRecent)])*traceH;
+        g.setColour(palette.accent.withAlpha(0.22f + 0.72f*alpha));
+        g.fillEllipse(right - 1.75f*uiScale, markerY - 1.75f*uiScale,
+                      3.5f*uiScale, 3.5f*uiScale);
+    }
 }
 
 SkellyTuneEditor::PitchButton::PitchButton(
@@ -381,6 +427,9 @@ void SkellyTuneEditor::AlgorithmSelector::mouseMove(const juce::MouseEvent& e) {
 SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     : juce::AudioProcessorEditor(p), processor_(p), parameters_(p.parameters()) {
     speed_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    // Double-click is a direct UI convenience; the saved host default
+    // remains 25ms and the APVTS ID/range are untouched.
+    speed_.setDoubleClickReturnValue(true, clockwiseFastnessForMs(25.0f));
     // Physical control increases clockwise/up. Visible 100..0 maps
     // one-to-one to new GUI 100..0ms; old 101..200ms states are preserved.
     speed_.setRange(0.0, 100.0, 0.01);
@@ -391,7 +440,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     speed_.setComponentID("skelly.speed");
     speed_.setTooltip("Retune time: 100 = 100ms (slowest normal setting); "
                       "0 = 0ms (fastest hard tune). Clockwise/up moves toward 0. "
-                      "Older 101-200ms project values remain intact and show 100+ LEGACY.");
+                      "Older 101-200ms project values remain intact and show 100+ LEGACY. "
+                      "Double-click the dial to restore the factory 25ms.");
     speed_.setLookAndFeel(&theme_);
     addAndMakeVisible(speed_);
 
@@ -574,6 +624,16 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
 #else
     g.drawText("MINI",60,46,60,14,juce::Justification::centredLeft);
 #endif
+    // Compact signal feedback under the algorithm selector. The header
+    // used to be inert; it now confirms audio tracking without taking
+    // controls or keyboard hit targets away from the user.
+    const bool signal = voicedFade_ > 0.25f && liveConfidence_ >= 0.55f;
+    g.setColour((signal ? accent : muted).withAlpha(signal ? 0.95f : 0.48f));
+    g.fillEllipse(336.0f,51.0f,5.5f,5.5f);
+    g.setColour(signal ? text : muted);
+    g.setFont(juce::Font(juce::FontOptions(9.5f,juce::Font::bold)));
+    g.drawText(signal ? "SIGNAL LOCK" : "NO SIGNAL",346,45,70,15,
+               juce::Justification::centredRight,true);
     g.setColour(palette_.line);
     g.drawLine(16.0f,63.0f,416.0f,63.0f,1.0f);
 
@@ -592,8 +652,14 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.fillRoundedRectangle(panelBounds,9.0f);
     g.setColour(palette_.line.withAlpha(0.72f));
     g.drawRoundedRectangle(panelBounds,9.0f,0.9f);
-    g.setColour(accent.withAlpha(0.18f));
-    g.drawLine(24.0f, 138.5f, 408.0f, 138.5f, 0.8f);
+    // Detector-driven top border gives instant, non-distracting signal
+    // activity while preserving the Mini's restrained neon aesthetic.
+    g.setColour(palette_.line.withAlpha(0.72f));
+    g.drawLine(24.0f, 138.5f, 408.0f, 138.5f, 1.1f);
+    g.setColour(accent.withAlpha(0.18f + liveConfidence_ * 0.54f));
+    g.drawLine(24.0f, 138.5f,
+               24.0f + 384.0f * juce::jlimit(0.0f,1.0f,liveConfidence_),
+               138.5f, 1.4f);
     g.setColour(muted);
     g.setFont(juce::Font(juce::FontOptions(12.0f,juce::Font::bold)));
     g.drawText("RETUNE SPEED",137,314,158,19,juce::Justification::centred);
@@ -716,16 +782,37 @@ void SkellyTuneEditor::updateLiveFeedback() {
 
     const float confidence = voiced ? juce::jlimit(0.0f, 1.0f,
         processor_.displayedConfidence()) : 0.0f;
+    const float oldConfidence = liveConfidence_;
+    liveConfidence_ += (confidence - liveConfidence_) * (voiced ? 0.40f : 0.18f);
+    const juce::String newStatus = !voiced ? "LISTENING" :
+        confidence < 0.68f ? "ACQUIRING" :
+        std::abs(dispDeviation_) <= 8.0f ? "ON NOTE" : "CORRECTING";
+    if (newStatus != liveStatus_ ||
+        std::abs(oldConfidence - liveConfidence_) > 0.02f) {
+        liveStatus_ = newStatus;
+        // Header and panel top line only; no full-editor 30Hz repaints.
+        repaint(290, 44, 126, 19);
+        repaint(22, 136, 389, 6);
+    }
     inputReadout_.setState(voicedFade_, lastInputName_, signedCents(dispDeviation_),
                            dispDeviation_ / 100.0f, activity_, confidence);
     targetReadout_.setState(voicedFade_, lastTargetName_, signedCents(dispCorrection_),
                             dispCorrection_ / 100.0f, activity_, confidence);
 
-    // Dial glow follows how hard the tuner is working.
-    if (std::abs(theme_.activity - activity_) > 0.015f) {
-        theme_.activity = activity_;
-        speed_.repaint();
-    }
+    // The trace is held only on the JUCE message thread. Bounded fixed
+    // storage (32 samples, ~1.1 seconds at 30Hz) and no audio callback
+    // allocations. It follows real cents, regardless of the algorithm.
+    theme_.pitchTrail[size_t(theme_.trailHead)] =
+        voiced ? juce::jlimit(-1.0f, 1.0f, dispDeviation_/100.0f) : 0.0f;
+    theme_.trailHead = (theme_.trailHead + 1) % 32;
+    theme_.trailCount = std::min(32, theme_.trailCount + 1);
+    theme_.activity = activity_;
+    theme_.voiceAlpha = voicedFade_;
+    theme_.confidence = confidence;
+    theme_.deviationCents = dispDeviation_;
+    speed_.getProperties().set("liveStatus", liveStatus_);
+    speed_.getProperties().set("traceSamples", theme_.trailCount);
+    speed_.repaint();
     // Two independently driven live note lights, smoothed only on
     // JUCE's message thread. White = incoming sung note; green = output
     // target. They can light the same pad, and decay promptly on silence.

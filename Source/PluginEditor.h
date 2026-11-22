@@ -16,7 +16,10 @@ private:
     struct SimpleTheme final : juce::LookAndFeel_V4 {
         skellcore::ui::SkullPalette palette =
             skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
-        float activity = 0.0f;   // 0..1, how hard the tuner is correcting right now (drives the dial glow)
+        float activity = 0.0f;   // 0..1, pitch correction strength
+        float confidence = 0.0f, voiceAlpha = 0.0f, deviationCents = 0.0f;
+        std::array<float, 32> pitchTrail{};
+        int trailHead = 0, trailCount = 0;
         float hostSpeedMs = 25.0f; // true saved ms, including legacy values above the new 100ms dial max
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
@@ -130,6 +133,8 @@ private:
     LiveReadout inputReadout_{palette_, true}, targetReadout_{palette_, false};
     // Smoothed live-feedback state (message thread only).
     float voicedFade_ = 0.0f, activity_ = 0.0f, dispDeviation_ = 0.0f, dispCorrection_ = 0.0f;
+    float liveConfidence_ = 0.0f;
+    juce::String liveStatus_ = "LISTENING";
     int lastTarget_ = -1, lastInput_ = -1;
     juce::String lastInputName_ = "--", lastTargetName_ = "--";
     std::array<float, 12> keyGlow_{}, inputKeyGlow_{};

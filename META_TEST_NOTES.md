@@ -300,3 +300,21 @@ A new META-only `dsp_v49_meta_phase` regression covers measurable
 phase search improvement for detuned rich harmonic grains, stereo
 amplitude/phase preservation, and 96kHz high-pitch finite output.
 User hearing remains the final sound criterion. META is test-only.
+
+## Mini UI visual instrumentation (message thread only)
+
+The retune dial gains a **real 32-point incoming pitch history** (about
+1.1s at 30Hz), with a live status label (LISTENING / ACQUIRING /
+ON NOTE / CORRECTING) below the existing numeric millisecond readout.
+A header signal indicator and gentle confidence-responsive panel rim
+make it easier to tell when the detector has acquired a singer. All
+information comes from the processor's atomic detector meters; there
+is no audio-thread drawing, heap allocation, GUI polling of raw
+waveforms, change to the host state schema or automation IDs.
+
+The dial now supports double-click to its existing 25ms factory default.
+The editor smoke asserts live detector light feedback, non-empty trace
+history and a non-idle dial status after real harmonic samples have
+passed through the plugin in REGULAR, TESTTUNE and META Lab.
+JUCE/Quick4 real screenshot visual inspection remains mandatory before
+accepting sizing, typography or interactions.

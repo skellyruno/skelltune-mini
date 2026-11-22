@@ -294,6 +294,11 @@ int main() {
                 double(inputMeter->getProperties()["pitchConfidence"]) < 0.55 ||
                 double(targetMeter->getProperties()["pitchConfidence"]) < 0.55)
                 return false;
+            auto* speedControl = editor->findChildWithID("skelly.speed");
+            if (!speedControl ||
+                int(speedControl->getProperties()["traceSamples"]) < 2 ||
+                speedControl->getProperties()["liveStatus"].toString() == "LISTENING")
+                return false;
             return savePreview(filename);
         };
         if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;

@@ -549,6 +549,9 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawRoundedRectangle(noteBank.reduced(0.5f),8.0f,0.8f);
 
     const bool custom = parameters_.getRawParameterValue("noteMask")->load() > 0.5f;
+    // Set ink again after drawing the recessed note bank: its dim border
+    // colour must not leak into the ENABLED/CUSTOM NOTES heading.
+    g.setColour(muted.brighter(0.22f));
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.drawText(custom ? "CUSTOM NOTES" : "ENABLED NOTES", 16,318,117,15,
                juce::Justification::centredLeft);

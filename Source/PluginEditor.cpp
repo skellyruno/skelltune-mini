@@ -591,12 +591,17 @@ void SkellyTuneEditor::toggleAnalyzer() {
     // Change only editor dimensions. This setting isn't in saved APVTS
     // state and can never invalidate an old FL Studio project.
     const int referenceHeight = analyzerExpanded_ ? 540 : 414;
-    setResizeLimits(432, referenceHeight, 1008,
-                    int(std::lround(1008.0 * referenceHeight / 432.0)));
+    const int originalWidth = getWidth();
+    // JUCE's setResizeLimits() can immediately enforce the MINIMUM size.
+    // Change the aspect ratio FIRST and preserve the original width from
+    // BEFORE the new 540px minimum is applied. Otherwise the old 432:414
+    // constraint widens the editor to 563x704 when opening the analyzer.
     if (auto* constraint = getConstrainer())
         constraint->setFixedAspectRatio(432.0 / double(referenceHeight));
-    setSize(getWidth(), int(std::lround(
-        double(getWidth()) * double(referenceHeight) / 432.0)));
+    setResizeLimits(432, referenceHeight, 1008,
+                    int(std::lround(1008.0 * referenceHeight / 432.0)));
+    setSize(originalWidth, int(std::lround(
+        double(originalWidth) * double(referenceHeight) / 432.0)));
     resized();
     repaint();
 }

@@ -918,12 +918,13 @@ public:
                         result.provisionalMidi = -1;
                         testTuneHeldMidi_ = result.targetMidi;
                     }
-                } else if (params_.testTune &&
-                           canBridgeTestTuneTarget(testTuneHeldMidi_,
-                               uint16_t(params_.pitchClasses),result.voiced,
-                               e.valid,e.confidence)) {
-                    // Never jump to REGULAR's unrelated private note during
-                    // a weak-but-voiced detector hop.
+                } else if (params_.testTune) {
+                    // TESTTUNE owns its note decision even while YIN is
+                    // uncertain. The old fallback leaked REGULAR's separate
+                    // pending/target history at syllable attacks and detector
+                    // dropouts, causing an unrelated pitch step mid-phrase.
+                    // Hold its last reliable in-scale note for at most 40ms;
+                    // after that use -1 (dry), NEVER REGULAR's stale target.
                     result.targetMidi = testTuneHeldMidi_;
                     result.changed = false;
                     result.pending = false;
@@ -956,7 +957,13 @@ public:
                 // Both detector and musical controller must accept this frame.
                 // A low-confidence provisional F0 must not be pitched toward a
                 // stale target that NoteDecision is explicitly holding.
-                if (e.valid && result.voiced && workingTarget >= 0 && usableTarget) {
+                // TESTTUNE's held note is a continuity fallback, not
+                // permission to retune a fresh low-confidence F0 estimate.
+                // Brief uncertain voiced hops use the existing safe bridge.
+                const bool trustedEstimate = !params_.testTune ||
+                    e.confidence >= 0.72f;
+                if (e.valid && result.voiced && trustedEstimate &&
+                    workingTarget >= 0 && usableTarget) {
                     f0_ = e.hertz;
                     if (!hasF0_ || std::abs(std::log2(f0_/smoothF0_)) > 0.65) {
                         smoothF0_ = f0_;
@@ -1037,9 +1044,13 @@ public:
             // 2-4ms where the ordinary exponential still permits large
             // one-sample pitch-ratio jumps. At default 25ms the physical
             // smoother is usually below this cap and remains unchanged.
-            // TESTTUNE retains its faster hard/soft snap character.
+            // TESTTUNE's old 520000-cent/s slew could jump more than
+            // 10 cents between adjacent samples at 48k on abrupt target
+            // changes. Keep its immediate period-domain note selection,
+            // but cap the *audio* ratio trajectory at 300000 cents/s:
+            // even a 600-cent leap settles in 2ms, without a zipper edge.
             const double maxStep =
-                (params_.testTune ? 520000.0 : 390000.0) / rate_;
+                (params_.testTune ? 300000.0 : 390000.0) / rate_;
             cents_ += std::clamp(nextCents - cents_, -maxStep, maxStep);
             // A broadband attack (especially /s/ and /sh/) should not inherit
             // a stale tonal pitch ratio. Keep the dry stream time-aligned.

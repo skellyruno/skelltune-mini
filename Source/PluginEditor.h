@@ -12,6 +12,10 @@ public:
     ~SkellyTuneEditor() override;
     void paint(juce::Graphics&) override;
     void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
 private:
     struct SimpleTheme final : juce::LookAndFeel_V4 {
         skellcore::ui::SkullPalette palette =
@@ -115,6 +119,7 @@ private:
     void togglePitchClass(int index);
     void resetManualNotes();
     void toggleAnalyzer();
+    bool graphHit(juce::Point<float> position) const noexcept;
 
     SkellyTuneRealtimeProcessor& processor_;
     juce::AudioProcessorValueTreeState& parameters_;
@@ -125,8 +130,12 @@ private:
     juce::TextButton analyzerToggle_{"ANALYZE"};
     bool analyzerExpanded_ = false;
     static constexpr int kAnalyzerHistory = 90;
-    std::array<float, kAnalyzerHistory> analyzerPitch_{}, analyzerCorrection_{};
+    // Real pitch and estimated corrected output in absolute MIDI-note
+    // coordinates. -1 marks an unvoiced frame (never draw fake zero spikes).
+    std::array<float, kAnalyzerHistory> analyzerInputMidi_{}, analyzerOutputMidi_{};
     int analyzerHead_ = 0, analyzerSamples_ = 0;
+    float graphCenterMidi_ = 60.0f, graphDragStartMidi_ = 60.0f, graphDragStartY_ = 0.0f;
+    bool graphFollow_ = true, graphDragging_ = false;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         keyAttachment_, scaleAttachment_;
     // UI is a clockwise fastness controller (0..100), while the existing

@@ -155,10 +155,10 @@ int main() {
         // command when no message loop is running in this smoke process.
         // Call the installed actual button callback synchronously, then
         // verify the real editor size, layout and captured pixels.
-        if (editor->getWidth()!=432 || editor->getHeight()!=540 ||
+        if (editor->getWidth()!=432 || editor->getHeight()!=620 ||
             !childrenInside() || !validVisual() ||
             !savePreview("SkellyTuneMini_Analyzer_UI_432.png")) {
-            std::cerr << "FAIL: analyzer expand expected 432x540, got "
+            std::cerr << "FAIL: analyzer expand expected 432x620, got "
                       << editor->getWidth() << "x" << editor->getHeight() << "\n";
             return 47;
         }
@@ -332,7 +332,7 @@ int main() {
         };
         if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;
         analyzer->onClick();
-        if (editor->getHeight()!=540 ||
+        if (editor->getHeight()!=620 ||
             int(analyzer->getProperties()["analyzerSamples"]) < 3 ||
             !savePreview("SkellyTuneMini_Analyzer_Active_UI_432.png")) return 49;
         analyzer->onClick();

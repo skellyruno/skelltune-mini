@@ -298,3 +298,8 @@ if(SKELLY_META_TEST)
     add_executable(three_mode_ab tools/three_mode_ab.cpp)
     target_link_libraries(three_mode_ab PRIVATE skelly_dsp)
 endif()
+
+# TESTTUNE transient note-owner and bounded 0ms sample-to-sample correction.
+add_executable(dsp_v53_testtune_continuity tests/test_v53_testtune_continuity.cpp)
+target_link_libraries(dsp_v53_testtune_continuity PRIVATE skelly_dsp)
+add_test(NAME dsp_v53_testtune_continuity COMMAND dsp_v53_testtune_continuity)

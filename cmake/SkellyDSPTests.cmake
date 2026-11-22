@@ -241,6 +241,12 @@ add_executable(dsp_v45_transient_prefade tests/test_v45_transient_prefade.cpp)
 target_link_libraries(dsp_v45_transient_prefade PRIVATE skelly_dsp)
 add_test(NAME dsp_v45_transient_prefade COMMAND dsp_v45_transient_prefade)
 
+# v3.3.4: note-switch anti-zipper protection in both regular and
+# TESTTUNE hard-retune synthesis paths.
+add_executable(dsp_v47_hard_ratio_guard tests/test_v47_hard_ratio_guard.cpp)
+target_link_libraries(dsp_v47_hard_ratio_guard PRIVATE skelly_dsp)
+add_test(NAME dsp_v47_hard_ratio_guard COMMAND dsp_v47_hard_ratio_guard)
+
 # TEST ONLY: Meta engine tests (built only when -DSKELLY_META_TEST=ON).
 if(SKELLY_META_TEST)
     add_executable(dsp_v43_meta tests/test_v43_meta.cpp)
@@ -251,6 +257,11 @@ if(SKELLY_META_TEST)
     add_executable(dsp_v44_meta_grain tests/test_v44_meta_grain.cpp)
     target_link_libraries(dsp_v44_meta_grain PRIVATE skelly_dsp)
     add_test(NAME dsp_v44_meta_grain COMMAND dsp_v44_meta_grain)
+
+    # Do not grain-resample unvoiced consonants/air or break dry PDC in META.
+    add_executable(dsp_v46_meta_dry_guard tests/test_v46_meta_dry_guard.cpp)
+    target_link_libraries(dsp_v46_meta_dry_guard PRIVATE skelly_dsp)
+    add_test(NAME dsp_v46_meta_dry_guard COMMAND dsp_v46_meta_dry_guard)
 
     # Full three-way deterministic synthetic vocal rendering and metrics.
     # Never runs inside the host audio thread and never distributes Meta DSP.

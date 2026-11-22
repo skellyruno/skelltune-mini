@@ -602,6 +602,7 @@ public:
         noiseCue_.reset();
         notes_.reset();
         targetPending_ = false;
+        testCandidateMidi_ = -1; testCandidateHops_ = 0;
         params_ = {};
         cycleSynth_.reset();
         mixGuard_.reset();
@@ -717,6 +718,7 @@ public:
         if (params_.testTune != params.testTune) {
             notes_.reset();
             targetPending_ = false;
+            testCandidateMidi_ = -1; testCandidateHops_ = 0;
         }
         params_ = params;
         // The shorter 12ms acquisition window is for explicitly requested
@@ -837,8 +839,17 @@ public:
                     const int index = periodTable_.nearest(rate_ / double(e.hertz));
                     if (index >= 0) {
                         const int note = periodTable_.note(index);
-                        result.changed = note != priorTarget;
-                        result.targetMidi = note;
+                        // Ignore one-hop low-confidence note flutter. Strong
+                        // estimates still snap immediately (TESTTUNE feel).
+                        const bool uncertain = e.confidence < 0.87f &&
+                            priorTarget >= 0 && std::abs(note - priorTarget) <= 2 &&
+                            note != priorTarget;
+                        if (note == testCandidateMidi_)
+                            testCandidateHops_ = std::min(4, testCandidateHops_ + 1);
+                        else { testCandidateMidi_ = note; testCandidateHops_ = 1; }
+                        const bool hold = uncertain && testCandidateHops_ < 2;
+                        result.changed = !hold && note != priorTarget;
+                        result.targetMidi = hold ? priorTarget : note;
                         result.pending = false;
                         result.provisionalMidi = -1;
                     }
@@ -945,7 +956,18 @@ public:
                     }
                 }
             }
-            cents_ = cents_ * smooth + (desiredCents_ * params_.amount) * (1.0 - smooth);
+            const double nextCents =
+                cents_ * smooth + (desiredCents_ * params_.amount) * (1.0 - smooth);
+            if (hard) {
+                // Avoid changing pitch-shifter ratio hundreds of cents in
+                // ONE output sample at 0ms. Targets remain immediate; the
+                // bounded ~1-2ms anti-zipper ramp adds no transport delay.
+                const double maxStep =
+                    (params_.testTune ? 520000.0 : 390000.0) / rate_;
+                cents_ += std::clamp(nextCents - cents_, -maxStep, maxStep);
+            } else {
+                cents_ = nextCents;
+            }
             // A broadband attack (especially /s/ and /sh/) should not inherit
             // a stale tonal pitch ratio. Keep the dry stream time-aligned.
             // v2.9: the high-frequency energy discriminator alone mistakes
@@ -1344,6 +1366,7 @@ private:
     double voicedEnvelope_ = 0.0;
     double voicedEnvelopeStep_ = 0.01;
     bool targetPending_ = false;
+    int testCandidateMidi_ = -1, testCandidateHops_ = 0;
     int targetNote_ = -1;
     std::vector<float> history_;
     Parameters params_{};

@@ -65,6 +65,8 @@ public:
         // pause can re-arm the same causal one-shot without allocations.
         rearmOnVoiced_ = true; unvoicedHops_ = 0;
         grainJumps_ = grainJumpCrossfades_ = 0;
+        dryDelaySamples_ = std::max(1u, uint32_t(std::lround(double(sr_) * 0.003)));
+        wetBlend_ = 0.0; detectedVoiced_ = false;
         tracker_.prepare(double(sr_)); est_ = {};
         for (int l = 0; l < kLanes; ++l) { pos_[l] = out_[l] = 0.0; fade_[l] = flen_[l] = 0; }
         std::memset(anal_.data(), 0, sizeof(float) * anal_.size());
@@ -103,11 +105,22 @@ public:
         lanes = std::min(lanes, kLanes);
         if (tableDirty_) buildTable();
         const double grain = std::max(1.0, 2.0 - lowLatency_);
+        // The grain's source age varies with pitch. Use the existing ring's
+        // exact host-aligned 3ms dry tap for silence/consonants, with smooth
+        // voiced-entry/exit transitions and no realtime allocations.
+        const double entry = 1.0 - std::exp(-1.0 / (double(sr_) * 0.008));
+        const double exit = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
         for (int i = 0; i < frames; ++i) {
             const uint32_t w = w_;
             const float in0 = lanes > 0 ? io[0][i] : 0.0f;
             for (int l = 0; l < lanes; ++l) ring_[l][w & kRingM] = io[l][i];
-            if (bypass) { w_ = w + 1; continue; }
+            if (bypass) {
+                wetBlend_ = 0.0;
+                detectedVoiced_ = false;
+                rearmOnVoiced_ = true;
+                w_ = w + 1;
+                continue;
+            }
 
             if (fileDetector_) {
                 if (n_ < kRing - 1) anal_[n_++] = prefilter(in0);
@@ -123,6 +136,12 @@ public:
             if (!(pin > 0.0) || !(pt > 0.0)) { w_ = w + 1; continue; }
             const double srat = pin / pt;
             const double base = std::max(kBaseDly, grain * pt + kFloor);
+            const bool wetReady = detectedVoiced_ &&
+                uint64_t(w) > uint64_t(dryDelaySamples_) +
+                    uint64_t(std::ceil(base + pin + 4.0));
+            const double goal = wetReady ? amount_ : 0.0;
+            wetBlend_ += (goal - wetBlend_) * (goal > wetBlend_ ? entry : exit);
+            wetBlend_ = std::clamp(wetBlend_, 0.0, 1.0);
 
             for (int l = 0; l < lanes; ++l) {
                 if (flen_[l] == 0) {
@@ -161,7 +180,10 @@ public:
                 }
                 const double a = tap(ring_[l].data(), out_[l]);
                 const double b = tap(ring_[l].data(), pos_[l]);
-                io[l][i] = static_cast<float>(a + (b - a) * k);
+                const double wet = a + (b - a) * k;
+                const float dry = ring_[l][(w - dryDelaySamples_) & kRingM];
+                io[l][i] = static_cast<float>(dry * (1.0 - wetBlend_) +
+                                              wet * wetBlend_);
                 out_[l] += srat;
                 pos_[l] += srat;
             }
@@ -264,6 +286,7 @@ private:
             conf_ = ok ? double(est_.confidence) : 0.0;
         }
         raw_ = lag;
+        detectedVoiced_ = lag > 0.0 && conf_ >= 0.6;
         double target = log_;
         double detectedLog = log_;
         if (lag > 0.0) {
@@ -317,6 +340,9 @@ private:
     bool rearmOnVoiced_ = true;
     bool jumpCrossfadeEnabled_ = true;
     uint32_t unvoicedHops_ = 0;
+    uint32_t dryDelaySamples_ = 144;
+    double wetBlend_ = 0.0;
+    bool detectedVoiced_ = false;
     uint64_t grainJumps_ = 0, grainJumpCrossfades_ = 0;
     skelly::CausalPitchTracker tracker_; skelly::PitchEstimate est_{};
     double f1_ = 0, f2_ = 0, c50_ = 0.99, c70_ = 0.2, curveRef_ = 1.0;

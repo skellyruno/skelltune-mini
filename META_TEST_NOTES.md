@@ -214,3 +214,25 @@ checks exact sample timing at 44.1/48/96kHz, finite output and block-size
 invariance. New recorded-singer regression in `verify-dsp.yml` measures
 the known first-phrase jump against an unfixed render, failing if the real
 waveform discontinuity does not decrease by at least 20%.
+
+## Owner's live FL Studio feedback — Nov 22: all three glitch, META worst
+
+The user has auditioned all three, reports META most glitch-prone and
+TESTTUNE least. Do not confuse earlier objective pitch-error metrics with
+a passing subjective audio result.
+
+- META research: unvoiced noise formerly passed through stale pitched
+  source-head grains. A 3ms dry tap reuses the existing fixed-size ring,
+  with 8ms wet entry and 4ms unvoiced wet exit. Amount=0 returns
+  sample-exact host-aligned dry, bypass remains bit-identical. **Fixed
+  wet waveform PDC remains unverified** and the META Lab is TEST-ONLY.
+- REGULAR: bound the zero-ms per-sample pitch-ratio slew to prevent large
+  one-sample resampler jumps, without changing actual note targets.
+- TESTTUNE: retain its fast period-domain snap but require a second hop
+  for uncertain low-confidence adjacent-note chatter; use a faster
+  ratio-slew limit than REGULAR.
+- Two new portable DSP regressions: META consonant/noise continuity,
+  bypass, Amount=0, and both algorithms' per-sample cents bound.
+
+No existing preset state/automation ID, default retune time, plugin
+identifier, or released UI layout is changed.

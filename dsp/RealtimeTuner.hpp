@@ -883,12 +883,22 @@ public:
                 // detector estimate. Fall back to the regular confidence-
                 // gated note decision until reliable periodicity returns.
                 if (params_.testTune) {
-                    if (result.voiced && e.valid) testTuneUntrustedSamples_ = 0;
+                    // An apparently valid YIN period below TESTTUNE's
+                    // 0.72 trust threshold must not refresh the stale-note
+                    // timer indefinitely. Such noisy detector frames do
+                    // not qualify to acquire a NEW target either.
+                    if (result.voiced && e.valid && e.confidence >= 0.72f &&
+                        e.hertz > 0.0f) testTuneUntrustedSamples_ = 0;
                     else testTuneUntrustedSamples_ = std::min(
                         uint32_t(rate_), testTuneUntrustedSamples_ +
                         uint32_t(tracker_.hopHostSamples()));
-                    if (testTuneUntrustedSamples_ > uint32_t(rate_*0.040))
+                    if (testTuneUntrustedSamples_ > uint32_t(rate_*0.040)) {
                         testTuneHeldMidi_ = -1;
+                        // A later syllable must not inherit a near-
+                        // completed transition candidate from this one.
+                        testCandidateMidi_ = -1;
+                        testCandidateHops_ = 0;
+                    }
                     if (testTuneHeldMidi_ >= 0 &&
                         (params_.pitchClasses & (1u<<(testTuneHeldMidi_%12))) == 0)
                         testTuneHeldMidi_ = -1;

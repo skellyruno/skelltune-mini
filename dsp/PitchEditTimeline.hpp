@@ -50,6 +50,29 @@ public:
         }
         return -1;
     }
+    // Return first edit start/end strictly after the playhead. This lets
+    // the DSP split a host buffer exactly at edit boundaries rather than
+    // waiting for the next block, without per-sample 48-slot scanning.
+    int64_t nextBoundaryAfter(int64_t hostMs) const noexcept {
+        if(hostMs<0)return -1;
+        int64_t next=-1;
+        for(int i=0;i<kCapacity;++i) {
+            const auto r=get(i);
+            if(!r.valid())continue;
+            if(r.startMs>hostMs && (next<0||r.startMs<next))
+                next=r.startMs;
+            if(r.endMs>hostMs && (next<0||r.endMs<next))
+                next=r.endMs;
+        }
+        return next;
+    }
+    // Message-thread undo of the latest occupied edit slot. Undo never
+    // modifies an older automation parameter, preset or plugin identity.
+    bool undoLast() noexcept {
+        for(int i=kCapacity-1;i>=0;--i)
+            if(get(i).valid()) {set(i,{});return true;}
+        return false;
+    }
     int add(PitchEditRecord r) noexcept {
         if(!acceptable(r))return -1;
         // Keep the newest edit in the highest slot even after erasing

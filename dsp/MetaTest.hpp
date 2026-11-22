@@ -57,6 +57,7 @@ public:
         // Preparing detector FIR coefficients is expensive; do it only
         // from prepareToPlay, NEVER from the audio callback's mode switch.
         tracker_.prepare(double(sr_));
+        stereoRouter_.prepare(double(sr_));
         reset();
     }
     void reset() {
@@ -75,7 +76,7 @@ public:
         sourceRatio_ = 1.0; sourceBase_ = 0.0; grainGeometryValid_ = false;
         phaseAlignmentAdjustments_ = 0;
         phaseErrorBefore_ = phaseErrorAfter_ = 0.0;
-        tracker_.reset(); est_ = {};
+        tracker_.reset(); stereoRouter_.reset(); est_ = {};
         for (int l = 0; l < kLanes; ++l) { pos_[l] = out_[l] = 0.0; fade_[l] = flen_[l] = 0; }
         std::memset(anal_.data(), 0, sizeof(float) * anal_.size());
         for (auto& r : ring_) std::memset(r.data(), 0, sizeof(float) * r.size());
@@ -186,11 +187,18 @@ public:
                 continue;
             }
 
+            // The old META detector listened only to the left
+            // channel. Right-heavy or polarity-inverted stereo vocals
+            // could play audibly while META reported no pitch at all.
+            // Match REGULAR's smooth mid/side rescue without changing
+            // mono audio or the stereo synthesis/output signal.
+            const float detectorSample = lanes == 2 ?
+                stereoRouter_.push(in0, ring_[1][w & kRingM]) : in0;
             if (fileDetector_) {
-                if (n_ < kRing - 1) anal_[n_++] = prefilter(in0);
+                if (n_ < kRing - 1) anal_[n_++] = prefilter(detectorSample);
             } else {
                 skelly::PitchEstimate e;
-                if (tracker_.push(in0, e)) est_ = e;
+                if (tracker_.push(detectorSample, e)) est_ = e;
             }
             ++fresh_;
             analyse();
@@ -525,7 +533,9 @@ private:
     uint64_t phaseAlignmentAdjustments_ = 0;
     double phaseErrorBefore_ = 0.0, phaseErrorAfter_ = 0.0;
     uint64_t grainJumps_ = 0, grainJumpCrossfades_ = 0;
-    skelly::CausalPitchTracker tracker_; skelly::PitchEstimate est_{};
+    skelly::CausalPitchTracker tracker_;
+    skelly::StereoPitchRouter stereoRouter_;
+    skelly::PitchEstimate est_{};
     double f1_ = 0, f2_ = 0, c50_ = 0.99, c70_ = 0.2, curveRef_ = 1.0;
     double raw_ = 0, sel_ = 0, log_ = 0, period_ = 200, ratio_ = 1, target_ = 0, conf_ = 0, smooth_ = 0;
     double pos_[kLanes]{}, out_[kLanes]{}; uint32_t fade_[kLanes]{}, flen_[kLanes]{};

@@ -13,7 +13,16 @@ int main(){
         for(double ms:{10.,25.,100.,200.}) {
             const auto elapsed=uint32_t(std::lround(rate*ms*.001));
             const double alpha=skelly::MetaTest::smoothingRetention(ms,rate,elapsed);
-            expect(std::abs(alpha-expected)<1e-4,"not a calibrated millisecond time constant");
+            // Host samples are discrete: round(ms * rate) introduces at
+            // most half a sample of quantization (e.g. 25ms at 44.1k).
+            // Verify the exact closed-form coefficient first, then allow
+            // only the corresponding physical quantization tolerance.
+            const double exact=std::exp(-double(elapsed)/(rate*ms*.001));
+            expect(std::abs(alpha-exact)<1e-12,
+                   "META smoother no longer matches sample-accurate exponential");
+            const double roundingTolerance=0.5/(rate*ms*.001) + 2e-6;
+            expect(std::abs(alpha-expected)<roundingTolerance,
+                   "not a calibrated millisecond time constant");
             expect(skelly::MetaTest::smoothingRetention(0.,rate,elapsed)==0.,
                    "0ms should immediately acquire the detected pitch");
         }

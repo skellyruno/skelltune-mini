@@ -150,11 +150,19 @@ int main() {
         auto* analyzer = dynamic_cast<juce::TextButton*>(
             editor->findChildWithID("skelly.analyzerToggle"));
         if (!analyzer) return 46;
-        analyzer->triggerClick();
+        analyzer->onClick();
+        // JUCE's Button::triggerClick() may queue an asynchronous
+        // command when no message loop is running in this smoke process.
+        // Call the installed actual button callback synchronously, then
+        // verify the real editor size, layout and captured pixels.
         if (editor->getWidth()!=432 || editor->getHeight()!=540 ||
             !childrenInside() || !validVisual() ||
-            !savePreview("SkellyTuneMini_Analyzer_UI_432.png")) return 47;
-        analyzer->triggerClick();
+            !savePreview("SkellyTuneMini_Analyzer_UI_432.png")) {
+            std::cerr << "FAIL: analyzer expand expected 432x540, got "
+                      << editor->getWidth() << "x" << editor->getHeight() << "\n";
+            return 47;
+        }
+        analyzer->onClick();
         if (editor->getWidth()!=432 || editor->getHeight()!=414 ||
             !childrenInside() || !validVisual()) return 48;
         std::cerr << "STEP: collapsible live pitch analyzer geometry verified\n"
@@ -323,11 +331,11 @@ int main() {
             return savePreview(filename);
         };
         if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;
-        analyzer->triggerClick();
+        analyzer->onClick();
         if (editor->getHeight()!=540 ||
             int(analyzer->getProperties()["analyzerSamples"]) < 3 ||
             !savePreview("SkellyTuneMini_Analyzer_Active_UI_432.png")) return 49;
-        analyzer->triggerClick();
+        analyzer->onClick();
         if (testParam) testParam->setValueNotifyingHost(1.0f);
         if (!renderNoteFeedback("SkellyTuneMini_TESTTUNE_LiveNotes_UI_432.png")) return 42;
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST

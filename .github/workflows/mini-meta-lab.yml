@@ -28,6 +28,18 @@ jobs:
         run: cmake --build build-meta-dsp --parallel 4
       - name: Run META and regular DSP regressions
         run: ctest --test-dir build-meta-dsp -C Release --output-on-failure
+      - name: Render all three modes at matched retune settings
+        run: |
+          mkdir -p three-mode-ab
+          ./build-meta-dsp/three_mode_ab --output three-mode-ab
+      - name: Upload synthetic three-way A/B WAVs, report and listening page
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-Mini-3-Mode-Synthetic-A-B-Listening
+          path: three-mode-ab/
+          retention-days: 7
+          if-no-files-found: error
 
   windows-meta-lab:
     name: Windows META Lab VST3 + real JUCE smoke (no binary upload)
@@ -80,6 +92,9 @@ jobs:
             SkellyTuneMini_META_Lab_UI_432.png
             SkellyTuneMini_Knob_0ms_UI_432.png
             SkellyTuneMini_Knob_100ms_UI_432.png
+            SkellyTuneMini_REGULAR_LiveNotes_UI_432.png
+            SkellyTuneMini_TESTTUNE_LiveNotes_UI_432.png
+            SkellyTuneMini_META_LiveNotes_UI_432.png
           if-no-files-found: error
           retention-days: 7
 

@@ -60,6 +60,10 @@ public:
         n_ = fresh_ = 0; f1_ = f2_ = 0.0; curveRef_ = 1.0; w_ = 0;
         smooth_ = log_ = std::log2(200.0);
         raw_ = sel_ = conf_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
+        // Acquire from the first *detected* phrase, not a fixed 240Hz
+        // startup period that can bend its leading vowel. A real unvoiced
+        // pause can re-arm the same causal one-shot without allocations.
+        rearmOnVoiced_ = true; unvoicedHops_ = 0;
         tracker_.prepare(double(sr_)); est_ = {};
         for (int l = 0; l < kLanes; ++l) { pos_[l] = out_[l] = 0.0; fade_[l] = flen_[l] = 0; }
         std::memset(anal_.data(), 0, sizeof(float) * anal_.size());
@@ -70,7 +74,10 @@ public:
     // mask: C = bit 0 ... B = bit 11. speed is the reconstruction's own unit (default 0.5).
     void setParameters(uint16_t mask, double referenceA, double amount, double speed, double lowLatency = 0.0) {
         if (mask != mask_ || referenceA != reference_) tableDirty_ = true;
-        mask_ = mask; reference_ = referenceA; amount_ = amount; speed_ = speed; lowLatency_ = lowLatency;
+        mask_ = mask; reference_ = referenceA;
+        amount_ = std::clamp(std::isfinite(amount) ? amount : 1.0, 0.0, 1.0);
+        speed_ = std::clamp(std::isfinite(speed) ? speed : 0.5, 0.0, 50.0);
+        lowLatency_ = std::clamp(std::isfinite(lowLatency) ? lowLatency : 0.0, 0.0, 1.0);
     }
     void setSmoothDetected(bool on) { smoothDetected_ = on; }
     void setFileDetector(bool on) { fileDetector_ = on; }
@@ -238,10 +245,29 @@ private:
         if (lag > 0.0) {
             const double lg = std::log2(lag);
             const double sl = snapLog(lg);
+            // Do not start a newly detected vowel with the arbitrary
+            // reset pitch. Preserve normal legato and short consonants.
+            if (rearmOnVoiced_) {
+                smooth_ = lg;
+                period_ = lag;
+                rearmOnVoiced_ = false;
+            }
+            unvoicedHops_ = 0;
             sel_ = std::exp2(sl);
             log_ = sl;
             target = sl;
             detectedLog = lg;
+        } else {
+            unvoicedHops_ = std::min<uint32_t>(unvoicedHops_ + 1, 1000000u);
+            // The first re-entry after >=90ms of unvoiced audio is a
+            // new phrase. Avoid recycling a stale smoother pitch.
+            if (unvoicedHops_ * uint64_t(hop_) >=
+                uint64_t(double(sr_) * 0.090)) {
+                rearmOnVoiced_ = true;
+                // Stop advertising the last pitched target through a
+                // genuine unvoiced gap; leave grain continuity untouched.
+                sel_ = 0.0;
+            }
         }
         target_ = target;
         const double sub = double(hop) / double(hop_) * kSpan + kSpanNeg;
@@ -264,6 +290,8 @@ private:
     uint32_t sr_ = 48000, hop_ = 129, n_ = 0, fresh_ = 0, w_ = 0;
     uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0, speed_ = 0.5, speedScale_ = 1.0, lowLatency_ = 0.0;
     bool smoothDetected_ = true, fileDetector_ = false, tableDirty_ = true;
+    bool rearmOnVoiced_ = true;
+    uint32_t unvoicedHops_ = 0;
     skelly::CausalPitchTracker tracker_; skelly::PitchEstimate est_{};
     double f1_ = 0, f2_ = 0, c50_ = 0.99, c70_ = 0.2, curveRef_ = 1.0;
     double raw_ = 0, sel_ = 0, log_ = 0, period_ = 200, ratio_ = 1, target_ = 0, conf_ = 0, smooth_ = 0;

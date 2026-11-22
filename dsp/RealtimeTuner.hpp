@@ -703,6 +703,15 @@ public:
         if (!std::isfinite(params.vibratoPreservation)) params.vibratoPreservation = 0.0f;
         if (!std::isfinite(params.flexCents)) params.flexCents = 0.0f;
         if (!std::isfinite(params.cycleLevelStabilization)) params.cycleLevelStabilization = 0.8f;
+        // Switching REGULAR <-> TESTTUNE must not reuse the other
+        // algorithm's internal NoteDecision history. That stale pending
+        // target could otherwise last 65-95ms after an A/B switch.
+        // NoteDecision::reset is fixed-size/no-alloc and runs on the audio
+        // thread without locks, preserving all saved parameter IDs.
+        if (params_.testTune != params.testTune) {
+            notes_.reset();
+            targetPending_ = false;
+        }
         params_ = params;
         // The shorter 12ms acquisition window is for explicitly requested
         // maximum-speed hard tuning only. Ordinary presets preserve the
@@ -799,7 +808,12 @@ public:
                     params_.speedMs <= 1.5f && params_.amount >= 0.995f &&
                     params_.mix >= 0.995f && params_.flexCents <= 0.01f &&
                     params_.vibratoPreservation <= 0.01f);
-                if (params_.testTune && e.valid && result.voiced && e.hertz > 0.0f) {
+                // TESTTUNE still reacts on every reliable voiced hop (no
+                // musical hysteresis), but do not snap to a weak/noisy single
+                // detector estimate. Fall back to the regular confidence-
+                // gated note decision until reliable periodicity returns.
+                if (params_.testTune && e.valid && result.voiced &&
+                    e.confidence >= 0.72f && e.hertz > 0.0f) {
                     // testtune: nearest in-scale note in the PERIOD domain (samples per cycle).
                     // Falls back to the default decision when the table is empty (invalid sample
                     // rate / reference, or no enabled notes).

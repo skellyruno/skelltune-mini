@@ -240,4 +240,9 @@ if(SKELLY_META_TEST)
     add_executable(dsp_v43_meta tests/test_v43_meta.cpp)
     target_link_libraries(dsp_v43_meta PRIVATE skelly_dsp)
     add_test(NAME dsp_v43_meta COMMAND dsp_v43_meta)
+
+    # Full three-way deterministic synthetic vocal rendering and metrics.
+    # Never runs inside the host audio thread and never distributes Meta DSP.
+    add_executable(three_mode_ab tools/three_mode_ab.cpp)
+    target_link_libraries(three_mode_ab PRIVATE skelly_dsp)
 endif()

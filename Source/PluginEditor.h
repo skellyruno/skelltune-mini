@@ -42,8 +42,17 @@ private:
         void mouseDoubleClick(const juce::MouseEvent&) override;
         std::function<void()> onReset;
         const skellcore::ui::SkullPalette* palette_;
-        float glow = 0.0f;   // 0..1, lit while this note is the live target
-        void setGlow(float value) { glow = value; repaint(); }
+        float glow = 0.0f;       // 0..1, target pitch (neon green)
+        float inputGlow = 0.0f;  // 0..1, detected sung pitch (white/soft mint)
+        void setLiveFeedback(float input, float target) {
+            inputGlow = input;
+            glow = target;
+            // Expose factual message-thread state for real editor smoke
+            // tests. These are UI properties, not host parameters.
+            getProperties().set("liveInput", double(input));
+            getProperties().set("liveTarget", double(target));
+            repaint();
+        }
     };
 
     // INPUT / TARGET readout shown on either side of the dial. Draws only; never takes mouse input.
@@ -119,9 +128,9 @@ private:
     LiveReadout inputReadout_{palette_, true}, targetReadout_{palette_, false};
     // Smoothed live-feedback state (message thread only).
     float voicedFade_ = 0.0f, activity_ = 0.0f, dispDeviation_ = 0.0f, dispCorrection_ = 0.0f;
-    int lastTarget_ = -1;
+    int lastTarget_ = -1, lastInput_ = -1;
     juce::String lastInputName_ = "--", lastTargetName_ = "--";
-    std::array<float, 12> keyGlow_{};
+    std::array<float, 12> keyGlow_{}, inputKeyGlow_{};
     std::array<std::unique_ptr<PitchButton>, 12> notes_;
     int lastMask_ = -1;
     bool lastCustomMask_ = false;

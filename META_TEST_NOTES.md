@@ -141,3 +141,31 @@ should extract it to their personal VST3 test directory, rescan in FL Studio,
 then select META in the upper-right algorithm selector. Do not commit test
 projects or ship this as a product. META latency/PDC and audio quality
 still require separate verification.
+
+## November 22 — Three-algorithm real-code comparison + responsive piano
+
+A new deterministic `three_mode_ab` *offline* test renders identical eight-second
+synthetic harmonic-voice, vibrato, glide, silence, and unvoiced-noise patterns
+through REGULAR, TESTTUNE, and experimental META at **0/10/25ms**. Windows
+META DSP CI uploads nine actual render WAVs, dry input, measured pitch/peak/
+RMS/step/CPU metrics and a small HTML listening index. These do **not** replace
+an A/B with a real recorded human vocal. CPU timing on GitHub Actions is
+machine-specific, and these metrics are not a perceptual score.
+
+REGULAR and TESTTUNE now reset *only* their fixed-size note-selection history
+when the selected algorithm changes, avoiding pending stale note decisions
+from the previous algorithm. TESTTUNE snaps only on sufficiently reliable
+periodic estimates (confidence >= .72); it retains its no-hysteresis
+musical-boundary behavior.
+
+META is still research-only. It now seeds its smoother with the **first
+detected fundamental** instead of a fixed arbitrary startup pitch, rearms
+after a genuine 90ms unvoiced interval and sanitizes nonfinite/invalid
+test parameters. It still has unverified variable source age/latency/PDC.
+
+The 12 authentic JUCE note pads now give independently smoothed **white
+INPUT pitch** and **green TARGET** feedback from processor atomic meters,
+on the editor message thread. Active-note frames are captured in the
+Windows GUI smoke for all three modes, with programmatic proof both
+live-note feedback channels are nonzero. Click/edit/double-click behavior,
+key masks, original UI identity and saved parameter IDs remain unchanged.

@@ -190,7 +190,8 @@ void SkellyTuneEditor::PitchButton::paintButton(
     // A precise, dimensional, playable note pad rather than an empty ring:
     // selected tones look active, disabled notes stay legible, live targets
     // have a subtle glow, and hover/press feedback is consistent at all sizes.
-    if (enabled || glowValue > 0.015f) {
+    const float inputLight = juce::jlimit(0.0f, 1.0f, inputGlow);
+    if (enabled || glowValue > 0.015f || inputLight > 0.015f) {
         const float haloAlpha = std::min(0.25f, 0.06f +
             (enabled ? 0.055f : 0.0f) + glowValue * 0.14f);
         g.setColour(p.accent.withAlpha(haloAlpha));
@@ -222,6 +223,21 @@ void SkellyTuneEditor::PitchButton::paintButton(
     if (glowValue > 0.015f) {
         g.setColour(p.accent.withAlpha(0.16f + 0.45f * glowValue));
         g.drawEllipse(area.expanded(1.5f * scale), std::max(1.2f, 1.55f * scale));
+        // Green LED at the bottom: the *output target* of tuning.
+        const float led = std::max(2.0f, 3.0f * scale);
+        g.setColour(p.accent.withAlpha(0.55f + 0.45f * glowValue));
+        g.fillEllipse(centre.x - led * 0.5f, area.getBottom() - 1.1f * led,
+                      led, led);
+    }
+    if (inputLight > 0.015f) {
+        // Pale inner rim and top LED: incoming pitch, distinct from
+        // the green output target. Both show when they are the same note.
+        g.setColour(p.bone.withAlpha(0.12f + 0.45f * inputLight));
+        g.drawEllipse(area.reduced(1.8f * scale), std::max(1.1f, 1.4f * scale));
+        const float led = std::max(1.8f, 2.8f * scale);
+        g.setColour(p.bone.withAlpha(0.40f + 0.60f * inputLight));
+        g.fillEllipse(centre.x - led * 0.5f, area.getY() + 1.0f * scale,
+                      led, led);
     }
 
     g.setColour(enabled ? p.bone : p.boneDim.withAlpha(0.88f));
@@ -555,9 +571,21 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.drawText(custom ? "CUSTOM NOTES" : "ENABLED NOTES", 16,318,117,15,
                juce::Justification::centredLeft);
-    if (custom)
+    // Small live-input/target legend. Accessible even when no note is
+    // present; feedback is driven by the detector, not UI animation.
+    if (custom) {
         g.drawText("DOUBLE-CLICK TO RESET",299,318,119,15,
                    juce::Justification::centredRight,true);
+    } else {
+        g.setColour(text.withAlpha(0.74f));
+        g.fillEllipse(280.0f,324.0f,5.0f,5.0f);
+        g.setColour(muted);
+        g.drawText("IN",288,318,21,15,juce::Justification::centredLeft);
+        g.setColour(accent.withAlpha(0.82f));
+        g.fillEllipse(330.0f,324.0f,5.0f,5.0f);
+        g.setColour(muted);
+        g.drawText("TARGET",339,318,70,15,juce::Justification::centredLeft);
+    }
 }
 void SkellyTuneEditor::togglePitchClass(int index) {
     const int root = juce::roundToInt(parameters_.getRawParameterValue("key")->load());
@@ -637,6 +665,7 @@ void SkellyTuneEditor::updateLiveFeedback() {
         lastInputName_ = noteLabel(juce::roundToInt(inputMidi));
         lastTargetName_ = noteLabel(target);
         lastTarget_ = target;
+        lastInput_ = juce::roundToInt(inputMidi);
     }
     const float activityGoal = voiced ? juce::jlimit(0.0f, 1.0f, std::abs(correction) / 25.0f) : 0.0f;
     activity_ += (activityGoal - activity_) * (activityGoal > activity_ ? 0.5f : 0.15f);
@@ -651,14 +680,24 @@ void SkellyTuneEditor::updateLiveFeedback() {
         theme_.activity = activity_;
         speed_.repaint();
     }
-    // The live target note lights up on the keyboard: dim while locked, bright while correcting.
+    // Two independently driven live note lights, smoothed only on
+    // JUCE's message thread. White = incoming sung note; green = output
+    // target. They can light the same pad, and decay promptly on silence.
     for (int i = 0; i < 12; ++i) {
-        const bool isTarget = voicedFade_ > 0.05f && lastTarget_ >= 0 && (lastTarget_ % 12) == i;
-        const float goal = isTarget ? voicedFade_ * (0.35f + 0.65f * activity_) : 0.0f;
-        keyGlow_[size_t(i)] += (goal - keyGlow_[size_t(i)]) * 0.35f;
-        if (keyGlow_[size_t(i)] < 0.01f) keyGlow_[size_t(i)] = 0.0f;
-        if (std::abs(keyGlow_[size_t(i)] - notes_[size_t(i)]->glow) > 0.02f ||
-            (keyGlow_[size_t(i)] == 0.0f && notes_[size_t(i)]->glow != 0.0f))
-            notes_[size_t(i)]->setGlow(keyGlow_[size_t(i)]);
+        const bool input = voicedFade_ > 0.03f && lastInput_ >= 0 && lastInput_ % 12 == i;
+        const bool targetIsNote = voicedFade_ > 0.03f && lastTarget_ >= 0 && lastTarget_ % 12 == i;
+        const float inGoal = input ? voicedFade_ * 0.90f : 0.0f;
+        const float targetGoal = targetIsNote ? voicedFade_ * (0.50f + 0.50f * activity_) : 0.0f;
+        inputKeyGlow_[size_t(i)] += (inGoal - inputKeyGlow_[size_t(i)]) * 0.40f;
+        keyGlow_[size_t(i)] += (targetGoal - keyGlow_[size_t(i)]) * 0.40f;
+        auto& key = *notes_[size_t(i)];
+        if (std::abs(inputKeyGlow_[size_t(i)] - key.inputGlow) > 0.02f ||
+            std::abs(keyGlow_[size_t(i)] - key.glow) > 0.02f ||
+            (inputKeyGlow_[size_t(i)] < 0.015f && key.inputGlow != 0.0f) ||
+            (keyGlow_[size_t(i)] < 0.015f && key.glow != 0.0f)) {
+            if (inputKeyGlow_[size_t(i)] < 0.015f) inputKeyGlow_[size_t(i)] = 0.0f;
+            if (keyGlow_[size_t(i)] < 0.015f) keyGlow_[size_t(i)] = 0.0f;
+            key.setLiveFeedback(inputKeyGlow_[size_t(i)], keyGlow_[size_t(i)]);
+        }
     }
 }

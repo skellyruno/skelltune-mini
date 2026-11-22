@@ -238,6 +238,70 @@ int main() {
         processor.processBlock(audio, midi);
         std::cerr << "STEP: processBlock ok\n" << std::flush;
 
+        // Feed real harmonic samples through the *actual processor* with the
+        // editor open. A# input in C-major should light A# as INPUT and a
+        // distinct enabled target note green, not invent an animation.
+        auto* maskParam = processor.parameters().getParameter("noteMask");
+        auto* scaleParam = processor.parameters().getParameter("scale");
+        if (!maskParam || !scaleParam) return 41;
+        maskParam->setValueNotifyingHost(maskParam->convertTo0to1(0.0f));
+        scaleParam->setValueNotifyingHost(scaleParam->convertTo0to1(1.0f));
+        auto* testParam = processor.parameters().getParameter("testTune");
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        auto* metaParam = processor.parameters().getParameter("meta");
+        if (metaParam) metaParam->setValueNotifyingHost(0.0f);
+#endif
+        auto renderNoteFeedback = [&] (const juce::String& filename) {
+            double phase = 0.0;
+            for (int block = 0; block < 480; ++block) {
+                for (int n=0;n<128;++n) {
+                    phase += juce::MathConstants<double>::twoPi * 235.8 / 48000.0;
+                    float v = 0.0f;
+                    for (int h=1;h<=6;++h)
+                        v += float(0.18 * std::sin(h*phase + h*0.31) / double(h));
+                    audio.setSample(0,n,v);
+                    audio.setSample(1,n,v);
+                }
+                // 256 sample buffer is prepared; use the complete capacity
+                // with a second half carrying the same voiced signal.
+                for (int n=128;n<256;++n) {
+                    phase += juce::MathConstants<double>::twoPi * 235.8 / 48000.0;
+                    float v = 0.0f;
+                    for (int h=1;h<=6;++h)
+                        v += float(0.18 * std::sin(h*phase + h*0.31) / double(h));
+                    audio.setSample(0,n,v);
+                    audio.setSample(1,n,v);
+                }
+                processor.processBlock(audio, midi);
+            }
+            juce::Thread::sleep(80);
+            juce::Timer::callPendingTimersSynchronously();
+            if (processor.displayedPitchHz() < 175.0f ||
+                processor.displayedTargetNote() < 0) return false;
+            const int inputPc = juce::roundToInt(
+                69.0 + 12.0 * std::log2(double(processor.displayedPitchHz()) / 440.0)) % 12;
+            const int targetPc = processor.displayedTargetNote() % 12;
+            auto* inputKey = editor->findChildWithID("skelly.note." + juce::String(inputPc));
+            auto* targetKey = editor->findChildWithID("skelly.note." + juce::String(targetPc));
+            if (!inputKey || !targetKey) return false;
+            const double inputLamp = double(inputKey->getProperties()["liveInput"]);
+            const double targetLamp = double(targetKey->getProperties()["liveTarget"]);
+            if (inputLamp < 0.10 || targetLamp < 0.10) return false;
+            return savePreview(filename);
+        };
+        if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;
+        if (testParam) testParam->setValueNotifyingHost(1.0f);
+        if (!renderNoteFeedback("SkellyTuneMini_TESTTUNE_LiveNotes_UI_432.png")) return 42;
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
+        if (metaParam) metaParam->setValueNotifyingHost(1.0f);
+        if (!renderNoteFeedback("SkellyTuneMini_META_LiveNotes_UI_432.png")) return 43;
+        if (metaParam) metaParam->setValueNotifyingHost(0.0f);
+#endif
+        std::cerr << "STEP: live sung-note and target-note feedback captured for each algorithm\n"
+                  << std::flush;
+
         if (juce::SystemStats::getEnvironmentVariable("SKELL_LOCAL_IPC_TEST", {}) == "1") {
             // End-to-end link: local shared-memory bus + WorldLink receiver + deliberately
             // opted-in SkellKey sender, without Hub or Mini UI controls.

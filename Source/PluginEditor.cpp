@@ -578,6 +578,21 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     };
     addAndMakeVisible(clearPitchEdits_);
     clearPitchEdits_.setVisible(false);
+    // One-click reversal is safer than clearing all pitch edits.
+    undoPitchEdits_.setComponentID("skelly.undoPitchEdits");
+    undoPitchEdits_.setName("Undo latest recorded pitch edit");
+    undoPitchEdits_.setTooltip("Undo the last note edit; earlier edits remain.");
+    undoPitchEdits_.setLookAndFeel(&theme_);
+    undoPitchEdits_.setColour(juce::TextButton::buttonColourId,
+                             palette_.panel.brighter(0.08f));
+    undoPitchEdits_.setColour(juce::TextButton::textColourOffId,palette_.boneDim);
+    undoPitchEdits_.onClick=[this] {
+        if(processor_.pitchEdits().undoLast())
+            processor_.pitchEditStateChanged();
+        repaint();
+    };
+    addAndMakeVisible(undoPitchEdits_);
+    undoPitchEdits_.setVisible(false);
     setResizable(true, true);
     setResizeLimits(432, 414, 1008, 966);
     if (auto* constraint = getConstrainer())
@@ -589,6 +604,8 @@ SkellyTuneEditor::~SkellyTuneEditor() {
     analyzerToggle_.onClick = nullptr;
     clearPitchEdits_.onClick = nullptr;
     clearPitchEdits_.setLookAndFeel(nullptr);
+    undoPitchEdits_.onClick = nullptr;
+    undoPitchEdits_.setLookAndFeel(nullptr);
     speed_.onValueChange = nullptr;
     speed_.onDragStart = nullptr;
     speed_.onDragEnd = nullptr;
@@ -601,10 +618,11 @@ SkellyTuneEditor::~SkellyTuneEditor() {
 void SkellyTuneEditor::toggleAnalyzer() {
     analyzerExpanded_ = !analyzerExpanded_;
     clearPitchEdits_.setVisible(analyzerExpanded_);
+    undoPitchEdits_.setVisible(analyzerExpanded_);
     analyzerToggle_.setButtonText(analyzerExpanded_ ? "COMPACT" : "ANALYZE");
     analyzerToggle_.setTooltip(analyzerExpanded_ ?
-        "Drag note lines to pan; double-click to resume following. View only." :
-        "Expand live input and estimated output pitch graph.");
+        "Drag a voiced pitch line to retune. Empty space pans; double-click follows." :
+        "Expand the live pitch editor; edits apply to all three algorithms.");
     // Change only editor dimensions. This setting isn't in saved APVTS
     // state and can never invalidate an old FL Studio project.
     const int referenceHeight = analyzerExpanded_ ? 620 : 414;
@@ -638,8 +656,13 @@ void SkellyTuneEditor::resized() {
     place(algorithm_, 208, 19, 208, 28);
     place(analyzerToggle_, 139, 46, 64, 16);
     // Collapsed control must not retain an off-window hit target.
-    if(analyzerExpanded_)place(clearPitchEdits_,355,420,52,20);
-    else clearPitchEdits_.setBounds(0,0,1,1);            // header row, right of the title
+    if(analyzerExpanded_) {
+        place(clearPitchEdits_,355,420,52,20);
+        place(undoPitchEdits_,303,420,47,20);
+    } else {
+        clearPitchEdits_.setBounds(0,0,1,1);
+        undoPitchEdits_.setBounds(0,0,1,1);
+    }            // header row, right of the title
     place(inputReadout_, 19, 150, 100, 130);        // left of the dial
     place(targetReadout_, 313, 150, 100, 130);      // right of the dial
     place(key_, 18, 95, 90, 33);
@@ -774,8 +797,8 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.setFont(juce::Font(juce::FontOptions(9.2f)));
         g.drawText(processor_.displayedHostMs()<0 ? "NO HOST SYNC" :
                    (graphEditing_ ? "EDIT " + noteLabel(graphEditMidi_) :
-                    "3 SEC  /  " + juce::String(graphFollow_ ? "FOLLOW" : "PAN")),
-                   217,422,132,17,juce::Justification::centredRight);
+                    juce::String(double(processor_.displayedHostMs())/1000.0,2)+"s"),
+                   210,422,87,17,juce::Justification::centredRight);
         // Eight semitones of real note-space, not arbitrary cents around
         // a moving target. Pitch-line drag pans VIEW ONLY; no APVTS writes.
         constexpr float top=451.0f,bottom=569.0f;
@@ -786,6 +809,16 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         };
         g.setColour(bg.withAlpha(0.70f));
         g.fillRoundedRectangle(juce::Rectangle<float>(49.0f,446.0f,360.0f,128.0f),5.0f);
+        for(int second=1;second<3;++second) {
+            const float x=54.0f+(405.0f-54.0f)*float(second)/3.0f;
+            g.setColour(palette_.line.withAlpha(0.26f));
+            g.drawVerticalLine(juce::roundToInt(x),451.0f,569.0f);
+            g.setFont(juce::Font(juce::FontOptions(8.1f)));
+            g.setColour(muted.withAlpha(0.70f));
+            g.drawText(juce::String(second-3)+"s",
+                       juce::roundToInt(x)-16,448,32,11,
+                       juce::Justification::centred);
+        }
         const int lo=juce::jlimit(0,127,int(std::floor(graphCenterMidi_))-5);
         const int hi=juce::jlimit(0,127,int(std::ceil(graphCenterMidi_))+5);
         for(int note=lo;note<=hi;++note) {
@@ -887,7 +920,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.drawText("TARGET  LINE",301,580,103,15,juce::Justification::centredRight);
         g.setColour(muted);
         g.setFont(juce::Font(juce::FontOptions(9.4f)));
-        g.drawText("DRAG NOTE TO RETUNE  /  EMPTY SPACE PANS  /  RIGHT-CLICK UNDO",
+        g.drawText("DRAG PITCH TO EDIT  •  RIGHT-CLICK ERASES  •  DOUBLE-CLICK FOLLOWS",
                    20,596,390,13,juce::Justification::centred);
 
     }

@@ -130,6 +130,7 @@ private:
     juce::Slider speed_, a4_;
     juce::TextButton analyzerToggle_{"ANALYZE"};
     juce::TextButton clearPitchEdits_{"CLEAR"};
+    juce::TextButton undoPitchEdits_{"UNDO"};
     bool analyzerExpanded_ = false;
     static constexpr int kAnalyzerHistory = 90;
     // Real pitch and estimated corrected output in absolute MIDI-note

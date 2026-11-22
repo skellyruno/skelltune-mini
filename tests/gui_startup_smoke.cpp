@@ -166,7 +166,10 @@ int main() {
         // save, restore and clear it in the actual JUCE host processor.
         auto* clearEdits=dynamic_cast<juce::TextButton*>(
             editor->findChildWithID("skelly.clearPitchEdits"));
-        if(!clearEdits || !clearEdits->isVisible())return 60;
+        auto* undoEdits=dynamic_cast<juce::TextButton*>(
+            editor->findChildWithID("skelly.undoPitchEdits"));
+        if(!clearEdits || !clearEdits->isVisible() ||
+           !undoEdits || !undoEdits->isVisible())return 60;
         if(processor.pitchEdits().add({150,500,66})<0)return 61;
         juce::MemoryBlock editedState;
         processor.getStateInformation(editedState);
@@ -174,6 +177,10 @@ int main() {
         processor.setStateInformation(editedState.getData(),
                                      static_cast<int>(editedState.getSize()));
         if(processor.pitchEdits().targetAt(200)!=66)return 62;
+        if(processor.pitchEdits().add({550,700,68})<0)return 64;
+        undoEdits->onClick();
+        if(processor.pitchEdits().targetAt(600)!=-1 ||
+           processor.pitchEdits().targetAt(200)!=66)return 65;
         clearEdits->onClick();
         if(processor.pitchEdits().targetAt(200)!=-1)return 63;
         analyzer->onClick();

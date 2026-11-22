@@ -40,6 +40,29 @@ jobs:
           path: three-mode-ab/
           retention-days: 7
           if-no-files-found: error
+      - name: Render real repository singer through all three modes (G major)
+        shell: bash
+        run: |
+          mkdir -p three-mode-real
+          cp benchmark/v33/raw_levelmatched_20-28.wav three-mode-real/DRY_real_voice.wav
+          cp benchmark/v33/autotune_pro_levelmatched_20-28.wav three-mode-real/REFERENCE_AutoTunePro.wav
+          for speed in 0 10 25; do
+            ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/REGULAR_"$speed"ms.wav" "$speed" 100 100 0 0 2773
+            SKELLY_TESTTUNE=1 ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/TESTTUNE_"$speed"ms.wav" "$speed" 100 100 0 0 2773
+            SKELLY_META=1 ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/META_"$speed"ms.wav" "$speed" 100 100 0 0 2773
+          done
+          for output in three-mode-real/REGULAR_*ms.wav three-mode-real/TESTTUNE_*ms.wav three-mode-real/META_*ms.wav; do
+            python3 tests/validate_real_vocal.py benchmark/v33/raw_levelmatched_20-28.wav "$output"
+          done
+          python3 tools/generate_ab_index.py three-mode-real
+      - name: Upload three-mode real-singer A/B WAVs and reference
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-Mini-3-Mode-Real-Vocal-A-B
+          path: three-mode-real/
+          retention-days: 7
+          if-no-files-found: error
 
   windows-meta-lab:
     name: Windows META Lab VST3 + real JUCE smoke (no binary upload)

@@ -169,3 +169,14 @@ on the editor message thread. Active-note frames are captured in the
 Windows GUI smoke for all three modes, with programmatic proof both
 live-note feedback channels are nonzero. Click/edit/double-click behavior,
 key masks, original UI identity and saved parameter IDs remain unchanged.
+
+### Existing real-singer recording A/B
+
+The opt-in META DSP workflow now runs the repository's tracked real-singer
+benchmark `benchmark/v33/raw_levelmatched_20-28.wav` at G major, A4=440
+and 100% correction/wet. It renders REGULAR, TESTTUNE and META separately
+at **0, 10 and 25ms**, all in 64-sample offline blocks, with identical
+source audio, and bundles the existing Auto-Tune Pro benchmark reference.
+`validate_real_vocal.py` asserts finite samples, same duration/channels,
+bounded level and waveform steps. The result is a real-singer A/B, but not
+a verified perceptual ranking or an FL Studio latency/PDC test.

@@ -228,7 +228,7 @@ void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
     if(rate>0.0) {
         if(auto* playhead=getPlayHead()) {
             const auto pos=playhead->getPosition();
-            if(pos.has_value()) {
+            if(pos) {
                 if(const auto samples=pos->getTimeInSamples())
                     positionMs=int64_t(std::llround(double(*samples)*1000.0/rate));
             }

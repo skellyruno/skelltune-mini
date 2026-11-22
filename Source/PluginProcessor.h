@@ -87,7 +87,7 @@ public:
     skelly::PitchEditTimeline& pitchEdits() noexcept { return pitchEdits_; }
     const skelly::PitchEditTimeline& pitchEdits() const noexcept { return pitchEdits_; }
     void pitchEditStateChanged() {
-        updateHostDisplay(juce::AudioProcessor::ChangeDetails{}.withNonParameterStateChanged());
+        updateHostDisplay(juce::AudioProcessor::ChangeDetails{}.withNonParameterStateChanged(true));
     }
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     skelly::Parameters regularEngineParametersForLabTests() const noexcept {

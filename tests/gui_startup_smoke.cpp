@@ -309,6 +309,46 @@ int main() {
         if (metaParam) metaParam->setValueNotifyingHost(1.0f);
         if (!renderNoteFeedback("SkellyTuneMini_META_LiveNotes_UI_432.png")) return 43;
         if (metaParam) metaParam->setValueNotifyingHost(0.0f);
+
+        // META -> REGULAR / TESTTUNE previously processed one whole block
+        // with factory defaults because engine_.reset() ran AFTER the
+        // APVTS values were applied. Exercise both 32-bit and 64-bit
+        // host switching with non-default speed and G-major note mask.
+        auto* speedForSwitch = processor.parameters().getParameter("speed");
+        if (!speedForSwitch || !metaParam) return 44;
+        speedForSwitch->setValueNotifyingHost(
+            speedForSwitch->convertTo0to1(7.0f));
+        maskParam->setValueNotifyingHost(
+            maskParam->convertTo0to1(0.0f));
+        key->setSelectedId(8, juce::sendNotificationSync); // G
+        scaleParam->setValueNotifyingHost(
+            scaleParam->convertTo0to1(1.0f)); // major
+        const int expectedMask = skelly::effectiveMask(7, 1, 0);
+        metaParam->setValueNotifyingHost(1.0f);
+        processor.processBlock(audio, midi);
+        metaParam->setValueNotifyingHost(0.0f);
+        processor.processBlock(audio, midi);
+        auto snapshot = processor.regularEngineParametersForLabTests();
+        if (std::abs(snapshot.speedMs - 7.0f) > 0.02f ||
+            snapshot.pitchClasses != expectedMask) {
+            std::cerr << "FAIL: META -> REGULAR reset lost host tuning (32-bit)\n";
+            return 44;
+        }
+        juce::AudioBuffer<double> doubleAudio(2, 256);
+        doubleAudio.clear();
+        metaParam->setValueNotifyingHost(1.0f);
+        processor.processBlock(doubleAudio, midi);
+        metaParam->setValueNotifyingHost(0.0f);
+        processor.processBlock(doubleAudio, midi);
+        snapshot = processor.regularEngineParametersForLabTests();
+        if (std::abs(snapshot.speedMs - 7.0f) > 0.02f ||
+            snapshot.pitchClasses != expectedMask) {
+            std::cerr << "FAIL: META -> REGULAR reset lost host tuning (64-bit)\n";
+            return 45;
+        }
+        speedForSwitch->setValueNotifyingHost(
+            speedForSwitch->convertTo0to1(25.0f));
+        key->setSelectedId(1, juce::sendNotificationSync);
 #endif
         // Restore the original C Chromatic/A4 440 fixture before the
         // independent SkellKey IPC test: our live-light scene explicitly

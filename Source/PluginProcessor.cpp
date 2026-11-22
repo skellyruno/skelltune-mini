@@ -226,7 +226,8 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
     juce::ScopedNoDenormals guard;
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() <= 0) return;
-    engine_.setParameters(currentParameters());
+    const auto params = currentParameters();
+    engine_.setParameters(params);
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     if (state_.getRawParameterValue("meta")->load() > 0.5f) {
         if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
@@ -234,7 +235,14 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
         runMeta(io, ch, b.getNumSamples());
         return;
     }
-    if (metaWasActive_) { engine_.reset(); metaWasActive_ = false; }
+    if (metaWasActive_) {
+        // reset() intentionally clears cached engine Parameters. The old
+        // order applied APVTS values BEFORE the reset and processed the
+        // first switched block with factory defaults: audible A/B glitch.
+        engine_.reset();
+        engine_.setParameters(params);
+        metaWasActive_ = false;
+    }
 #endif
     std::array<const float*, 2> in { b.getReadPointer(0), ch == 2 ? b.getReadPointer(1) : nullptr };
     std::array<float*, 2> out { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
@@ -252,7 +260,8 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     juce::ScopedNoDenormals guard;
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() == 0) return;
-    engine_.setParameters(currentParameters());
+    const auto params = currentParameters();
+    engine_.setParameters(params);
     const int capacity = doubleScratch_.getNumSamples();
     // Some hosts can probe a processor before prepareToPlay; never enter a
     // zero-stride loop or allocate on the realtime thread. Match the float
@@ -274,7 +283,11 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
             if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
             runMeta(dst, ch, n);
         } else {
-            if (metaWasActive_) { engine_.reset(); metaWasActive_ = false; }
+            if (metaWasActive_) {
+                engine_.reset();
+                engine_.setParameters(params); // persist host state in first returned 64-bit block
+                metaWasActive_ = false;
+            }
             engine_.process(src, dst, n, ch);
         }
 #else

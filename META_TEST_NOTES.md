@@ -318,3 +318,23 @@ history and a non-idle dial status after real harmonic samples have
 passed through the plugin in REGULAR, TESTTUNE and META Lab.
 JUCE/Quick4 real screenshot visual inspection remains mandatory before
 accepting sizing, typography or interactions.
+
+## Mode-switch crash/click root fix — initial block reset lost APVTS
+
+The META Lab processor previously called `engine_.setParameters(currentParameters())`
+BEFORE checking whether it should switch out of the META engine. On
+META -> REGULAR/TESTTUNE, `engine_.reset()` then cleared all `Parameters`
+to factory defaults; the first audio buffer therefore used the WRONG
+speed, key, scale and amount, followed by a jump back to the host
+settings on the next callback. This is an actual one-block DSP defect,
+not a subjective pitch quality guess. Both float and double host
+processBlock paths now immediately reapply the same captured user
+parameters *after* reset. A new real Windows JUCE editor smoke uses
+non-default 7ms / G-major state to verify exact parameters on the
+FIRST returned callback in both 32-bit and 64-bit host formats.
+
+META Lab reset also recalculated the tracker FIR (sin/cos) in the
+audio-thread mode-switch path. The detector is now prepared exactly
+once in prepareToPlay, and mode reset calls the existing allocation-free
+tracker.reset(). This removes expensive coefficient design during
+live algorithm A/B. The normal Mini VST3 path is not changed.

@@ -614,6 +614,11 @@ public:
         cycleBlend_ = 0.0;
     }
     int latencySamples() const noexcept { return latency_; }
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    // Meta Lab editor smoke uses this strictly internal test-only probe
+    // to catch a one-block factory-state regression after META -> REGULAR.
+    Parameters parameterSnapshotForLabTests() const noexcept { return params_; }
+#endif
     DelayContract outputDelayContract(bool experimentalMode) const noexcept {
         return studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_) : studioDelayContract(rate_))
                             : delayContract(rate_, experimentalMode);

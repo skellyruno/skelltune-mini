@@ -80,6 +80,11 @@ public:
     int displayedTargetNote() const noexcept { return displayedTargetNote_.load(std::memory_order_relaxed); }
     bool displayedTargetPending() const noexcept { return displayedTargetPending_.load(std::memory_order_relaxed); }
     float displayedCorrectionCents() const noexcept { return displayedCorrectionCents_.load(std::memory_order_relaxed); }
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    skelly::Parameters regularEngineParametersForLabTests() const noexcept {
+        return engine_.parameterSnapshotForLabTests();
+    }
+#endif
 private:
     void timerCallback() override;
     // Shared UI/theme and optional key-link state. Audio processing reads only

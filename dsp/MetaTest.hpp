@@ -54,6 +54,9 @@ public:
     void prepare(double sampleRate) {
         sr_ = static_cast<uint32_t>(sampleRate);
         hop_ = std::max<uint32_t>(32, static_cast<uint32_t>(sampleRate * 0.0027));
+        // Preparing detector FIR coefficients is expensive; do it only
+        // from prepareToPlay, NEVER from the audio callback's mode switch.
+        tracker_.prepare(double(sr_));
         reset();
     }
     void reset() {
@@ -71,7 +74,7 @@ public:
         sourceRatio_ = 1.0; sourceBase_ = 0.0; grainGeometryValid_ = false;
         phaseAlignmentAdjustments_ = 0;
         phaseErrorBefore_ = phaseErrorAfter_ = 0.0;
-        tracker_.prepare(double(sr_)); est_ = {};
+        tracker_.reset(); est_ = {};
         for (int l = 0; l < kLanes; ++l) { pos_[l] = out_[l] = 0.0; fade_[l] = flen_[l] = 0; }
         std::memset(anal_.data(), 0, sizeof(float) * anal_.size());
         for (auto& r : ring_) std::memset(r.data(), 0, sizeof(float) * r.size());

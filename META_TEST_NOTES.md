@@ -120,3 +120,24 @@ Verification includes a real Windows JUCE editor smoke that checks 0 / 50 / 100
 dial positions, the old 25ms default, 7ms adjustment, and host automation
 feeding back to the dial. A/B listening/FL Studio project round-trip and a
 separate real UI review are still release gates.
+
+## November 22 retune correction / owner META testing
+
+The previous 100-to-0 dial incorrectly mapped 100 to **200ms**. Corrected:
+100 on the dial **is 100ms**; 50 is 50ms; 0 is 0ms (fastest hard tune).
+Clockwise/upward is faster; the face number decreases. Real plugin APVTS
+`speed` ID, version, default and 0..200ms storage remain unchanged for
+older DAW projects. If a project restores 175ms, Mini displays `100+`
+with `175ms / LEGACY` beneath until the user touches the knob. No old
+automation or preset value is rewritten on load.
+
+The actual META selector (REGULAR/TESTTUNE/META) lives in the opt-in
+`SkellyTune META Lab.vst3`, **not** normal Mini. This uses a separate
+plugin identity and cannot overwrite a normal Mini installation.
+The owner explicitly requested to test META. For the owned PR #17 branch
+only, the experimental Windows CI exposes an explicitly watermarked,
+one-day-retention, test-only artifact (no release, no installer); the user
+should extract it to their personal VST3 test directory, rescan in FL Studio,
+then select META in the upper-right algorithm selector. Do not commit test
+projects or ship this as a product. META latency/PDC and audio quality
+still require separate verification.

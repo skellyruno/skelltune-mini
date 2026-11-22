@@ -70,7 +70,7 @@ jobs:
           } finally {
             Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
           }
-      - name: Upload only genuine JUCE editor screenshots (never the experimental VST3)
+      - name: Upload genuine META Lab editor screenshots
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -79,6 +79,38 @@ jobs:
             SkellyTuneMini_UI_432.png
             SkellyTuneMini_META_Lab_UI_432.png
             SkellyTuneMini_Knob_0ms_UI_432.png
-            SkellyTuneMini_Knob_200ms_UI_432.png
+            SkellyTuneMini_Knob_100ms_UI_432.png
           if-no-files-found: error
           retention-days: 7
+
+      # The owner explicitly requested a META test build. This is a narrowly
+      # scoped, short-lived research artifact, never a release or installer.
+      # Do not leak experimental META to the normal Mini Windows package.
+      - name: Stage explicitly marked META research-only test bundle
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/mini-pr16-vst3-program-name-20261121'
+        shell: pwsh
+        run: |
+          $lab = Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3' | Select-Object -First 1
+          if (!$lab) { throw 'META Lab x64 test bundle missing' }
+          New-Item -ItemType Directory -Force -Path META-LAB-TEST-ONLY | Out-Null
+          Copy-Item -LiteralPath $lab.FullName -Destination 'META-LAB-TEST-ONLY' -Recurse
+          @'
+          SKELLYTUNE META LAB — OWNER RESEARCH TEST ONLY
+          NOT A RELEASE. NOT FOR REDISTRIBUTION OR PRODUCTION.
+          This is a separate VST3 ID from regular Mini, designed for temporary
+          real-vocal A/B testing. Run only in a backup FL Studio project.
+          META's output delay/PDC and consonant processing are not fully verified.
+          '100' dial = 100ms. '0' dial = 0ms (fast hard correction).
+          '@ | Set-Content -Path 'META-LAB-TEST-ONLY/README-TEST-ONLY.txt'
+          $file = Join-Path 'META-LAB-TEST-ONLY' 'SkellyTune META Lab.vst3/Contents/x86_64-win/SkellyTune META Lab.vst3'
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
+          "$hash *SkellyTune META Lab.vst3/Contents/x86_64-win/SkellyTune META Lab.vst3" |
+            Set-Content -Path 'META-LAB-TEST-ONLY/SHA256SUMS.txt'
+      - name: Upload owner's temporary META Lab TEST-ONLY binary
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/mini-pr16-vst3-program-name-20261121'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-META-LAB-TEST-ONLY-NOT-FOR-RELEASE
+          path: META-LAB-TEST-ONLY/
+          if-no-files-found: error
+          retention-days: 1

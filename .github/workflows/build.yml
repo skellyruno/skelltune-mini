@@ -61,7 +61,7 @@ jobs:
             SkellyTuneMini_UI_720.png
             SkellyTuneMini_UI_1008.png
             SkellyTuneMini_Knob_0ms_UI_432.png
-            SkellyTuneMini_Knob_200ms_UI_432.png
+            SkellyTuneMini_Knob_100ms_UI_432.png
           if-no-files-found: error
           retention-days: 7
 

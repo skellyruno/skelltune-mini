@@ -17,6 +17,7 @@ private:
         skellcore::ui::SkullPalette palette =
             skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
         float activity = 0.0f;   // 0..1, how hard the tuner is correcting right now (drives the dial glow)
+        float hostSpeedMs = 25.0f; // true saved ms, including legacy values above the new 100ms dial max
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
         juce::Font getTextButtonFont(juce::TextButton&, int height) override {

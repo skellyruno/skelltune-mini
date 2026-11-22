@@ -796,9 +796,18 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.setColour(accent);
         g.drawText(signedCents(dispCorrection_),316,498,92,14,
                    juce::Justification::centredRight);
-        g.setColour(muted.withAlpha(0.82f));
-        g.drawText("WHITE = VOICE   •   GREEN = TUNER OUTPUT   •   CENTRE = IN TUNE",
-                   24,514,382,13,juce::Justification::centred);
+        // Short, separately inked legend: the previous 65-character
+        // caption compressed/overran at the native 432px size.
+        g.setFont(juce::Font(juce::FontOptions(9.2f,juce::Font::bold)));
+        g.setColour(text.withAlpha(0.76f));
+        g.drawText("WHITE  INPUT",24,514,112,13,
+                   juce::Justification::centredLeft);
+        g.setColour(accent.withAlpha(0.84f));
+        g.drawText("GREEN  CORRECTION",139,514,145,13,
+                   juce::Justification::centred);
+        g.setColour(muted.brighter(0.30f));
+        g.drawText("ZERO  IN TUNE",291,514,115,13,
+                   juce::Justification::centredRight);
     }
 }
 void SkellyTuneEditor::togglePitchClass(int index) {

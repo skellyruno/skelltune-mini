@@ -108,8 +108,11 @@ private:
     juce::Slider speed_, a4_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         keyAttachment_, scaleAttachment_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
-        speedAttachment_, a4Attachment_;
+    // UI is a clockwise fastness controller (0..100), while the existing
+    // saved/automated APVTS "speed" parameter stays 0..200 milliseconds.
+    std::unique_ptr<juce::ParameterAttachment> speedAttachment_;
+    bool speedDragging_ = false;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> a4Attachment_;
     // Algorithm switch (REGULAR / TESTTUNE / META). Drives the APVTS ids "testTune" and (test builds) "meta".
     AlgorithmSelector algorithm_{palette_};
     LiveReadout inputReadout_{palette_, true}, targetReadout_{palette_, false};

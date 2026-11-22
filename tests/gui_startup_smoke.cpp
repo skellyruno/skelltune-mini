@@ -177,18 +177,34 @@ int main() {
             std::cerr << "FAIL: mini editor controls missing or extra controls remain\n";
             return 8;
         }
-        speed->setValue(7.0, juce::sendNotificationSync);
-        if (std::abs(processor.parameters().getRawParameterValue("speed")->load() - 7.0f) > 0.02f)
-            return 9;
-        // Endpoints must remain the actual 0..200ms host-automatable value.
-        // Save true JUCE editor captures of both extremes for visual QA.
-        speed->setValue(0.0, juce::sendNotificationSync);
-        if (std::abs(processor.parameters().getRawParameterValue("speed")->load()) > 0.02f ||
-            !savePreview("SkellyTuneMini_Knob_0ms_UI_432.png")) return 34;
-        speed->setValue(200.0, juce::sendNotificationSync);
-        if (std::abs(processor.parameters().getRawParameterValue("speed")->load() - 200.0f) > 0.02f ||
-            !savePreview("SkellyTuneMini_Knob_200ms_UI_432.png")) return 35;
-        speed->setValue(25.0, juce::sendNotificationSync);
+        // Real parameter "speed" is 0..200ms for old sessions; Mini's
+        // physical dial increases clockwise/upwards for FASTER correction,
+        // while its printed display goes from 100 (slow) to 0 (hard).
+        const auto readSpeed = [&] {
+            return processor.parameters().getRawParameterValue("speed")->load();
+        };
+        if (std::abs(speed->getValue() - 87.5) > 0.02 ||
+            std::abs(readSpeed() - 25.0f) > 0.02f) {
+            std::cerr << "FAIL: old 25ms state did not map to inverse 0..100 dial\n";
+            return 36;
+        }
+        speed->setValue(0.0, juce::sendNotificationSync); // 100 shown = slowest
+        if (std::abs(readSpeed() - 200.0f) > 0.02f ||
+            !savePreview("SkellyTuneMini_Knob_200ms_UI_432.png")) return 34;
+        speed->setValue(100.0, juce::sendNotificationSync); // 0 shown = fastest
+        if (std::abs(readSpeed()) > 0.02f ||
+            !savePreview("SkellyTuneMini_Knob_0ms_UI_432.png")) return 35;
+        speed->setValue(50.0, juce::sendNotificationSync); // midpoint 50 shown
+        if (std::abs(readSpeed() - 100.0f) > 0.02f) return 37;
+        speed->setValue(96.5, juce::sendNotificationSync); // 7ms engine
+        if (std::abs(readSpeed() - 7.0f) > 0.02f) return 9;
+        // Host automation updates the *existing* APVTS parameter and feeds
+        // back to the reversed dial without recursively writing the host.
+        if (auto* parameter = processor.parameters().getParameter("speed"))
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(60.0f));
+        if (std::abs(readSpeed() - 60.0f) > 0.02f ||
+            std::abs(speed->getValue() - 70.0) > 0.02) return 38;
+        speed->setValue(87.5, juce::sendNotificationSync); // restore 25ms
         key->setSelectedId(8, juce::sendNotificationSync); // G (zero-based 7)
         if (std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f)
             return 10;

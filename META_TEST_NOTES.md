@@ -94,3 +94,29 @@ instance automatically. Back up test projects. The META state is not intended
 to transfer to release Mini. Real-vocal A/B listening and host round-trip testing
 remain required. GitHub CI may verify Lab compilation and screenshots, but
 it intentionally does not upload the installable experimental VST3.
+
+
+## Reverse Auto-Tune-style 100 → 0 dial correction (November 22, 2026)
+
+The **large dial number is now 100 at slowest, 0 at fastest hard tune**.
+The rotary control itself is physically reversed relative to the engine's
+millisecond parameter: drag up / clockwise increases tuning intensity and
+decreases the displayed speed number toward 0. The ring fills clockwise as
+correction becomes harder. The small readout underneath shows real retune
+milliseconds, to avoid confusing the 0..100 user-facing scale with time.
+
+The saved and automatable JUCE `speed` parameter is unchanged at 0..200 ms
+(default 25 ms, same ID and version). The GUI mapping is:
+`clockwise_position = 100 - host_speed_ms/2`; large display is
+`100 - clockwise_position`; only the editor changes orientation.
+Consequently 0 on the dial = 0 ms (hardest), 50 = 100 ms, and
+100 = 200 ms (slowest). Old FL Studio projects and automation lanes still
+use their actual stored milliseconds, not the visible 0..100 markings.
+The thumb position and host automation stay linked through JUCE
+`ParameterAttachment`, with correct drag gestures and no audio-thread UI.
+
+The sound engine and META Lab's separate test-only identity remain unchanged.
+Verification includes a real Windows JUCE editor smoke that checks 0 / 50 / 100
+dial positions, the old 25ms default, 7ms adjustment, and host automation
+feeding back to the dial. A/B listening/FL Studio project round-trip and a
+separate real UI review are still release gates.

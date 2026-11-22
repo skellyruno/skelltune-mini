@@ -9,6 +9,17 @@ using State = juce::AudioProcessorValueTreeState;
 const char* const noteNames[] = {
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 };
+// The production "speed" APVTS parameter is frozen at 0..200ms for old
+// FL Studio projects. Only the editor uses a reversed 0..100 rotary view:
+// clockwise/up = more correction = fewer milliseconds = 0 displayed.
+constexpr double kRetuneMaximumMs = 200.0;
+constexpr double kDialMaximum = 100.0;
+double clockwiseFastnessForMs(float ms) noexcept {
+    return kDialMaximum - juce::jlimit(0.0, kRetuneMaximumMs, double(ms)) * 0.5;
+}
+float millisecondsForClockwiseFastness(double fastness) noexcept {
+    return float((kDialMaximum - juce::jlimit(0.0, kDialMaximum, fastness)) * 2.0);
+}
 
 juce::String noteLabel(int midi) {
     if (midi < 0) return "--";
@@ -41,87 +52,114 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
         juce::Graphics& g, int x, int y, int w, int h, float position,
         float start, float end, juce::Slider& slider) {
     const auto rect = juce::Rectangle<float>(float(x), float(y), float(w), float(h)).reduced(7.0f);
-    // All knob typography and layout offsets scale with the resizable editor.
-    // Previously the large dial still used a 36px value in a 416px control.
     const float uiScale = std::max(1.0f, std::min(float(w), float(h)) / 178.0f);
     const float cx = rect.getCentreX(), cy = rect.getCentreY();
     const float radius = std::min(rect.getWidth(), rect.getHeight()) * 0.5f;
     const float line = std::max(3.5f, radius * 0.085f);
     const float r = radius - line * 1.45f;
     const float live = juce::jlimit(0.0f, 1.0f, activity);
-    const float proportion = juce::jlimit(0.0f, 1.0f, position);
-    const float needleAngle = start + proportion * (end - start);
-    const auto endpoint = [&](float angle) {
-        return juce::Point<float>(cx + r * std::sin(angle), cy - r * std::cos(angle));
+    // position=0 is SLOW (100), position=1 is HARD (0). Clockwise
+    // rotation and upward dragging now actually shorten retune time.
+    const float fastness = juce::jlimit(0.0f, 1.0f, position);
+    const float needleAngle = start + fastness * (end - start);
+    const auto endpoint = [&](float angle, float distance) {
+        return juce::Point<float>(cx + distance * std::sin(angle),
+                                  cy - distance * std::cos(angle));
     };
 
-    // JUCE's position is the SKEWED normalized ms parameter, not a separate
-    // 0..100 strength value. The arc and needle follow that actual position.
+    // A restrained dual-surface knob. These highlights are painted only by
+    // JUCE's editor and never touch the audio thread.
+    g.setColour(palette.accent.withAlpha(0.035f + 0.07f * live));
+    g.fillEllipse(cx - radius + 1.0f, cy - radius + 1.0f,
+                  2.0f * (radius - 1.0f), 2.0f * (radius - 1.0f));
+
     juce::Path track, progress;
     track.addCentredArc(cx, cy, r, r, 0.0f, start, end, true);
-    if (proportion > 0.001f)
+    if (fastness > 0.0001f)
         progress.addCentredArc(cx, cy, r, r, 0.0f, start, needleAngle, true);
     g.setColour(palette.line);
     g.strokePath(track, juce::PathStrokeType(line,
         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    if (proportion > 0.001f) {
-        g.setColour(palette.accent.withAlpha(0.14f + 0.30f * live));
-        g.strokePath(progress, juce::PathStrokeType(line * 1.75f,
+    if (fastness > 0.0001f) {
+        g.setColour(palette.accent.withAlpha(0.12f + 0.19f * live));
+        g.strokePath(progress, juce::PathStrokeType(line * 1.9f,
             juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         g.setColour(palette.accent);
         g.strokePath(progress, juce::PathStrokeType(line,
             juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
-    // Marker remains visible even at 0ms, when the progress arc is empty.
-    const auto marker = endpoint(needleAngle);
-    g.setColour(palette.accent);
+    // Fine reference marks: 100 (slow) on the left to 0 (fast) on the right.
+    for (int i = 0; i <= 10; ++i) {
+        const float t = float(i) / 10.0f;
+        const float angle = start + t * (end - start);
+        const auto inner = endpoint(angle, r + line * 1.4f);
+        const auto outer = endpoint(angle, r + line * (i % 5 == 0 ? 2.05f : 1.75f));
+        g.setColour((t <= fastness ? palette.accent : palette.boneDim)
+            .withAlpha(t <= fastness ? 0.55f : 0.25f));
+        g.drawLine(inner.x, inner.y, outer.x, outer.y,
+                   std::max(0.9f, line * 0.16f));
+    }
+
+    const auto marker = endpoint(needleAngle, r);
     const float markerRadius = std::max(3.0f, line * 0.66f);
+    g.setColour(palette.accent.withAlpha(0.18f + 0.11f * live));
+    g.fillEllipse(marker.x - markerRadius * 1.65f,
+                  marker.y - markerRadius * 1.65f,
+                  markerRadius * 3.3f, markerRadius * 3.3f);
+    g.setColour(palette.accent);
     g.fillEllipse(marker.x - markerRadius, marker.y - markerRadius,
                   markerRadius * 2.0f, markerRadius * 2.0f);
 
     const auto centre = juce::Rectangle<float>(cx-r+line*1.3f, cy-r+line*1.3f,
         2.0f*(r-line*1.3f), 2.0f*(r-line*1.3f));
-    g.setColour(palette.background);
+    g.setGradientFill(juce::ColourGradient(
+        palette.panel.brighter(0.10f), cx, cy - r,
+        palette.background, cx, cy + r, false));
     g.fillEllipse(centre);
-    g.setColour(palette.line);
-    g.drawEllipse(centre, 1.15f);
+    g.setColour(palette.line.brighter(0.11f));
+    g.drawEllipse(centre, std::max(1.0f, uiScale * 0.8f));
 
-    // 0ms = fastest hard tune; 200ms = slowest. No inverted "strength"
-    // number that disagrees with the saved/APVTS parameter.
     g.setColour(palette.boneDim);
     g.setFont(juce::Font(juce::FontOptions(juce::jlimit(10.0f, 30.0f,
         float(w) * 0.062f), juce::Font::bold)));
-    const auto p0 = endpoint(start), p1 = endpoint(end);
+    const auto p0 = endpoint(start, r), p1 = endpoint(end, r);
     const int labelHeight = juce::roundToInt(14.0f * uiScale);
     const int labelOffset = juce::roundToInt(6.0f * uiScale);
     const int zeroHalf = juce::roundToInt(18.0f * uiScale);
     const int endHalf = juce::roundToInt(21.0f * uiScale);
-    g.drawText("0", juce::Rectangle<int>(int(p0.x) - zeroHalf, int(p0.y) + labelOffset,
-               zeroHalf * 2, labelHeight), juce::Justification::centred);
-    g.drawText("200", juce::Rectangle<int>(int(p1.x) - endHalf, int(p1.y) + labelOffset,
-               endHalf * 2, labelHeight), juce::Justification::centred);
+    g.drawText("100", juce::Rectangle<int>(
+        int(p0.x) - endHalf, int(p0.y) + labelOffset,
+        endHalf * 2, labelHeight), juce::Justification::centred);
+    g.drawText("0", juce::Rectangle<int>(
+        int(p1.x) - zeroHalf, int(p1.y) + labelOffset,
+        zeroHalf * 2, labelHeight), juce::Justification::centred);
 
-    const double milliseconds = slider.getValue();
-    const auto value = milliseconds < 0.005 ? juce::String("0")
-        : milliseconds < 10.0 ? juce::String(milliseconds, 1)
-        : juce::String(juce::roundToInt(milliseconds));
+    // Do not confuse the performance-oriented 0..100 face with the saved
+    // speed parameter: the small readout is always truthful engine ms.
+    const double shownRetune = 100.0 - slider.getValue();
+    const int shown = juce::roundToInt(shownRetune);
+    const float milliseconds = millisecondsForClockwiseFastness(slider.getValue());
+    const juce::String response = shown <= 0 ? "HARD"
+        : shown <= 20 ? "FAST" : shown <= 60 ? "NATURAL" : "SLOW";
+
+    const int innerMargin = juce::roundToInt(8.0f * uiScale);
+    const int textWidth = int(radius * 2.0f) - innerMargin * 2;
     g.setColour(palette.accent);
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(21.0f, 84.0f, float(w) * 0.195f), juce::Font::bold)));
-    const int innerMargin = juce::roundToInt(8.0f * uiScale);
-    const int textWidth = int(radius * 2) - innerMargin * 2;
-    g.drawText(value + " ms", juce::Rectangle<int>(
-        int(cx-radius) + innerMargin, int(cy) - juce::roundToInt(32.0f * uiScale),
-        textWidth, juce::roundToInt(45.0f * uiScale)),
+        juce::jlimit(24.0f, 86.0f, float(w) * 0.20f), juce::Font::bold)));
+    g.drawText(juce::String(shown), juce::Rectangle<int>(
+        int(cx-radius)+innerMargin, int(cy)-juce::roundToInt(30.0f * uiScale),
+        textWidth, juce::roundToInt(43.0f * uiScale)),
         juce::Justification::centred, true);
+
     g.setColour(palette.boneDim);
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(10.0f, 34.0f, float(w) * 0.068f), juce::Font::bold)));
-    const juce::String response = milliseconds <= 0.005 ? "INSTANT"
-        : milliseconds <= 30.0 ? "FAST" : milliseconds <= 100.0 ? "NATURAL" : "SMOOTH";
-    g.drawText(response, juce::Rectangle<int>(
-        int(cx-radius) + innerMargin, int(cy) + juce::roundToInt(14.0f * uiScale),
+        juce::jlimit(10.0f, 33.0f, float(w) * 0.068f), juce::Font::bold)));
+    const juce::String detail = juce::String(juce::roundToInt(milliseconds))
+        + " ms  /  " + response;
+    g.drawText(detail, juce::Rectangle<int>(
+        int(cx-radius)+innerMargin, int(cy)+juce::roundToInt(15.0f * uiScale),
         textWidth, juce::roundToInt(20.0f * uiScale)),
         juce::Justification::centred, true);
 }
@@ -248,14 +286,17 @@ void SkellyTuneEditor::AlgorithmSelector::mouseMove(const juce::MouseEvent& e) {
 SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     : juce::AudioProcessorEditor(p), processor_(p), parameters_(p.parameters()) {
     speed_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    // Physical control increases clockwise/up; the visible 100..0 face
+    // decreases and maps to existing 200..0ms saved host values.
+    speed_.setRange(0.0, 100.0, 0.01);
     speed_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     speed_.setRotaryParameters(juce::MathConstants<float>::pi * 1.23f,
                               juce::MathConstants<float>::pi * 2.77f, true);
     speed_.setName("Retune Speed");
     speed_.setComponentID("skelly.speed");
-    speed_.setTooltip("Retune time in milliseconds: 0 ms = instant hard tune; "
-                      "200 ms = slowest. The dial, endpoint labels and automation "
-                      "show the same saved speed value. Zero retune is not zero plugin latency.");
+    speed_.setTooltip("Retune speed dial: 100 = slow / natural, 0 = fastest hard retune. "
+                      "Drag UP or turn CLOCKWISE for faster correction (toward 0). "
+                      "Small text shows the actual milliseconds. No zero-latency claim.");
     speed_.setLookAndFeel(&theme_);
     addAndMakeVisible(speed_);
 
@@ -297,8 +338,32 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
         parameters_, "key", key_);
     scaleAttachment_ = std::make_unique<State::ComboBoxAttachment>(
         parameters_, "scale", scale_);
-    speedAttachment_ = std::make_unique<State::SliderAttachment>(
-        parameters_, "speed", speed_);
+    // The built-in SliderAttachment would wire clockwise increase to
+    // MORE ms (= slower pitch correction). ParameterAttachment keeps the
+    // original host APVTS parameter and supports an inverted GUI mapping
+    // with host automation, gestures and preset recall.
+    auto* retuneParameter = parameters_.getParameter("speed");
+    jassert(retuneParameter != nullptr);
+    speedAttachment_ = std::make_unique<juce::ParameterAttachment>(
+        *retuneParameter, [this](float savedMs) {
+            speed_.setValue(clockwiseFastnessForMs(savedMs), juce::dontSendNotification);
+            speed_.repaint();
+        });
+    speed_.onDragStart = [this] {
+        speedDragging_ = true;
+        speedAttachment_->beginGesture();
+    };
+    speed_.onValueChange = [this] {
+        if (!speedAttachment_) return;
+        const auto ms = millisecondsForClockwiseFastness(speed_.getValue());
+        if (speedDragging_) speedAttachment_->setValueAsPartOfGesture(ms);
+        else speedAttachment_->setValueAsCompleteGesture(ms);
+    };
+    speed_.onDragEnd = [this] {
+        speedAttachment_->endGesture();
+        speedDragging_ = false;
+    };
+    speedAttachment_->sendInitialUpdate();
     a4Attachment_ = std::make_unique<State::SliderAttachment>(
         parameters_, "a4", a4_);
 
@@ -344,6 +409,10 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     startTimerHz(30);   // smooth live feedback; refreshNotes() returns early when nothing changed
 }
 SkellyTuneEditor::~SkellyTuneEditor() {
+    speed_.onValueChange = nullptr;
+    speed_.onDragStart = nullptr;
+    speed_.onDragEnd = nullptr;
+    speedAttachment_.reset();
     speed_.setLookAndFeel(nullptr);
     a4_.setLookAndFeel(nullptr);
     key_.setLookAndFeel(nullptr);
@@ -414,10 +483,17 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawText("SCALE",121,76,145,16,juce::Justification::centredLeft);
     g.drawText("A4",292,76,110,16,juce::Justification::centredLeft);
 
-    g.setColour(panel);
-    g.fillRoundedRectangle(juce::Rectangle<float>(13,137,406,178),9.0f);
-    g.setColour(palette_.line.withAlpha(0.65f));
-    g.drawRoundedRectangle(juce::Rectangle<float>(13,137,406,178),9.0f,0.9f);
+    // Keep Mini's approved dark/neon identity, but soften the instrument
+    // surface with gentle gradient depth and a restrained top highlight.
+    const auto panelBounds = juce::Rectangle<float>(13,137,406,178);
+    g.setGradientFill(juce::ColourGradient(
+        panel.brighter(0.065f), 13.0f, 137.0f,
+        panel.darker(0.075f), 419.0f, 315.0f, false));
+    g.fillRoundedRectangle(panelBounds,9.0f);
+    g.setColour(palette_.line.withAlpha(0.72f));
+    g.drawRoundedRectangle(panelBounds,9.0f,0.9f);
+    g.setColour(accent.withAlpha(0.18f));
+    g.drawLine(24.0f, 138.5f, 408.0f, 138.5f, 0.8f);
     g.setColour(muted);
     g.setFont(juce::Font(juce::FontOptions(12.0f,juce::Font::bold)));
     g.drawText("RETUNE SPEED",137,314,158,19,juce::Justification::centred);

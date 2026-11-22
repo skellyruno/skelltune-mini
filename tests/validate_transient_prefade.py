@@ -7,19 +7,43 @@ from __future__ import annotations
 import math
 import struct
 import sys
-import wave
+
 
 
 def read(path):
-    with wave.open(path, "rb") as w:
-        fs, channels, size, n = w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes()
-        data = w.readframes(n)
-    if size == 4:
+    # Python wave.open rejects IEEE-float WAVE_FORMAT_IEEE_FLOAT (format 3).
+    # The Mini offline renderer emits float32 RIFF PCM-style chunks.
+    with open(path, "rb") as f:
+        if f.read(4) != b"RIFF":
+            raise ValueError(f"expected RIFF WAV: {path}")
+        f.read(4)
+        if f.read(4) != b"WAVE":
+            raise ValueError(f"expected WAVE: {path}")
+        fmt = None
+        data = None
+        while True:
+            chunk = f.read(8)
+            if len(chunk) < 8:
+                break
+            tag, length = struct.unpack("<4sI", chunk)
+            content = f.read(length)
+            if len(content) != length:
+                raise ValueError("truncated WAV chunk")
+            if tag == b"fmt ":
+                fmt = struct.unpack_from("<HHIIHH", content, 0)
+            elif tag == b"data":
+                data = content
+            if length & 1:
+                f.read(1)
+    if fmt is None or data is None:
+        raise ValueError("missing WAV fmt/data")
+    encoding, channels, fs, _, _, bits = fmt
+    if encoding == 3 and bits == 32:
         samples = struct.unpack("<" + "f" * (len(data) // 4), data)
-    elif size == 2:
+    elif encoding == 1 and bits == 16:
         samples = [x / 32768.0 for x in struct.unpack("<" + "h" * (len(data) // 2), data)]
     else:
-        raise ValueError(f"unsupported sample format {size} bytes")
+        raise ValueError(f"unsupported WAV format {encoding}, bits {bits}")
     return fs, channels, samples
 
 

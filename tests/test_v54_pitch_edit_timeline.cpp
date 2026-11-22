@@ -25,6 +25,7 @@ int main(){
         check(t.add({100,200,48+i%30})>=0,"edit capacity");
     check(t.targetAt(150)==48+(PitchEditTimeline::kCapacity+4)%30,
           "over-capacity note must remain the newest");
+    t.clear(); // isolate concurrent publication from filled-history test
     std::atomic<bool> done{false};
     std::thread writer([&]{for(int i=0;i<40000;++i)t.set(0,{100,200,i%2?57:72});done.store(true);});
     while(!done.load()){

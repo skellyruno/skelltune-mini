@@ -299,6 +299,13 @@ int main() {
         if (!renderNoteFeedback("SkellyTuneMini_META_LiveNotes_UI_432.png")) return 43;
         if (metaParam) metaParam->setValueNotifyingHost(0.0f);
 #endif
+        // Restore the original C Chromatic/A4 440 fixture before the
+        // independent SkellKey IPC test: our live-light scene explicitly
+        // selected C Major, but connecting to the bus must NOT change the
+        // original tuning before the sender deliberately publishes it.
+        scaleParam->setValueNotifyingHost(scaleParam->convertTo0to1(0.0f));
+        maskParam->setValueNotifyingHost(maskParam->convertTo0to1(0.0f));
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
         std::cerr << "STEP: live sung-note and target-note feedback captured for each algorithm\n"
                   << std::flush;
 

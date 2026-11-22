@@ -300,8 +300,11 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
 void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int frames) {
     const auto p = currentParameters();
     // The reconstruction's smoother speed has its own unit; speedMs / 8 is an arbitrary test mapping.
-    meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA), double(p.amount),
-                        double(p.speedMs) / 8.0);
+    // META research must respect the existing host Mix control as well
+    // as Amount. Previously Mix=0 still emitted fully retuned META grains.
+    // The experimental engine handles Amount=0 as sample-exact 3ms dry.
+    meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA),
+                        double(p.amount * p.mix), double(p.speedMs) / 8.0);
     const bool bypass = state_.getRawParameterValue("bypass")->load() > 0.5f;
     meta_.process(io, channels, frames, bypass);
     const double hz = meta_.detectedHz(), targetHz = meta_.targetHz();

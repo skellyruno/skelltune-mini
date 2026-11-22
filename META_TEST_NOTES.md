@@ -236,3 +236,24 @@ a passing subjective audio result.
 
 No existing preset state/automation ID, default retune time, plugin
 identifier, or released UI layout is changed.
+
+### Additional META voiced-path fix: cubic fractional grains + Mix
+
+The lab still sounded grainy during *voiced* parts, beyond the unvoiced
+noise/dry transition. Every fractional source-head read used only two
+linear samples, which blurs high-frequency harmonic detail when the grain
+speed differs from unity. The default in **META Lab only** now uses
+four-point cubic Lagrange interpolation. Old two-tap mode remains
+selectable by a test-only engine method for objective A/B. New
+`dsp_v48_meta_interpolation` measures analytic 0.31-sample fractional
+sine interpolation error on 700/2500/5600/8000Hz and rejects any change
+that fails to cut error substantially or causes obvious overshoot.
+
+The processor's META route also inadvertently ignored the existing
+host `mix` parameter. It now passes `amount * mix` to META, so
+Mix=0 uses its tested sample-exact delayed-dry path. Old host IDs,
+preset schema and explicit plugin bypass are unchanged.
+
+Do not interpret reduced fractional sample error as verified subjective
+better vocal tone. META's variable wet source age and DAW PDC remain
+research gaps; keep it in the isolated, test-only Lab VST3.

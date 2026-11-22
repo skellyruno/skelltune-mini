@@ -263,6 +263,12 @@ if(SKELLY_META_TEST)
     target_link_libraries(dsp_v46_meta_dry_guard PRIVATE skelly_dsp)
     add_test(NAME dsp_v46_meta_dry_guard COMMAND dsp_v46_meta_dry_guard)
 
+    # META only: prove cubic fractional resampling is materially more
+    # accurate than the original grain's two-tap linear interpolation.
+    add_executable(dsp_v48_meta_interpolation tests/test_v48_meta_interpolation.cpp)
+    target_link_libraries(dsp_v48_meta_interpolation PRIVATE skelly_dsp)
+    add_test(NAME dsp_v48_meta_interpolation COMMAND dsp_v48_meta_interpolation)
+
     # Full three-way deterministic synthetic vocal rendering and metrics.
     # Never runs inside the host audio thread and never distributes Meta DSP.
     add_executable(three_mode_ab tools/three_mode_ab.cpp)

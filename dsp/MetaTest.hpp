@@ -87,6 +87,16 @@ public:
     // A/B test hook only; not a host parameter and never changed from
     // the audio thread. The safe default fades every grain read-head jump.
     void setJumpCrossfadeEnabled(bool on) { jumpCrossfadeEnabled_ = on; }
+    // The legacy two-tap interpolator attenuated vocal harmonics at
+    // fractional source-head positions. Use four-point causal Lagrange
+    // interpolation by default; retain the old mode for measured A/B.
+    void setHighQualityInterpolationEnabled(bool on) noexcept {
+        highQualityInterpolation_ = on;
+    }
+    static float probeInterpolation(const float* ring, double position,
+                                    bool highQuality) noexcept {
+        return tap(ring, position, highQuality);
+    }
     uint64_t grainJumps() const noexcept { return grainJumps_; }
     uint64_t grainJumpCrossfades() const noexcept { return grainJumpCrossfades_; }
 
@@ -178,8 +188,8 @@ public:
                     k = 0.5 - 0.5 * std::cos(kPi * g);
                     if (--fade_[l] == 0) out_[l] = pos_[l];
                 }
-                const double a = tap(ring_[l].data(), out_[l]);
-                const double b = tap(ring_[l].data(), pos_[l]);
+                const double a = tap(ring_[l].data(), out_[l], highQualityInterpolation_);
+                const double b = tap(ring_[l].data(), pos_[l], highQualityInterpolation_);
                 const double wet = a + (b - a) * k;
                 const float dry = ring_[l][(w - dryDelaySamples_) & kRingM];
                 io[l][i] = static_cast<float>(dry * (1.0 - wetBlend_) +
@@ -327,11 +337,24 @@ private:
         else n_ = 0;
     }
 
-    static double tap(const float* r, double p) {
+    static float tap(const float* r, double p, bool highQuality) noexcept {
         const double f = std::floor(p);
         const uint32_t i = static_cast<uint32_t>(static_cast<int64_t>(f)) & kRingM;
-        const double fr = p - f;
-        return r[i] * (1.0 - fr) + r[(i + 1) & kRingM] * fr;
+        const double t = p - f;
+        if (!highQuality)
+            return static_cast<float>(r[i] * (1.0 - t) +
+                                      r[(i + 1) & kRingM] * t);
+        // Four-point cubic Lagrange through (i-1,i,i+1,i+2).
+        // This preserves vocal harmonics at fractional grain positions
+        // better than two-point linear interpolation. All read taps are
+        // older than the output's chosen causal source history.
+        const double a = -t * (t - 1.0) * (t - 2.0) / 6.0;
+        const double b = (t + 1.0) * (t - 1.0) * (t - 2.0) / 2.0;
+        const double c = -(t + 1.0) * t * (t - 2.0) / 2.0;
+        const double d = (t + 1.0) * t * (t - 1.0) / 6.0;
+        return static_cast<float>(
+            a * r[(i - 1u) & kRingM] + b * r[i] +
+            c * r[(i + 1u) & kRingM] + d * r[(i + 2u) & kRingM]);
     }
 
     uint32_t sr_ = 48000, hop_ = 129, n_ = 0, fresh_ = 0, w_ = 0;
@@ -339,6 +362,7 @@ private:
     bool smoothDetected_ = true, fileDetector_ = false, tableDirty_ = true;
     bool rearmOnVoiced_ = true;
     bool jumpCrossfadeEnabled_ = true;
+    bool highQualityInterpolation_ = true;
     uint32_t unvoicedHops_ = 0;
     uint32_t dryDelaySamples_ = 144;
     double wetBlend_ = 0.0;

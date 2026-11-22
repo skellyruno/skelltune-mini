@@ -394,6 +394,67 @@ int main() {
         if (testParam) testParam->setValueNotifyingHost(0.0f);
         if (metaParam) metaParam->setValueNotifyingHost(1.0f);
         if (!renderNoteFeedback("SkellyTuneMini_META_LiveNotes_UI_432.png")) return 43;
+
+        // Real JUCE host-processor regression: the edit begins one millisecond
+        // inside the callback. runMeta must NOT overwrite the sub-block
+        // target with the (unedited) note at the buffer's first sample.
+        struct EditPlayHead final : juce::AudioPlayHead {
+            juce::int64 samplePosition=48000; // 1000 ms at 48 kHz
+            juce::Optional<PositionInfo> getPosition() const override {
+                PositionInfo position;
+                position.setTimeInSamples(samplePosition);
+                position.setIsPlaying(true);
+                return position;
+            }
+        } editPlayHead;
+        processor.setPlayHead(&editPlayHead);
+        if(processor.pitchEdits().add({1001,1010,60})<0)return 66;
+        double editPhase=0.0;
+        const auto fillVoicedBlock=[&] {
+            for(int n=0;n<256;++n) {
+                editPhase+=juce::MathConstants<double>::twoPi*235.8/48000.0;
+                const float voice=float(.18*std::sin(editPhase)
+                                         +.07*std::sin(2.0*editPhase));
+                audio.setSample(0,n,voice);
+                audio.setSample(1,n,voice);
+            }
+        };
+        // The plugin processes 64-bit via a preallocated float scratch buffer,
+        // so both paths must receive the same timed manual target changes.
+        for(int precision=0;precision<2;++precision) {
+            const auto processVoiced=[&] {
+                fillVoicedBlock();
+                if(precision==0) {
+                    processor.processBlock(audio,midi);
+                } else {
+                    juce::AudioBuffer<double> doubleAudio(2,256);
+                    for(int n=0;n<256;++n)
+                        for(int c=0;c<2;++c)
+                            doubleAudio.setSample(c,n,double(audio.getSample(c,n)));
+                    processor.processBlock(doubleAudio,midi);
+                }
+            };
+            editPlayHead.samplePosition=48000;
+            processVoiced();
+            if(processor.displayedHostMs()!=1000 ||
+               processor.displayedTargetNote()!=60) {
+                std::cerr<<"FAIL: META missed sub-block C4 edit in "
+                         <<(precision==0?"32":"64")<<"-bit host mode, target="
+                         <<processor.displayedTargetNote()<<"\n";
+                return 67;
+            }
+            editPlayHead.samplePosition=48800; // >1010 ms, release edit
+            processVoiced();
+            if(processor.displayedTargetNote()==60) {
+                std::cerr<<"FAIL: META held released edit in "
+                         <<(precision==0?"32":"64")<<"-bit mode\n";
+                return 68;
+            }
+        }
+        processor.pitchEdits().clear();
+        processor.setPlayHead(nullptr);
+        std::cerr<<"STEP: META 32/64-bit mid-buffer edits/release pass\n"
+                 <<std::flush;
         if (metaParam) metaParam->setValueNotifyingHost(0.0f);
 
         // META -> REGULAR / TESTTUNE previously processed one whole block

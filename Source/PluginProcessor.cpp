@@ -370,8 +370,9 @@ void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int fr
     meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA),
                         double(p.amount * p.mix), double(p.speedMs));
     const bool bypass = state_.getRawParameterValue("bypass")->load() > 0.5f;
-    meta_.setManualTargetMidi(
-        pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
+    // processEditedAudio() already supplies the note for THIS sub-block.
+    // Resetting it to the host block's first-note target here silently
+    // discarded manual pitch edits starting or ending mid-buffer.
     meta_.process(io, channels, frames, bypass);
     const double hz = meta_.detectedHz(), targetHz = meta_.targetHz();
     const bool voiced = hz > 0.0 && targetHz > 0.0;

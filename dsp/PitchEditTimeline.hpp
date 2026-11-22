@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cmath>
+#include <algorithm>
 #include <cstdint>
 namespace skelly {
 struct PitchEditRecord {
@@ -72,6 +74,27 @@ public:
         for(int i=kCapacity-1;i>=0;--i)
             if(get(i).valid()) {set(i,{});return true;}
         return false;
+    }
+    // Zero-allocation helper for precise mid-buffer retune edits. Edits
+    // are in whole milliseconds, so boundary resolution is <=1ms; the
+    // host buffer size must not delay the correction by another block.
+    static int64_t frameMs(int64_t blockMs,int offset,double sampleRate) noexcept {
+        if(blockMs<0||offset<0||!(sampleRate>0.0))return -1;
+        return blockMs+int64_t(std::floor(double(offset)*1000.0/sampleRate));
+    }
+    int framesUntilBoundary(int64_t blockMs,int offset,int remaining,
+                            double sampleRate) const noexcept {
+        if(remaining<=0)return 0;
+        const auto now=frameMs(blockMs,offset,sampleRate);
+        if(now<0)return remaining;
+        const auto boundary=nextBoundaryAfter(now);
+        if(boundary<=now)return remaining;
+        // Bound the double->int conversion before casting, even when a
+        // user edit lies days ahead of this playhead position.
+        const double count=(double(boundary-blockMs)*sampleRate/1000.0)-
+                            double(offset);
+        if(!(count>0.0) || count>=double(remaining))return remaining;
+        return std::clamp(int(std::ceil(count)),1,remaining);
     }
     int add(PitchEditRecord r) noexcept {
         if(!acceptable(r))return -1;

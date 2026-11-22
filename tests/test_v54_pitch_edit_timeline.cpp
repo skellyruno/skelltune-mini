@@ -27,6 +27,14 @@ int main(){
     check(t.nextBoundaryAfter(96)==100 &&
           t.nextBoundaryAfter(100)==102 &&
           t.nextBoundaryAfter(102)==-1,"sub-block boundaries lost");
+    check(t.framesUntilBoundary(96,0,256,48000.0)==192,
+          "first edit start should split one 256-frame block at sample 192");
+    check(t.framesUntilBoundary(100,0,256,48000.0)==96,
+          "edit end must land inside host buffer at 96 samples");
+    check(t.frameMs(100,96,48000.0)==102,
+          "2-ms edit boundary conversion wrong");
+    check(t.framesUntilBoundary(-1,0,256,48000.0)==256,
+          "unknown DAW transport must not create phantom edits");
     check(t.targetAt(100)==67 && t.targetAt(102)==-1,
           "short edit did not restore untuned target");
     check(t.add({103,106,69})==1,"second edit");

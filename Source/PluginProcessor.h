@@ -97,6 +97,10 @@ public:
 private:
     void timerCallback() override;
     void updateTimelinePosition() noexcept;
+    // Each call is a prepared, planar float audio segment. Splits only at
+    // edited note boundaries; ordinary sessions remain a single DSP call.
+    void processEditedAudio(float* const* io,int channels,int frames,
+                            int blockOffset,bool useMeta);
     // Shared UI/theme and optional key-link state. Audio processing reads only
     // atomics and never touches a socket, mutex, GUI component or host params.
     std::atomic<int> skinIndex_{1};

@@ -243,6 +243,34 @@ void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
     }
     displayedHostMs_.store(positionMs,std::memory_order_relaxed);
 }
+void SkellyTuneRealtimeProcessor::processEditedAudio(
+    float* const* io,int channels,int frames,int blockOffset,bool useMeta) {
+    if(frames<=0||getSampleRate()<=0.0)return;
+    const double rate=getSampleRate();
+    const auto blockMs=displayedHostMs_.load(std::memory_order_relaxed);
+    for(int offset=0;offset<frames;) {
+        const int absolute=blockOffset+offset;
+        const auto atMs=skelly::PitchEditTimeline::frameMs(blockMs,absolute,rate);
+        const int target=pitchEdits_.targetAt(atMs);
+        const int count=pitchEdits_.framesUntilBoundary(blockMs,absolute,
+                                                        frames-offset,rate);
+        float* segment[2]={io[0]+offset,
+                           channels==2?io[1]+offset:nullptr};
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        if(useMeta) {
+            meta_.setManualTargetMidi(target);
+            runMeta(segment,channels,count);
+        } else
+#endif
+        {
+            (void)useMeta;
+            engine_.setManualTargetMidi(target);
+            const float* in[2]={segment[0],segment[1]};
+            engine_.process(in,segment,count,channels);
+        }
+        offset+=count;
+    }
+}
 void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce::MidiBuffer&) {
     juce::ScopedNoDenormals guard;
     const int ch = std::min(2, b.getNumChannels());
@@ -254,7 +282,7 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
     if (state_.getRawParameterValue("meta")->load() > 0.5f) {
         if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
         float* io[2] = { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
-        runMeta(io, ch, b.getNumSamples());
+        processEditedAudio(io,ch,b.getNumSamples(),0,true);
         return;
     }
     if (metaWasActive_) {
@@ -266,11 +294,8 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
         metaWasActive_ = false;
     }
 #endif
-    engine_.setManualTargetMidi(
-        pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
-    std::array<const float*, 2> in { b.getReadPointer(0), ch == 2 ? b.getReadPointer(1) : nullptr };
-    std::array<float*, 2> out { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
-    engine_.process(in.data(), out.data(), b.getNumSamples(), ch);
+    float* io[2]={b.getWritePointer(0),ch==2?b.getWritePointer(1):nullptr};
+    processEditedAudio(io,ch,b.getNumSamples(),0,false);
     const auto pitch = engine_.lastPitch();
     displayedPitchHz_.store(pitch.valid ? pitch.hertz : 0.0f, std::memory_order_relaxed);
     displayedConfidence_.store(pitch.valid ? pitch.confidence : 0.0f, std::memory_order_relaxed);
@@ -299,28 +324,22 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
             float* dst = doubleScratch_.getWritePointer(c);
             for (int i = 0; i < n; ++i) dst[i] = std::isfinite(src[i]) ? float(src[i]) : 0.0f;
         }
-        const float* src[2] = {doubleScratch_.getReadPointer(0),
-                                ch == 2 ? doubleScratch_.getReadPointer(1) : nullptr};
         float* dst[2] = {doubleScratch_.getWritePointer(0),
                          ch == 2 ? doubleScratch_.getWritePointer(1) : nullptr};
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
         if (state_.getRawParameterValue("meta")->load() > 0.5f) {
             if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
-            runMeta(dst, ch, n);
+            processEditedAudio(dst,ch,n,offset,true);
         } else {
             if (metaWasActive_) {
                 engine_.reset();
                 engine_.setParameters(params); // persist host state in first returned 64-bit block
                 metaWasActive_ = false;
             }
-            engine_.setManualTargetMidi(
-                pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
-            engine_.process(src, dst, n, ch);
+            processEditedAudio(dst,ch,n,offset,false);
         }
 #else
-        engine_.setManualTargetMidi(
-            pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
-        engine_.process(src, dst, n, ch);
+        processEditedAudio(dst,ch,n,offset,false);
 #endif
         for (int c = 0; c < ch; ++c) {
             double* dest = b.getWritePointer(c, offset);

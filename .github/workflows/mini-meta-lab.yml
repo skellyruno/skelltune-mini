@@ -118,6 +118,8 @@ jobs:
             SkellyTuneMini_REGULAR_LiveNotes_UI_432.png
             SkellyTuneMini_TESTTUNE_LiveNotes_UI_432.png
             SkellyTuneMini_META_LiveNotes_UI_432.png
+            SkellyTuneMini_Analyzer_UI_432.png
+            SkellyTuneMini_Analyzer_Active_UI_432.png
           if-no-files-found: error
           retention-days: 7
 

@@ -338,3 +338,20 @@ audio-thread mode-switch path. The detector is now prepared exactly
 once in prepareToPlay, and mode reset calls the existing allocation-free
 tracker.reset(). This removes expensive coefficient design during
 live algorithm A/B. The normal Mini VST3 path is not changed.
+
+## November 22 — expandable live pitch analyzer
+
+The compact 432x414 plugin remains the default, maintaining the approved
+UI and all historical host state IDs. A real **ANALYZE** button in the
+header expands the genuine JUCE editor to 432x540, with a 90-sample
+(~3 second) chronological pitch deviation and output correction chart,
+a true ±100-cent zero line, voice/target note names and actual tuner
+correction. The **COMPACT** button restores the original view and
+does not write host automation or presets. Editor scaling retains the
+same core Mini hit targets, and a window constrainer changes aspect
+ratio when toggled. All data is sampled from actual detector atomic
+meters in the JUCE message thread; graph storage is a fixed-size
+array, with no audio-thread heap, UI repaint or audio buffer capture.
+CI must capture true Windows JUCE compact and expanded UI, static and
+active signal; the GUI smoke asserts expanded and collapsed dimensions,
+valid component hit targets and nonempty live history.

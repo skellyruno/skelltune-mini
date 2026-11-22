@@ -114,6 +114,7 @@ private:
     void refreshNotes();
     void togglePitchClass(int index);
     void resetManualNotes();
+    void toggleAnalyzer();
 
     SkellyTuneRealtimeProcessor& processor_;
     juce::AudioProcessorValueTreeState& parameters_;
@@ -121,6 +122,11 @@ private:
         skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
     juce::ComboBox key_, scale_;
     juce::Slider speed_, a4_;
+    juce::TextButton analyzerToggle_{"ANALYZE"};
+    bool analyzerExpanded_ = false;
+    static constexpr int kAnalyzerHistory = 90;
+    std::array<float, kAnalyzerHistory> analyzerPitch_{}, analyzerCorrection_{};
+    int analyzerHead_ = 0, analyzerSamples_ = 0;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         keyAttachment_, scaleAttachment_;
     // UI is a clockwise fastness controller (0..100), while the existing

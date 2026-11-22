@@ -144,6 +144,21 @@ int main() {
             std::cerr << "FAIL: algorithm selector missing\n";
             return 31;
         }
+        // The optional analyzer must expand the real editor, preserve
+        // original child hit targets and collapse back to the exact old
+        // 432x414 window with no APVTS or plugin identity changes.
+        auto* analyzer = dynamic_cast<juce::TextButton*>(
+            editor->findChildWithID("skelly.analyzerToggle"));
+        if (!analyzer) return 46;
+        analyzer->triggerClick();
+        if (editor->getWidth()!=432 || editor->getHeight()!=540 ||
+            !childrenInside() || !validVisual() ||
+            !savePreview("SkellyTuneMini_Analyzer_UI_432.png")) return 47;
+        analyzer->triggerClick();
+        if (editor->getWidth()!=432 || editor->getHeight()!=414 ||
+            !childrenInside() || !validVisual()) return 48;
+        std::cerr << "STEP: collapsible live pitch analyzer geometry verified\n"
+                  << std::flush;
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
         // Exercise the actual opt-in processor path and save a true JUCE META
         // editor frame. This is for visual inspection, not a release artifact.
@@ -308,6 +323,11 @@ int main() {
             return savePreview(filename);
         };
         if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;
+        analyzer->triggerClick();
+        if (editor->getHeight()!=540 ||
+            int(analyzer->getProperties()["analyzerSamples"]) < 3 ||
+            !savePreview("SkellyTuneMini_Analyzer_Active_UI_432.png")) return 49;
+        analyzer->triggerClick();
         if (testParam) testParam->setValueNotifyingHost(1.0f);
         if (!renderNoteFeedback("SkellyTuneMini_TESTTUNE_LiveNotes_UI_432.png")) return 42;
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST

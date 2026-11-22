@@ -550,7 +550,21 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
         addAndMakeVisible(note);
     }
     refreshNotes();
-    // No hidden advanced page or bottom bar: just five primary workflows.
+    // Optional visually rich analyzer: collapsed by default so original
+    // 432x414 Mini interface, host preset and automation remain identical.
+    analyzerToggle_.setComponentID("skelly.analyzerToggle");
+    analyzerToggle_.setName("Expand live pitch analyzer");
+    analyzerToggle_.setTooltip("Show or hide the live input/target pitch graph. "
+                               "Display only; doesn't change tuning.");
+    analyzerToggle_.setColour(juce::TextButton::buttonColourId,
+                             palette_.panel.brighter(0.10f));
+    analyzerToggle_.setColour(juce::TextButton::buttonOnColourId,
+                             palette_.accent.withAlpha(0.25f));
+    analyzerToggle_.setColour(juce::TextButton::textColourOffId, palette_.bone);
+    analyzerToggle_.setColour(juce::TextButton::textColourOnId, palette_.accent);
+    analyzerToggle_.setClickingTogglesState(false);
+    analyzerToggle_.onClick = [this] { toggleAnalyzer(); };
+    addAndMakeVisible(analyzerToggle_);
     setResizable(true, true);
     setResizeLimits(432, 414, 1008, 966);
     if (auto* constraint = getConstrainer())
@@ -559,6 +573,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     startTimerHz(30);   // smooth live feedback; refreshNotes() returns early when nothing changed
 }
 SkellyTuneEditor::~SkellyTuneEditor() {
+    analyzerToggle_.onClick = nullptr;
     speed_.onValueChange = nullptr;
     speed_.onDragStart = nullptr;
     speed_.onDragEnd = nullptr;
@@ -568,9 +583,27 @@ SkellyTuneEditor::~SkellyTuneEditor() {
     key_.setLookAndFeel(nullptr);
     scale_.setLookAndFeel(nullptr);
 }
+void SkellyTuneEditor::toggleAnalyzer() {
+    analyzerExpanded_ = !analyzerExpanded_;
+    analyzerToggle_.setButtonText(analyzerExpanded_ ? "COMPACT" : "ANALYZE");
+    analyzerToggle_.setTooltip(analyzerExpanded_ ?
+        "Hide the live pitch analyzer." : "Expand live pitch and confidence analyzer.");
+    // Change only editor dimensions. This setting isn't in saved APVTS
+    // state and can never invalidate an old FL Studio project.
+    const int referenceHeight = analyzerExpanded_ ? 540 : 414;
+    setResizeLimits(432, referenceHeight, 1008,
+                    int(std::lround(1008.0 * referenceHeight / 432.0)));
+    if (auto* constraint = getConstrainer())
+        constraint->setFixedAspectRatio(432.0 / double(referenceHeight));
+    setSize(getWidth(), int(std::lround(
+        double(getWidth()) * double(referenceHeight) / 432.0)));
+    resized();
+    repaint();
+}
+
 void SkellyTuneEditor::resized() {
     const float sx = float(getWidth()) / 432.0f;
-    const float sy = float(getHeight()) / 414.0f;
+    const float sy = float(getHeight()) / (analyzerExpanded_ ? 540.0f : 414.0f);
     const auto place = [sx,sy](juce::Component& c, float x, float y, float w, float h) {
         c.setBounds(juce::roundToInt(x*sx), juce::roundToInt(y*sy),
             std::max(1,juce::roundToInt(w*sx)), std::max(1,juce::roundToInt(h*sy)));
@@ -580,7 +613,8 @@ void SkellyTuneEditor::resized() {
     a4_.setTextBoxStyle(juce::Slider::TextBoxLeft, false,
                         std::max(83, juce::roundToInt(83.0f*sx)),
                         std::max(30, juce::roundToInt(30.0f*sy)));
-    place(algorithm_, 208, 19, 208, 28);            // header row, right of the title
+    place(algorithm_, 208, 19, 208, 28);
+    place(analyzerToggle_, 139, 46, 64, 16);            // header row, right of the title
     place(inputReadout_, 19, 150, 100, 130);        // left of the dial
     place(targetReadout_, 313, 150, 100, 130);      // right of the dial
     place(key_, 18, 95, 90, 33);
@@ -602,9 +636,11 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.fillAll(bg);
     juce::Graphics::ScopedSaveState save(g);
     g.addTransform(juce::AffineTransform::scale(
-        float(getWidth())/432.0f, float(getHeight())/414.0f));
+        float(getWidth())/432.0f,
+        float(getHeight())/(analyzerExpanded_ ? 540.0f : 414.0f)));
     g.setColour(palette_.line);
-    g.drawRoundedRectangle(juce::Rectangle<float>(5,5,422,404),10.0f,1.0f);
+    g.drawRoundedRectangle(juce::Rectangle<float>(5,5,422,
+        analyzerExpanded_ ? 530.0f : 404.0f),10.0f,1.0f);
 
     // The shared SkellCore skull is branding only, not another control.
     {
@@ -620,7 +656,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setColour(muted);
     g.setFont(juce::Font(juce::FontOptions(9.5f,juce::Font::bold)));
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
-    g.drawText("MINI / META LAB",60,46,135,14,juce::Justification::centredLeft);
+    g.drawText("MINI / LAB",60,46,78,14,juce::Justification::centredLeft);
 #else
     g.drawText("MINI",60,46,60,14,juce::Justification::centredLeft);
 #endif
@@ -695,6 +731,69 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.fillEllipse(330.0f,324.0f,5.0f,5.0f);
         g.setColour(muted);
         g.drawText("TARGET",339,318,70,15,juce::Justification::centredLeft);
+    }
+
+    if (analyzerExpanded_) {
+        const auto rect = juce::Rectangle<float>(13.0f,416.0f,406.0f,114.0f);
+        g.setGradientFill(juce::ColourGradient(
+            panel.brighter(0.12f), rect.getX(),rect.getY(),
+            panel.darker(0.14f),rect.getRight(),rect.getBottom(),false));
+        g.fillRoundedRectangle(rect, 9.0f);
+        g.setColour(palette_.line.withAlpha(0.80f));
+        g.drawRoundedRectangle(rect,9.0f,0.85f);
+        g.setColour(text);
+        g.setFont(juce::Font(juce::FontOptions(11.5f,juce::Font::bold)));
+        g.drawText("LIVE PITCH ANALYZER",24,420,160,18,
+                   juce::Justification::centredLeft);
+        g.setColour(muted);
+        g.setFont(juce::Font(juce::FontOptions(9.5f)));
+        g.drawText("3 sec HISTORY",313,422,94,16,
+                   juce::Justification::centredRight);
+
+        // ±100 cents input deviation (white) and the audible output
+        // correction (green). The horizontal centre is true zero.
+        const float left=25.0f, width=381.0f, mid=472.0f, half=21.0f;
+        g.setColour(palette_.line.withAlpha(0.38f));
+        for (int tick=-2;tick<=2;++tick) {
+            const float y=mid+float(tick)*half*0.5f;
+            g.drawLine(left,y,left+width,y,tick==0?1.2f:0.5f);
+        }
+        if (analyzerSamples_ >= 2) {
+            juce::Path inputTrace, outputTrace;
+            const int n=analyzerSamples_;
+            const int first=(analyzerHead_+kAnalyzerHistory-n)%kAnalyzerHistory;
+            for(int i=0;i<n;++i) {
+                const int index=(first+i)%kAnalyzerHistory;
+                const float x=left+width*float(i)/float(n-1);
+                const float a=mid-juce::jlimit(-100.0f,100.0f,
+                    analyzerPitch_[size_t(index)])*half/100.0f;
+                const float b=mid-juce::jlimit(-100.0f,100.0f,
+                    analyzerCorrection_[size_t(index)])*half/100.0f;
+                if(i==0) { inputTrace.startNewSubPath(x,a); outputTrace.startNewSubPath(x,b); }
+                else { inputTrace.lineTo(x,a); outputTrace.lineTo(x,b); }
+            }
+            g.setColour(text.withAlpha(0.72f));
+            g.strokePath(inputTrace,juce::PathStrokeType(1.5f));
+            g.setColour(accent.withAlpha(0.88f));
+            g.strokePath(outputTrace,juce::PathStrokeType(1.65f));
+        }
+        g.setColour(muted);
+        g.setFont(juce::Font(juce::FontOptions(9.0f)));
+        g.drawText("INPUT  ",26,498,50,14,juce::Justification::centredLeft);
+        g.setColour(text);
+        g.drawText(lastInputName_,75,498,47,14,juce::Justification::centredLeft);
+        g.setColour(muted);
+        g.drawText("TARGET",145,498,58,14,juce::Justification::centredLeft);
+        g.setColour(accent);
+        g.drawText(lastTargetName_,207,498,43,14,juce::Justification::centredLeft);
+        g.setColour(muted);
+        g.drawText("CORR.",270,498,43,14,juce::Justification::centredLeft);
+        g.setColour(accent);
+        g.drawText(signedCents(dispCorrection_),316,498,92,14,
+                   juce::Justification::centredRight);
+        g.setColour(muted.withAlpha(0.82f));
+        g.drawText("WHITE = VOICE   •   GREEN = TUNER OUTPUT   •   CENTRE = IN TUNE",
+                   24,514,382,13,juce::Justification::centred);
     }
 }
 void SkellyTuneEditor::togglePitchClass(int index) {
@@ -782,6 +881,16 @@ void SkellyTuneEditor::updateLiveFeedback() {
 
     const float confidence = voiced ? juce::jlimit(0.0f, 1.0f,
         processor_.displayedConfidence()) : 0.0f;
+    analyzerPitch_[size_t(analyzerHead_)] =
+        voiced ? juce::jlimit(-100.0f,100.0f,dispDeviation_) : 0.0f;
+    analyzerCorrection_[size_t(analyzerHead_)] =
+        voiced ? juce::jlimit(-100.0f,100.0f,dispCorrection_) : 0.0f;
+    analyzerHead_=(analyzerHead_+1)%kAnalyzerHistory;
+    analyzerSamples_=std::min(kAnalyzerHistory,analyzerSamples_+1);
+    analyzerToggle_.getProperties().set("analyzerSamples",analyzerSamples_);
+    if (analyzerExpanded_)
+        repaint(0, int(416.0f*float(getHeight())/540.0f),
+                getWidth(),getHeight());
     const float oldConfidence = liveConfidence_;
     liveConfidence_ += (confidence - liveConfidence_) * (voiced ? 0.40f : 0.18f);
     const juce::String newStatus = !voiced ? "LISTENING" :

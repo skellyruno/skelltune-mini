@@ -65,7 +65,7 @@ public:
     void reset() {
         n_ = fresh_ = 0; f1_ = f2_ = 0.0; curveRef_ = 1.0; w_ = 0;
         smooth_ = log_ = std::log2(200.0);
-        raw_ = sel_ = conf_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
+        raw_ = sel_ = conf_ = lastTrustedLag_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
         manualTargetMidi_ = -1;
         // Acquire from the first *detected* phrase, not a fixed 240Hz
         // startup period that can bend its leading vowel. A real unvoiced
@@ -136,7 +136,14 @@ public:
     double lastConfidence() const { return conf_; }
     double lastTargetPeriod() const { return sel_; }
     // Display helpers (valid once a pitch has been detected).
-    double detectedHz() const { return raw_ > 0.0 ? double(sr_) / raw_ : 0.0; }
+    double detectedHz() const {
+        // UI-only: a single unreliable 2.7ms tracker hop must not flash
+        // pitch to NO TARGET while the wet-voice lock stays engaged.
+        // Never return a held pitch on silence or after voiced release.
+        const double lag=raw_>0.0?raw_:
+            (detectedVoiced_?lastTrustedLag_:0.0);
+        return lag>0.0?double(sr_)/lag:0.0;
+    }
     double targetHz() const { return sel_ > 0.0 ? double(sr_) / sel_ : 0.0; }
     double shiftCents() const { return sel_ > 0.0 && period_ > 0.0 ? 1200.0 * std::log2(period_ / sel_) : 0.0; }
     double lastPeriod() const { return period_; }
@@ -407,11 +414,14 @@ private:
         // produced amplitude flutter and repeated 8ms attack fades.
         // Two confident frames arm wet; three misses disarm it.
         if (lag > 0.0 && conf_ >= 0.6) {
+            lastTrustedLag_ = lag; // display-only one/two-hop voiced bridge
             voicedStableHops_ = std::min(voicedStableHops_ + 1, 3);
             if (voicedStableHops_ >= 2) detectedVoiced_ = true;
         } else {
             voicedStableHops_ = 0;
-            if (unvoicedHops_ >= 2) detectedVoiced_ = false;
+            // Three misses to release, as required by the original onset
+            // specification. Two can occur inside one 256-frame host block.
+            if (unvoicedHops_ >= 3) detectedVoiced_ = false;
         }
         double target = log_;
         double detectedLog = log_;
@@ -448,6 +458,16 @@ private:
                 // genuine unvoiced gap; leave grain continuity untouched.
                 sel_ = 0.0;
             }
+        }
+        // A manual edit is an explicit host note: it may begin exactly
+        // during a brief pitch-detector miss. Apply it at the next
+        // detector hop while the previously recognized voice remains
+        // locked, never through released consonants/silence.
+        if(lag<=0.0 && manualTargetMidi_>=0 && detectedVoiced_) {
+            const double sl=std::log2(double(sr_)/reference_)-
+                            double(manualTargetMidi_-69)/12.0;
+            sel_=std::exp2(sl);
+            log_=target=sl;
         }
         target_ = target;
         const double sm = smoothStep(smoothDetected_ ? detectedLog : target, hop);
@@ -542,6 +562,7 @@ private:
     skelly::PitchEstimate est_{};
     double f1_ = 0, f2_ = 0, c50_ = 0.99, c70_ = 0.2, curveRef_ = 1.0;
     double raw_ = 0, sel_ = 0, log_ = 0, period_ = 200, ratio_ = 1, target_ = 0, conf_ = 0, smooth_ = 0;
+    double lastTrustedLag_ = 0.0;
     double pos_[kLanes]{}, out_[kLanes]{}; uint32_t fade_[kLanes]{}, flen_[kLanes]{};
     std::array<float, kRing> anal_{};
     std::array<std::array<float, kRing>, kLanes> ring_{};

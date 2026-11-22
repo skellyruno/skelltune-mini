@@ -926,7 +926,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.drawText("TARGET  LINE",301,660,103,15,juce::Justification::centredRight);
         g.setColour(muted);
         g.setFont(juce::Font(juce::FontOptions(9.4f)));
-        g.drawText("DRAG PITCH TO EDIT  •  RIGHT-CLICK ERASES  •  DOUBLE-CLICK FOLLOWS",
+        g.drawText("DRAG PITCH TO EDIT  |  RIGHT-CLICK ERASES  |  DOUBLE-CLICK FOLLOWS",
                    20,676,390,13,juce::Justification::centred);
 
     }

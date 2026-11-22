@@ -372,3 +372,21 @@ protections remain. Normal production Mini parameters/presets are
 identical. New META-only `dsp_v50_meta_speed` verifies coefficients
 at 44.1/48/96/192kHz, nonfinite and max-speed automation,
 and actual audio step-response differences.
+
+## TESTTUNE confidence fallback and REGULAR/TESTTUNE phase matching
+
+The TESTTUNE algorithm chooses its own period-domain note, but regular
+`NoteDecision` continues tracking a distinct hysteresis target. On
+a weak 0.58–0.72 confidence **still-voiced** frame, the previous
+implementation reused that unrelated REGULAR note and audibly snapped.
+New fixed-state `testTuneHeldMidi_` bridges only its own last reliable
+allowed period note, never a forbidden pitch. Silence >40ms clears
+the hold; switching algorithms also clears it. Strong evidence still
+snaps on the first reliable hop. The shift is unchanged on ordinary
+confident notes. The measured phase-cycle search in BOTH main engines
+now only runs on confidently periodic samples, avoiding arbitrary
+read-head offsets on fricatives and noise while keeping normal
+phase-synchronous resampling and the 3ms PDC.
+
+The new `dsp_v51_testtune_hold` tests the exact fallback eligibility
+and a noisy vocal at 44.1/48/96kHz and 1/127/256-sample buffers.

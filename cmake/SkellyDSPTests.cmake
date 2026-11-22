@@ -247,6 +247,12 @@ add_executable(dsp_v47_hard_ratio_guard tests/test_v47_hard_ratio_guard.cpp)
 target_link_libraries(dsp_v47_hard_ratio_guard PRIVATE skelly_dsp)
 add_test(NAME dsp_v47_hard_ratio_guard COMMAND dsp_v47_hard_ratio_guard)
 
+# TESTTUNE's held period-domain note must not fall back to unrelated
+# REGULAR musical hysteresis during brief low-confidence voiced frames.
+add_executable(dsp_v51_testtune_hold tests/test_v51_testtune_hold.cpp)
+target_link_libraries(dsp_v51_testtune_hold PRIVATE skelly_dsp)
+add_test(NAME dsp_v51_testtune_hold COMMAND dsp_v51_testtune_hold)
+
 # TEST ONLY: Meta engine tests (built only when -DSKELLY_META_TEST=ON).
 if(SKELLY_META_TEST)
     add_executable(dsp_v43_meta tests/test_v43_meta.cpp)

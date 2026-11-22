@@ -603,6 +603,7 @@ public:
         notes_.reset();
         targetPending_ = false;
         testCandidateMidi_ = -1; testCandidateHops_ = 0;
+        testTuneHeldMidi_ = -1; testTuneUntrustedSamples_ = 0;
         params_ = {};
         cycleSynth_.reset();
         mixGuard_.reset();
@@ -663,6 +664,15 @@ public:
     double maximumFormantGain() const noexcept { return formantGuard_.maximumObservedGain(); }
     double highBandPeriodicity() const noexcept { return airGuard_.periodicity(); }
     int currentTargetNote() const noexcept { return targetNote_; }
+    int testTuneHeldNote() const noexcept { return testTuneHeldMidi_; }
+    static bool canBridgeTestTuneTarget(int held, uint16_t mask,
+                                        bool voiced, bool valid,
+                                        float confidence) noexcept {
+        return held >= 0 && held < 128 && voiced && valid &&
+               std::isfinite(confidence) && confidence >= 0.58f &&
+               confidence < 0.72f &&
+               (mask & (1u << (held % 12))) != 0;
+    }
     bool targetPending() const noexcept { return targetPending_; }
     double currentOnsetScore() const noexcept { return onsetCue_.score(); }
     void setHardTuneOnsetMemoryEnabled(bool enabled) noexcept {
@@ -724,6 +734,7 @@ public:
             notes_.reset();
             targetPending_ = false;
             testCandidateMidi_ = -1; testCandidateHops_ = 0;
+            testTuneHeldMidi_ = -1; testTuneUntrustedSamples_ = 0;
         }
         params_ = params;
         // The shorter 12ms acquisition window is for explicitly requested
@@ -835,6 +846,17 @@ public:
                 // musical hysteresis), but do not snap to a weak/noisy single
                 // detector estimate. Fall back to the regular confidence-
                 // gated note decision until reliable periodicity returns.
+                if (params_.testTune) {
+                    if (result.voiced && e.valid) testTuneUntrustedSamples_ = 0;
+                    else testTuneUntrustedSamples_ = std::min(
+                        uint32_t(rate_), testTuneUntrustedSamples_ +
+                        uint32_t(tracker_.hopHostSamples()));
+                    if (testTuneUntrustedSamples_ > uint32_t(rate_*0.040))
+                        testTuneHeldMidi_ = -1;
+                    if (testTuneHeldMidi_ >= 0 &&
+                        (params_.pitchClasses & (1u<<(testTuneHeldMidi_%12))) == 0)
+                        testTuneHeldMidi_ = -1;
+                }
                 if (params_.testTune && e.valid && result.voiced &&
                     e.confidence >= 0.72f && e.hertz > 0.0f) {
                     // testtune: nearest in-scale note in the PERIOD domain (samples per cycle).
@@ -863,7 +885,18 @@ public:
                         result.targetMidi = hold ? priorTarget : note;
                         result.pending = false;
                         result.provisionalMidi = -1;
+                        testTuneHeldMidi_ = result.targetMidi;
                     }
+                } else if (params_.testTune &&
+                           canBridgeTestTuneTarget(testTuneHeldMidi_,
+                               uint16_t(params_.pitchClasses),result.voiced,
+                               e.valid,e.confidence)) {
+                    // Never jump to REGULAR's unrelated private note during
+                    // a weak-but-voiced detector hop.
+                    result.targetMidi = testTuneHeldMidi_;
+                    result.changed = false;
+                    result.pending = false;
+                    result.provisionalMidi = -1;
                 }
                 if (rememberedOnset) {
                     ++onsetMemoryAppliedHops_;
@@ -1057,7 +1090,12 @@ public:
                 if (slope < -1e-6 && readDelay_ < lowDelay + margin) {
                     jumpFrom_ = readDelay_;
                     jumpTo_ = readDelay_ + period;
-                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005)
+                    // Aperiodic sibilants cannot supply a trustworthy
+                    // waveform phase. Avoid searching noise for random offsets.
+                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005 &&
+                        tracker_.last().valid &&
+                        tracker_.last().confidence >= 0.75f &&
+                        adjustedNoise < 0.45)
                         jumpTo_ = choosePhaseAlignedDestination(jumpFrom_,jumpTo_,period,lowDelay);
                     jumpCorrelation_ = estimateCycleCorrelation(jumpFrom_,jumpTo_,period);
                     ++cycleWrapCount_; if (effectiveMix_ > 0.1) ++activeWrapCount_;
@@ -1066,7 +1104,12 @@ public:
                 } else if (slope > 1e-6 && readDelay_ > highDelay + margin) {
                     jumpFrom_ = readDelay_;
                     jumpTo_ = readDelay_ - period;
-                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005)
+                    // Aperiodic sibilants cannot supply a trustworthy
+                    // waveform phase. Avoid searching noise for random offsets.
+                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005 &&
+                        tracker_.last().valid &&
+                        tracker_.last().confidence >= 0.75f &&
+                        adjustedNoise < 0.45)
                         jumpTo_ = choosePhaseAlignedDestination(jumpFrom_,jumpTo_,period,lowDelay);
                     jumpCorrelation_ = estimateCycleCorrelation(jumpFrom_,jumpTo_,period);
                     ++cycleWrapCount_; if (effectiveMix_ > 0.1) ++activeWrapCount_;
@@ -1376,6 +1419,8 @@ private:
     double voicedEnvelopeStep_ = 0.01;
     bool targetPending_ = false;
     int testCandidateMidi_ = -1, testCandidateHops_ = 0;
+    int testTuneHeldMidi_ = -1;
+    uint32_t testTuneUntrustedSamples_ = 0;
     int targetNote_ = -1;
     std::vector<float> history_;
     Parameters params_{};

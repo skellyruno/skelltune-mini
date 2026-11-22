@@ -429,38 +429,62 @@ private:
     PitchEstimate estimate_{};
 };
 
-// Selects a coherent pitch-analysis signal without changing audio output.
-// Mid-channel cancellation is a common failure mode for opposite-polarity stereo
-// recordings; the original average(L,R) silently discarded the fundamental.
-// Uses exponentially smoothed energy/covariance, no allocations or locks.
+// Causal detector-only stereo routing. The program stereo channels never change.
+// Smooth crossovers prevent the pitch tracker hearing a one-sample discontinuity
+// when a mix moves toward opposite polarity or becomes single-channel.
 class StereoPitchRouter {
 public:
     void prepare(double rate) noexcept {
-        const double tau = 0.012;
-        alpha_ = std::exp(-1.0 / (rate * tau));
+        const double fs = std::clamp(std::isfinite(rate) ? rate : 48000.0, 8000.0, 192000.0);
+        alpha_ = std::exp(-1.0 / (fs * 0.012));
+        // Four-millisecond one-pole transition; audio output is unaffected.
+        transitionStep_ = 1.0 - std::exp(-1.0 / (fs * 0.004));
         reset();
     }
-    void reset() noexcept { leftPower_ = rightPower_ = covariance_ = 0.0; }
+    void reset() noexcept {
+        leftPower_ = rightPower_ = covariance_ = 0.0;
+        leftWeight_ = rightWeight_ = 0.0;
+        source_ = 0;
+        antiPhase_ = false;
+    }
     float push(float left, float right) noexcept {
         const double k = 1.0 - alpha_;
-        leftPower_ = alpha_ * leftPower_ + k * double(left)*left;
-        rightPower_ = alpha_ * rightPower_ + k * double(right)*right;
-        covariance_ = alpha_ * covariance_ + k * double(left)*right;
-        // Near-inverted stereo will cancel in the mid signal. Use a single
-        // channel for analysis, but preserve original stereo in the output.
-        // Squared test avoids a square root on every audio sample while
-        // retaining the 0.60 anti-correlation threshold.
+        leftPower_ = alpha_ * leftPower_ + k * double(left) * left;
+        rightPower_ = alpha_ * rightPower_ + k * double(right) * right;
+        covariance_ = alpha_ * covariance_ + k * double(left) * right;
         const double powerProduct = leftPower_ * rightPower_;
-        if (powerProduct > 1.0e-24 && covariance_ < 0.0 &&
-            covariance_ * covariance_ > 0.36 * powerProduct)
-            return (leftPower_ >= rightPower_) ? left : right;
-        // If almost all of the program exists on one channel, prefer it.
-        if (leftPower_ > rightPower_ * 16.0) return left;
-        if (rightPower_ > leftPower_ * 16.0) return right;
-        return 0.5f * (left + right);
+        const double squaredCovariance = covariance_ * covariance_;
+        // Enter anti-phase rescue at |rho| > 0.60; exit only below 0.40.
+        // Previously a single threshold abruptly flipped mid to one side.
+        const bool stronglyInverted = powerProduct > 1.0e-24 && covariance_ < 0.0;
+        antiPhase_ = stronglyInverted && squaredCovariance >
+            (antiPhase_ ? 0.16 : 0.36) * powerProduct;
+
+        int desired = 0; // ordinary stereo uses mid
+        if (antiPhase_) {
+            // Once rescued, keep the same side through modest level drift.
+            // Switching L->R across inverted channels would cancel analysis.
+            if (source_ == 1 && leftPower_ >= 0.72 * rightPower_) desired = 1;
+            else if (source_ == 2 && rightPower_ >= 0.72 * leftPower_) desired = 2;
+            else desired = leftPower_ >= rightPower_ ? 1 : 2;
+        } else if (leftPower_ > rightPower_ * (source_ == 1 ? 9.0 : 16.0)) {
+            desired = 1;
+        } else if (rightPower_ > leftPower_ * (source_ == 2 ? 9.0 : 16.0)) {
+            desired = 2;
+        }
+        source_ = desired;
+        leftWeight_ += transitionStep_ * ((desired == 1 ? 1.0 : 0.0) - leftWeight_);
+        rightWeight_ += transitionStep_ * ((desired == 2 ? 1.0 : 0.0) - rightWeight_);
+        const double mid = 0.5 * (double(left) + right);
+        return float(mid + leftWeight_ * (double(left) - mid) +
+                     rightWeight_ * (double(right) - mid));
     }
 private:
-    double alpha_ = 0.998, leftPower_ = 0.0, rightPower_ = 0.0, covariance_ = 0.0;
+    double alpha_ = 0.998, transitionStep_ = 0.005;
+    double leftPower_ = 0.0, rightPower_ = 0.0, covariance_ = 0.0;
+    double leftWeight_ = 0.0, rightWeight_ = 0.0;
+    int source_ = 0;
+    bool antiPhase_ = false;
 };
 
 // Original causal attack cue: combines fast/slow energy envelopes, a refractory

@@ -253,6 +253,12 @@ add_executable(dsp_v51_testtune_hold tests/test_v51_testtune_hold.cpp)
 target_link_libraries(dsp_v51_testtune_hold PRIVATE skelly_dsp)
 add_test(NAME dsp_v51_testtune_hold COMMAND dsp_v51_testtune_hold)
 
+# Stabilize detector-only stereo routing when channels approach opposite
+# polarity: no one-sample mid/side jumps, preserved anti-phase F0 signal.
+add_executable(dsp_v52_stereo_route tests/test_v52_stereo_router.cpp)
+target_link_libraries(dsp_v52_stereo_route PRIVATE skelly_dsp)
+add_test(NAME dsp_v52_stereo_route COMMAND dsp_v52_stereo_route)
+
 # TEST ONLY: Meta engine tests (built only when -DSKELLY_META_TEST=ON).
 if(SKELLY_META_TEST)
     add_executable(dsp_v43_meta tests/test_v43_meta.cpp)

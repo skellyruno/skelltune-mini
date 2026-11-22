@@ -288,6 +288,12 @@ int main() {
             const double inputLamp = double(inputKey->getProperties()["liveInput"]);
             const double targetLamp = double(targetKey->getProperties()["liveTarget"]);
             if (inputLamp < 0.10 || targetLamp < 0.10) return false;
+            auto* inputMeter = editor->findChildWithID("skelly.inputReadout");
+            auto* targetMeter = editor->findChildWithID("skelly.targetReadout");
+            if (!inputMeter || !targetMeter ||
+                double(inputMeter->getProperties()["pitchConfidence"]) < 0.55 ||
+                double(targetMeter->getProperties()["pitchConfidence"]) < 0.55)
+                return false;
             return savePreview(filename);
         };
         if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;

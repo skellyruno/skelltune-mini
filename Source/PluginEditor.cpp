@@ -311,12 +311,31 @@ void SkellyTuneEditor::LiveReadout::paint(juce::Graphics& g) {
                juce::Justification::centredLeft);
     g.drawText(input_ ? "SHARP" : "RAISE", int(w * 0.5f), int(y + 9.0f * sc), int(w * 0.5f - 8.0f * sc),
                int(12.0f * sc), juce::Justification::centredRight);
+    // Five detector-confidence LEDs under the cent deviation scale.
+    // Actual processor meters drive them; no animation on the DSP thread.
+    const float confidence = juce::jlimit(0.0f, 1.0f, confidence_);
+    const float lampY = 118.0f * sc, lampW = 11.0f * sc, lampGap = 4.0f * sc;
+    const float width = 5.0f * lampW + 4.0f * lampGap;
+    for (int i = 0; i < 5; ++i) {
+        const float x = (w - width) * 0.5f + float(i) * (lampW + lampGap);
+        const float on = juce::jlimit(0.0f, 1.0f,
+                                    confidence * 5.0f - float(i));
+        g.setColour(p.line.withAlpha(0.8f));
+        g.fillRoundedRectangle(x, lampY, lampW, 3.0f * sc, 1.5f * sc);
+        if (on > 0.01f) {
+            g.setColour((input_ ? p.bone : p.accent).withAlpha(
+                0.18f + 0.78f * on * a));
+            g.fillRoundedRectangle(x, lampY, lampW, 3.0f * sc, 1.5f * sc);
+        }
+    }
 }
 
 void SkellyTuneEditor::AlgorithmSelector::paint(juce::Graphics& g) {
     const auto& p = *palette_;
     const auto b = getLocalBounds().toFloat().reduced(0.5f);
-    g.setColour(p.panel);
+    g.setGradientFill(juce::ColourGradient(
+        p.panel.brighter(0.10f), b.getX(), b.getY(),
+        p.panel.darker(0.14f), b.getRight(), b.getBottom(), false));
     g.fillRoundedRectangle(b, 7.0f);
     g.setColour(p.line.brighter(0.25f));
     g.drawRoundedRectangle(b, 7.0f, 1.0f);
@@ -328,10 +347,16 @@ void SkellyTuneEditor::AlgorithmSelector::paint(juce::Graphics& g) {
                                                  segmentWidth, b.getHeight()).reduced(2.5f);
         const bool on = i == selected_;
         if (on) {
-            g.setColour(p.accent.withAlpha(0.20f));
+            g.setGradientFill(juce::ColourGradient(
+                p.accent.withAlpha(0.25f), cell.getX(), cell.getY(),
+                p.accent.withAlpha(0.10f), cell.getX(), cell.getBottom(), false));
             g.fillRoundedRectangle(cell, 5.0f);
-            g.setColour(p.accent);
+            g.setColour(p.accent.withAlpha(0.76f));
             g.drawRoundedRectangle(cell, 5.0f, 1.2f);
+            g.setColour(p.accent);
+            g.fillRoundedRectangle(cell.getX() + 6.0f,
+                cell.getBottom() - 3.0f,
+                std::max(1.0f, cell.getWidth() - 12.0f), 1.7f, 0.7f);
         } else if (i == hover_) {
             g.setColour(p.line.brighter(0.2f).withAlpha(0.6f));
             g.fillRoundedRectangle(cell, 5.0f);
@@ -460,6 +485,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     algorithm_.setSelected(currentAlgorithm());
     addAndMakeVisible(algorithm_);
     // Live feedback: what you are singing (left) and what the tuner is moving it to (right).
+    inputReadout_.setComponentID("skelly.inputReadout");
+    targetReadout_.setComponentID("skelly.targetReadout");
     addAndMakeVisible(inputReadout_);
     addAndMakeVisible(targetReadout_);
 
@@ -687,10 +714,12 @@ void SkellyTuneEditor::updateLiveFeedback() {
     const float activityGoal = voiced ? juce::jlimit(0.0f, 1.0f, std::abs(correction) / 25.0f) : 0.0f;
     activity_ += (activityGoal - activity_) * (activityGoal > activity_ ? 0.5f : 0.15f);
 
+    const float confidence = voiced ? juce::jlimit(0.0f, 1.0f,
+        processor_.displayedConfidence()) : 0.0f;
     inputReadout_.setState(voicedFade_, lastInputName_, signedCents(dispDeviation_),
-                           dispDeviation_ / 100.0f, activity_);
+                           dispDeviation_ / 100.0f, activity_, confidence);
     targetReadout_.setState(voicedFade_, lastTargetName_, signedCents(dispCorrection_),
-                            dispCorrection_ / 100.0f, activity_);
+                            dispCorrection_ / 100.0f, activity_, confidence);
 
     // Dial glow follows how hard the tuner is working.
     if (std::abs(theme_.activity - activity_) > 0.015f) {

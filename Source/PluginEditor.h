@@ -63,15 +63,17 @@ private:
         }
         // alpha: 0 = nothing sung, 1 = voiced. meter: -1..1. active: 0..1 correction strength.
         void setState(float alpha, const juce::String& note, const juce::String& detail,
-                      float meter, float active) {
-            alpha_ = alpha; note_ = note; detail_ = detail; meter_ = meter; active_ = active;
+                      float meter, float active, float confidence) {
+            alpha_ = alpha; note_ = note; detail_ = detail; meter_ = meter;
+            active_ = active; confidence_ = confidence;
+            getProperties().set("pitchConfidence", double(confidence));
             repaint();
         }
         void paint(juce::Graphics&) override;
     private:
         const skellcore::ui::SkullPalette* palette_;
         bool input_;
-        float alpha_ = 0.0f, meter_ = 0.0f, active_ = 0.0f;
+        float alpha_ = 0.0f, meter_ = 0.0f, active_ = 0.0f, confidence_ = 0.0f;
         juce::String note_ = "--", detail_;
     };
 

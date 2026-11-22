@@ -257,3 +257,14 @@ preset schema and explicit plugin bypass are unchanged.
 Do not interpret reduced fractional sample error as verified subjective
 better vocal tone. META's variable wet source age and DAW PDC remain
 research gaps; keep it in the isolated, test-only Lab VST3.
+
+### META robustness: nonfinite/denormal sample containment
+
+In the lab resampler a single NaN/Inf host input previously entered
+the per-channel ring and could poison future grain interpolations.
+Unlike production REGULAR, it lacked sample sanitization. Now internal
+history and detection input are constrained to finite, normal floats,
+without changing bit-exact *bypass output*. Grain wet level snaps
+below 1e-9 to exactly zero to prevent silence-related denormals.
+The expanded `dsp_v46_meta_dry_guard` injects NaN, Inf and subnormal
+samples and asserts finite, bounded output after processing.

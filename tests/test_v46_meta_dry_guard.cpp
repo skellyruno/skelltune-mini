@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <vector>
+#include <limits>
 static void need(bool good,const char* msg){if(!good){std::cerr<<"FAIL: "<<msg<<"\n";std::exit(1);}}
 static constexpr double pi=3.14159265358979323846;
 int main(){
@@ -47,5 +48,23 @@ int main(){
         float* io[1]={bypassOut.data()+i};bypass.process(io,1,128,true);
     }
     need(bypassOut==source,"META bypass not bit-exact");
-    std::cout<<"PASS: META voiced/unvoiced dry protection, 3ms dry timing and bypass\n";
+    // A host can send NaNs, infinities and subnormals while switching
+    // devices or loading projects. Reject those within META's internal
+    // pitch tracker and grain history without contaminating future audio.
+    skelly::MetaTest corrupt;corrupt.prepare(sr);
+    corrupt.setParameters(0x0fffu,440,1,1.25);
+    std::vector<float> bad=source;
+    for(int i=4000;i<frames-1;i+=1777) {
+        bad[i]=std::numeric_limits<float>::quiet_NaN();
+        bad[i+1]=std::numeric_limits<float>::infinity();
+    }
+    for(int i=7000;i<frames;i+=2603)
+        bad[i]=std::numeric_limits<float>::denorm_min();
+    for(int i=0;i<frames;i+=128){
+        float* io[1]={bad.data()+i};corrupt.process(io,1,128);
+    }
+    for(float v:bad)
+        need(std::isfinite(v) && std::abs(v)<1.5f,
+             "invalid host input poisoned META grain buffer or output");
+    std::cout<<"PASS: META voiced/unvoiced dry protection, PDC, bypass and bad host samples\n";
 }

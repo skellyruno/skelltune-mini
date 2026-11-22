@@ -122,8 +122,18 @@ public:
         const double exit = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
         for (int i = 0; i < frames; ++i) {
             const uint32_t w = w_;
-            const float in0 = lanes > 0 ? io[0][i] : 0.0f;
-            for (int l = 0; l < lanes; ++l) ring_[l][w & kRingM] = io[l][i];
+            const float input0 = lanes > 0 ? io[0][i] : 0.0f;
+            // Host audio is untrusted: one NaN in the grain ring can poison
+            // all future resampling heads, even when wetBlend is zero.
+            // Keep bypass output untouched; sanitize only internal history
+            // and the detector stream (same contract as RealtimeTuner).
+            const float in0 = (std::isfinite(input0) &&
+                std::abs(input0) >= 1.0e-30f) ? input0 : 0.0f;
+            for (int l = 0; l < lanes; ++l) {
+                const float value = io[l][i];
+                ring_[l][w & kRingM] = (std::isfinite(value) &&
+                    std::abs(value) >= 1.0e-30f) ? value : 0.0f;
+            }
             if (bypass) {
                 wetBlend_ = 0.0;
                 detectedVoiced_ = false;
@@ -152,6 +162,9 @@ public:
             const double goal = wetReady ? amount_ : 0.0;
             wetBlend_ += (goal - wetBlend_) * (goal > wetBlend_ ? entry : exit);
             wetBlend_ = std::clamp(wetBlend_, 0.0, 1.0);
+            // Release exactly to zero to avoid long-silence denormal
+            // drift in an otherwise realtime-safe gain accumulator.
+            if (wetBlend_ < 1.0e-9) wetBlend_ = 0.0;
 
             for (int l = 0; l < lanes; ++l) {
                 if (flen_[l] == 0) {

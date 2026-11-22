@@ -104,14 +104,14 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
     // SKELLY_META=1 routes audio through the test-only Meta engine instead of the standard one.
     // SKELLY_META_FILE_DETECTOR=1 : use the reconstruction's own detector (as written; finds no pitch)
     // SKELLY_META_AS_WRITTEN=1    : smoother fed the snapped target (as written; makes no correction)
-    // SKELLY_META_SPEED=<x>       : override the smoother speed (default speedMs / 8)
+    // SKELLY_META_SPEED=<ms>      : override real META retune milliseconds
     skelly::MetaTest meta; const bool useMeta = std::getenv("SKELLY_META") != nullptr;
     if (useMeta) {
         meta.prepare(double(w.rate));
         meta.setFileDetector(std::getenv("SKELLY_META_FILE_DETECTOR") != nullptr);
         meta.setSmoothDetected(std::getenv("SKELLY_META_AS_WRITTEN") == nullptr);
         const double speed = std::getenv("SKELLY_META_SPEED") ? std::atof(std::getenv("SKELLY_META_SPEED"))
-                                                               : double(p.speedMs) / 8.0;
+                                                               : double(p.speedMs);
         meta.setParameters(p.pitchClasses, double(p.referenceA), double(p.amount), speed);
     }
 #endif

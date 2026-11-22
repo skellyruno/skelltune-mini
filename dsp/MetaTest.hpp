@@ -47,7 +47,7 @@ public:
     static constexpr double kNoteBias = 24.0, kRefNote = 69.0;
     static constexpr double kCurveMul = 1.1, kExtremaMin = -0.1, kSecondary = 0.01;
     static constexpr double kReject = -DBL_MAX;
-    static constexpr double kSpan = 2.0, kSpanNeg = -0.5;
+    // Retune speed now has true sample-rate-calibrated host milliseconds.
 
     MetaTest() { reset(); }
 
@@ -81,12 +81,12 @@ public:
         tableDirty_ = true;
         setFilter();
     }
-    // mask: C = bit 0 ... B = bit 11. speed is the reconstruction's own unit (default 0.5).
+    // mask: C=bit0..B=bit11. Speed is TRUE host milliseconds (0..200).
     void setParameters(uint16_t mask, double referenceA, double amount, double speed, double lowLatency = 0.0) {
         if (mask != mask_ || referenceA != reference_) tableDirty_ = true;
         mask_ = mask; reference_ = referenceA;
         amount_ = std::clamp(std::isfinite(amount) ? amount : 1.0, 0.0, 1.0);
-        speed_ = std::clamp(std::isfinite(speed) ? speed : 0.5, 0.0, 50.0);
+        speed_ = std::clamp(std::isfinite(speed) ? speed : 25.0, 0.0, 200.0);
         lowLatency_ = std::clamp(std::isfinite(lowLatency) ? lowLatency : 0.0, 0.0, 1.0);
     }
     void setSmoothDetected(bool on) { smoothDetected_ = on; }
@@ -132,6 +132,15 @@ public:
     double targetHz() const { return sel_ > 0.0 ? double(sr_) / sel_ : 0.0; }
     double shiftCents() const { return sel_ > 0.0 && period_ > 0.0 ? 1200.0 * std::log2(period_ / sel_) : 0.0; }
     double lastPeriod() const { return period_; }
+    double retuneMs() const noexcept { return speed_; }
+    // A true 1/e time constant in milliseconds, for any host sample rate.
+    static double smoothingRetention(double speedMs, double rate,
+                                     uint32_t elapsedSamples) noexcept {
+        if (!(std::isfinite(speedMs) && speedMs > 0.0)) return 0.0;
+        if (!(std::isfinite(rate) && rate > 0.0)) return 0.0;
+        return std::exp(-double(elapsedSamples) /
+                        (rate * (speedMs * 0.001)));
+    }
     int tableCount() const { return count_; }
 
     void process(float* const* io, int lanes, int frames, bool bypass = false) {
@@ -355,14 +364,13 @@ private:
         return pick + std::max(-0.5, std::min(0.5, off));
     }
 
-    // --- smoother (as written) --------------------------------------------------------------
-    double smoothStep(double target, double subhop) {
-        const double old = smooth_;
-        const double z = std::fabs(subhop + speed_);
-        const double alpha = 1.0 - 1.0 / (1.0 + z);
-        const double nv = target + alpha * (old - target);
-        smooth_ = nv;
-        return old + (nv - old) * amount_ * speedScale_;
+    // --- calibrated physical millisecond smoother --------------------------------------
+    double smoothStep(double target, uint32_t elapsedSamples) noexcept {
+        const double alpha = smoothingRetention(speed_, double(sr_), elapsedSamples);
+        smooth_ = target + alpha * (smooth_ - target);
+        // Amount belongs to the wet/dry blend only. Never double-scale
+        // the detected pitch period and create unpredictable response.
+        return smooth_;
     }
 
     void analyse() {
@@ -424,8 +432,7 @@ private:
             }
         }
         target_ = target;
-        const double sub = double(hop) / double(hop_) * kSpan + kSpanNeg;
-        const double sm = smoothStep(smoothDetected_ ? detectedLog : target, sub);
+        const double sm = smoothStep(smoothDetected_ ? detectedLog : target, hop);
         period_ = std::exp2(sm);
         ratio_ = std::exp2(log_ - sm);
         if (!fileDetector_) return;
@@ -494,7 +501,8 @@ private:
     }
 
     uint32_t sr_ = 48000, hop_ = 129, n_ = 0, fresh_ = 0, w_ = 0;
-    uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0, speed_ = 0.5, speedScale_ = 1.0, lowLatency_ = 0.0;
+    uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0,
+           speed_ = 25.0, lowLatency_ = 0.0;
     bool smoothDetected_ = true, fileDetector_ = false, tableDirty_ = true;
     bool rearmOnVoiced_ = true;
     bool jumpCrossfadeEnabled_ = true;

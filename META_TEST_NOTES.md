@@ -355,3 +355,20 @@ array, with no audio-thread heap, UI repaint or audio buffer capture.
 CI must capture true Windows JUCE compact and expanded UI, static and
 active signal; the GUI smoke asserts expanded and collapsed dimensions,
 valid component hit targets and nonempty live history.
+
+## META physical retune speed (major Lab-only sound improvement)
+
+META Lab's old `speedMs/8` mapping was arbitrary and coupled the
+retune dial to a dimensionless reconstruction smoother. With 0ms it
+STILL retained pitch from the old window; 10/25/100ms response varied
+unpredictably by detector hop. The real saved APVTS speed (0..200ms)
+now passes unchanged to META and drives a physical 1/e smoothing
+time constant `exp(-hopSamples/(sampleRate*seconds))`, independent
+of callback block size or sample rate. 0ms follows the freshly
+detected period immediately; 10ms, 25ms and 100ms have the specified
+trajectory. Wet Amount no longer re-scales the smooth pitch period
+a second time. Existing META ratio-zipper and phase-alignment
+protections remain. Normal production Mini parameters/presets are
+identical. New META-only `dsp_v50_meta_speed` verifies coefficients
+at 44.1/48/96/192kHz, nonfinite and max-speed automation,
+and actual audio step-response differences.

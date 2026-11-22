@@ -275,6 +275,12 @@ if(SKELLY_META_TEST)
     target_link_libraries(dsp_v49_meta_phase PRIVATE skelly_dsp)
     add_test(NAME dsp_v49_meta_phase COMMAND dsp_v49_meta_phase)
 
+    # META only: physical millisecond speed response, four sample rates
+    # and a real processed harmonic note-transition fixture.
+    add_executable(dsp_v50_meta_speed tests/test_v50_meta_speed.cpp)
+    target_link_libraries(dsp_v50_meta_speed PRIVATE skelly_dsp)
+    add_test(NAME dsp_v50_meta_speed COMMAND dsp_v50_meta_speed)
+
     # Full three-way deterministic synthetic vocal rendering and metrics.
     # Never runs inside the host audio thread and never distributes Meta DSP.
     add_executable(three_mode_ab tools/three_mode_ab.cpp)

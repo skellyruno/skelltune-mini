@@ -96,7 +96,7 @@ Result render(const Samples& dry,int mode,double speed) {
     skelly::RealtimeTuner normal; skelly::MetaTest meta;
     if(mode==2) {
         meta.prepare(rate);
-        meta.setParameters(0x0fff,440.0,1.0,speed/8.0);
+        meta.setParameters(0x0fff,440.0,1.0,speed);
     } else {
         normal.prepare(rate,1);
         skelly::Parameters p;p.pitchClasses=0x0fff;p.referenceA=440.0f;

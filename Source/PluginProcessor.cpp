@@ -231,6 +231,13 @@ void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
             if(pos) {
                 if(const auto samples=pos->getTimeInSamples())
                     positionMs=int64_t(std::llround(double(*samples)*1000.0/rate));
+                else if(const auto seconds=pos->getTimeInSeconds()) {
+                    // FL Studio/other VST3 hosts may supply seconds but
+                    // omit sample position. Never fabricate a clock.
+                    if(std::isfinite(*seconds) && *seconds>=0.0 &&
+                       *seconds<=2147483.0)
+                        positionMs=int64_t(std::llround(*seconds*1000.0));
+                }
             }
         }
     }

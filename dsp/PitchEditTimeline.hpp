@@ -52,8 +52,13 @@ public:
     }
     int add(PitchEditRecord r) noexcept {
         if(!acceptable(r))return -1;
-        for(int i=0;i<kCapacity;++i)if(!get(i).valid()){set(i,r);return i;}
-        const int i=nextOverwrite_++%kCapacity;set(i,r);return i;
+        // Keep the newest edit in the highest slot even after erasing
+        // older ones. The old first-free-slot policy let an older
+        // overlapping note override a freshly redrawn pitch blob.
+        // Fixed 48-slot shift runs ONLY on the UI thread.
+        for(int i=0;i<kCapacity-1;++i)set(i,get(i+1));
+        set(kCapacity-1,r);
+        return kCapacity-1;
     }
     bool eraseAt(int64_t hostMs) noexcept {
         if(hostMs<0)return false;
@@ -67,8 +72,7 @@ public:
     }
     void clear() noexcept {
         for(int i=0;i<kCapacity;++i)set(i,{});
-        nextOverwrite_=0;
-    }
+     }
 private:
     struct Slot {
         std::atomic<unsigned> seq{0};
@@ -76,6 +80,5 @@ private:
         std::atomic<int> note{-1};
     };
     std::array<Slot,kCapacity> slots_{};
-    int nextOverwrite_=0; // writer (message/state thread) only
-};
+ };
 } // namespace skelly

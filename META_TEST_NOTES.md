@@ -51,3 +51,46 @@ CPU: 0.7% of one core (about half the standard engine).
   (delete or invert them if you fix the reconstruction).
 - Provenance: your reconstruction is the source for the logic; nothing here was taken from the original binary. Keep this build out of
   anything you distribute.
+
+## Knob correction and META Lab side-by-side test (November 22, 2026)
+
+The retune dial now shows the **actual** \`speed\` parameter in milliseconds.
+\`0 ms\` is the fastest / hardest correction and \`200 ms\` is the slowest;
+the progress arc and marker follow JUCE's skewed parameter mapping.
+It no longer displays an invented 0–100 strength value (e.g. 56 when the
+saved value was 25 ms). This does **not** change the automated \`speed\`
+parameter ID, range, default, stored values, or the underlying engine.
+
+**Normal Mini VST3 remains unchanged in identity and has no META option.**
+With \`SKELLY_META_TEST=ON\`, the experimental build becomes a separately
+identified **SkellyTune META Lab** VST3 (\`SkML\`,
+\`com.skelly.realtimetune.metalab\`) rather than replacing Mini's normal
+\`SkRT\` VST3. The Lab editor offers REGULAR / TESTTUNE / META; all three use
+the same visible speed, key, scale, A4 and note controls.
+
+From an x64 Visual Studio development shell with CMake and JUCE dependencies:
+
+\`\`\`powershell
+cmake -S . -B build-meta -A x64 -DSKELLY_META_TEST=ON -DSKELLY_BUILD_GUI_SMOKE=ON
+cmake --build build-meta --config Release --target SkellyTuneMetaLab_VST3 SkellyTuneGuiSmoke --parallel 2
+# The testing-only VST3 lives under:
+# build-meta/SkellyTuneMetaLab_artefacts/Release/VST3/SkellyTune META Lab.vst3
+\`\`\`
+
+For the portable META characterization suite (no plugin dependencies):
+
+\`\`\`bash
+cmake -S . -B build-meta-dsp -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DSKELLY_META_TEST=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-meta-dsp --parallel 4
+ctest --test-dir build-meta-dsp --output-on-failure
+\`\`\`
+
+**TEST ONLY, never distribute the Lab binary.** Its META resynthesis latency
+is not fully PDC-compensated, unvoiced consonants may be shifted, and the
+reconstruction has known weaker measured pitch scores than REGULAR.
+Avoid using Lab instances in production FL Studio projects: their plugin ID is
+deliberately different, and switching back to normal Mini will not replace a Lab
+instance automatically. Back up test projects. The META state is not intended
+to transfer to release Mini. Real-vocal A/B listening and host round-trip testing
+remain required. GitHub CI may verify Lab compilation and screenshots, but
+it intentionally does not upload the installable experimental VST3.

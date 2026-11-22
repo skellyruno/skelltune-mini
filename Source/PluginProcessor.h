@@ -22,7 +22,9 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override {
-#if defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        return "SkellyTune META Lab";
+#elif defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
         return "SkellyTune Studio Fast";
 #elif defined(SKELLY_STUDIO_PROFILE) && SKELLY_STUDIO_PROFILE
         return "SkellyTune Studio";

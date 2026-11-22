@@ -18,6 +18,18 @@ int main() {
             return 28;
         }
         std::cerr << "STEP: VST3 default program name ok\n" << std::flush;
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        if (processor.getName() != "SkellyTune META Lab" ||
+            processor.parameters().getParameter("meta") == nullptr) {
+            std::cerr << "FAIL: META Lab identity or algorithm parameter missing\n";
+            return 29;
+        }
+#else
+        if (processor.parameters().getParameter("meta") != nullptr) {
+            std::cerr << "FAIL: release build unexpectedly exposes META\n";
+            return 30;
+        }
+#endif
         // Receiver must not assume any SkellKey value until an authenticated
         // packet is received. Joining the local hub needs no Mini control.
         if (processor.linkedMusicalKey().valid()) {
@@ -127,6 +139,26 @@ int main() {
         editor->resized();
         if (!childrenInside() || !validVisual()) return 7;
         std::cerr << "STEP: compact return layout ok\n" << std::flush;
+        if (!editor->findChildWithID("skelly.algorithm")) {
+            std::cerr << "FAIL: algorithm selector missing\n";
+            return 31;
+        }
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        // Exercise the actual opt-in processor path and save a true JUCE META
+        // editor frame. This is for visual inspection, not a release artifact.
+        if (auto* meta = processor.parameters().getParameter("meta")) {
+            meta->beginChangeGesture();
+            meta->setValueNotifyingHost(1.0f);
+            meta->endChangeGesture();
+        }
+        juce::Timer::callPendingTimersSynchronously();
+        if (processor.parameters().getRawParameterValue("meta")->load() < 0.5f ||
+            !savePreview("SkellyTuneMini_META_Lab_UI_432.png")) {
+            std::cerr << "FAIL: META test selector activation or UI capture\n";
+            return 32;
+        }
+        std::cerr << "STEP: META Lab selected and actual editor captured\n" << std::flush;
+#endif
         juce::Image frame(juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
         juce::Graphics graphics(frame);
         editor->paint(graphics);

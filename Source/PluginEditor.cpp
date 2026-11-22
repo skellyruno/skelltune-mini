@@ -46,25 +46,22 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
     const float line = std::max(3.5f, radius * 0.085f);
     const float r = radius - line * 1.45f;
     const float live = juce::jlimit(0.0f, 1.0f, activity);
+    const float proportion = juce::jlimit(0.0f, 1.0f, position);
+    const float needleAngle = start + proportion * (end - start);
+    const auto endpoint = [&](float angle) {
+        return juce::Point<float>(cx + r * std::sin(angle), cy - r * std::cos(angle));
+    };
 
-    // Soft pulse ring: brightens while the tuner is actively correcting.
-    if (live > 0.01f) {
-        g.setColour(palette.accent.withAlpha(0.22f * live));
-        g.drawEllipse(cx - radius + 2.0f, cy - radius + 2.0f, 2.0f * (radius - 2.0f), 2.0f * (radius - 2.0f),
-                      2.0f + 3.0f * live);
-    }
-
-    // The knob reads 100 (instant) at the start and 0 (slowest) at the end, so the lit arc is
-    // anchored at the END and drains as the knob is turned toward 0.
+    // JUCE's position is the SKEWED normalized ms parameter, not a separate
+    // 0..100 strength value. The arc and needle follow that actual position.
     juce::Path track, progress;
     track.addCentredArc(cx, cy, r, r, 0.0f, start, end, true);
-    const bool anyArc = position < 0.995f;
-    if (anyArc)
-        progress.addCentredArc(cx, cy, r, r, 0.0f, start + position * (end - start), end, true);
+    if (proportion > 0.001f)
+        progress.addCentredArc(cx, cy, r, r, 0.0f, start, needleAngle, true);
     g.setColour(palette.line);
     g.strokePath(track, juce::PathStrokeType(line,
         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    if (anyArc) {
+    if (proportion > 0.001f) {
         g.setColour(palette.accent.withAlpha(0.14f + 0.30f * live));
         g.strokePath(progress, juce::PathStrokeType(line * 1.75f,
             juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -72,6 +69,14 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
         g.strokePath(progress, juce::PathStrokeType(line,
             juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
+
+    // Marker remains visible even at 0ms, when the progress arc is empty.
+    const auto marker = endpoint(needleAngle);
+    g.setColour(palette.accent);
+    const float markerRadius = std::max(3.0f, line * 0.66f);
+    g.fillEllipse(marker.x - markerRadius, marker.y - markerRadius,
+                  markerRadius * 2.0f, markerRadius * 2.0f);
+
     const auto centre = juce::Rectangle<float>(cx-r+line*1.3f, cy-r+line*1.3f,
         2.0f*(r-line*1.3f), 2.0f*(r-line*1.3f));
     g.setColour(palette.background);
@@ -79,33 +84,34 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
     g.setColour(palette.line);
     g.drawEllipse(centre, 1.15f);
 
-    // Scale ends: 100 at the start of the arc, 0 at the end.
-    const auto endpoint = [&](float angle) {
-        return juce::Point<float>(cx + r * std::sin(angle), cy - r * std::cos(angle));
-    };
+    // 0ms = fastest hard tune; 200ms = slowest. No inverted "strength"
+    // number that disagrees with the saved/APVTS parameter.
     g.setColour(palette.boneDim);
-    g.setFont(juce::Font(juce::FontOptions(juce::jlimit(10.0f, 15.0f, float(w) * 0.062f), juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(juce::jlimit(10.0f, 15.0f,
+        float(w) * 0.062f), juce::Font::bold)));
     const auto p0 = endpoint(start), p1 = endpoint(end);
-    g.drawText("100", juce::Rectangle<int>(int(p0.x) - 18, int(p0.y) + 6, 36, 14), juce::Justification::centred);
-    g.drawText("0", juce::Rectangle<int>(int(p1.x) - 18, int(p1.y) + 6, 36, 14), juce::Justification::centred);
+    g.drawText("0", juce::Rectangle<int>(int(p0.x) - 18, int(p0.y) + 6, 36, 14),
+               juce::Justification::centred);
+    g.drawText("200", juce::Rectangle<int>(int(p1.x) - 21, int(p1.y) + 6, 42, 14),
+               juce::Justification::centred);
 
-    // Big number = retune strength (100 instant .. 0 slowest). Small line = the real time in ms.
-    const int shown = juce::roundToInt((1.0f - position) * 100.0f);
-    const double speed = slider.getValue();
-    const auto ms = speed < 0.005 ? juce::String("0 ms")
-        : speed < 1.0 ? juce::String(speed, 2) + " ms"
-        : speed < 10.0 ? juce::String(speed, 1) + " ms"
-                       : juce::String(juce::roundToInt(speed)) + " ms";
+    const double milliseconds = slider.getValue();
+    const auto value = milliseconds < 0.005 ? juce::String("0")
+        : milliseconds < 10.0 ? juce::String(milliseconds, 1)
+        : juce::String(juce::roundToInt(milliseconds));
     g.setColour(palette.accent);
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(24.0f, 44.0f, float(w) * 0.235f), juce::Font::bold)));
-    g.drawText(juce::String(shown), juce::Rectangle<int>(
-        int(cx-radius)+9, int(cy)-36, int(radius*2)-18, 50),
+        juce::jlimit(21.0f, 36.0f, float(w) * 0.195f), juce::Font::bold)));
+    g.drawText(value + " ms", juce::Rectangle<int>(
+        int(cx-radius)+8, int(cy)-32, int(radius*2)-16, 45),
         juce::Justification::centred, true);
     g.setColour(palette.boneDim);
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(10.0f, 15.0f, float(w) * 0.075f), juce::Font::plain)));
-    g.drawText(ms, juce::Rectangle<int>(int(cx-radius)+9, int(cy)+14, int(radius*2)-18, 20),
+        juce::jlimit(10.0f, 14.0f, float(w) * 0.068f), juce::Font::bold)));
+    const juce::String response = milliseconds <= 0.005 ? "INSTANT"
+        : milliseconds <= 30.0 ? "FAST" : milliseconds <= 100.0 ? "NATURAL" : "SMOOTH";
+    g.drawText(response, juce::Rectangle<int>(
+        int(cx-radius)+8, int(cy)+14, int(radius*2)-16, 20),
         juce::Justification::centred, true);
 }
 
@@ -236,9 +242,9 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
                               juce::MathConstants<float>::pi * 2.77f, true);
     speed_.setName("Retune Speed");
     speed_.setComponentID("skelly.speed");
-    speed_.setTooltip("Retune strength: 100 = instant correction (hard tune), 0 = slowest. "
-                      "The small value under the number is the real retune time in ms. "
-                      "Instant correction is not zero detection latency.");
+    speed_.setTooltip("Retune time in milliseconds: 0 ms = instant hard tune; "
+                      "200 ms = slowest. The dial, endpoint labels and automation "
+                      "show the same saved speed value. Zero retune is not zero plugin latency.");
     speed_.setLookAndFeel(&theme_);
     addAndMakeVisible(speed_);
 
@@ -383,7 +389,11 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawText("TUNE",149,17,77,31,juce::Justification::centredLeft,true);
     g.setColour(muted);
     g.setFont(juce::Font(juce::FontOptions(9.5f,juce::Font::bold)));
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    g.drawText("MINI / META LAB",60,46,135,14,juce::Justification::centredLeft);
+#else
     g.drawText("MINI",60,46,60,14,juce::Justification::centredLeft);
+#endif
     g.setColour(palette_.line);
     g.drawLine(16.0f,63.0f,416.0f,63.0f,1.0f);
 

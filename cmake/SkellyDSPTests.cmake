@@ -303,3 +303,12 @@ endif()
 add_executable(dsp_v53_testtune_continuity tests/test_v53_testtune_continuity.cpp)
 target_link_libraries(dsp_v53_testtune_continuity PRIVATE skelly_dsp)
 add_test(NAME dsp_v53_testtune_continuity COMMAND dsp_v53_testtune_continuity)
+
+# Causal note-editor host transport, lock-free edits, and audible target route.
+find_package(Threads REQUIRED)
+add_executable(dsp_v54_pitch_edit_timeline tests/test_v54_pitch_edit_timeline.cpp)
+target_link_libraries(dsp_v54_pitch_edit_timeline PRIVATE skelly_dsp Threads::Threads)
+add_test(NAME dsp_v54_pitch_edit_timeline COMMAND dsp_v54_pitch_edit_timeline)
+add_executable(dsp_v55_manual_pitch_modes tests/test_v55_manual_pitch_modes.cpp)
+target_link_libraries(dsp_v55_manual_pitch_modes PRIVATE skelly_dsp)
+add_test(NAME dsp_v55_manual_pitch_modes COMMAND dsp_v55_manual_pitch_modes)

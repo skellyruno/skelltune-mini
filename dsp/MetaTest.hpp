@@ -63,6 +63,7 @@ public:
         n_ = fresh_ = 0; f1_ = f2_ = 0.0; curveRef_ = 1.0; w_ = 0;
         smooth_ = log_ = std::log2(200.0);
         raw_ = sel_ = conf_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
+        manualTargetMidi_ = -1;
         // Acquire from the first *detected* phrase, not a fixed 240Hz
         // startup period that can bend its leading vowel. A real unvoiced
         // pause can re-arm the same causal one-shot without allocations.
@@ -88,6 +89,10 @@ public:
         amount_ = std::clamp(std::isfinite(amount) ? amount : 1.0, 0.0, 1.0);
         speed_ = std::clamp(std::isfinite(speed) ? speed : 25.0, 0.0, 200.0);
         lowLatency_ = std::clamp(std::isfinite(lowLatency) ? lowLatency : 0.0, 0.0, 1.0);
+    }
+    // Controlled note edit; independent of the normal period snap.
+    void setManualTargetMidi(int midi) noexcept {
+        manualTargetMidi_ = midi>=24 && midi<=107 ? midi : -1;
     }
     void setSmoothDetected(bool on) { smoothDetected_ = on; }
     void setFileDetector(bool on) { fileDetector_ = on; }
@@ -401,7 +406,9 @@ private:
         double detectedLog = log_;
         if (lag > 0.0) {
             const double lg = std::log2(lag);
-            const double sl = snapLog(lg);
+            const double sl = manualTargetMidi_>=0 ?
+                std::log2(double(sr_)/reference_)-double(manualTargetMidi_-69)/12.0 :
+                snapLog(lg);
             // Do not start a newly detected vowel with the arbitrary
             // reset pitch. Preserve normal legato and short consonants.
             if (rearmOnVoiced_) {
@@ -510,6 +517,7 @@ private:
     uint32_t unvoicedHops_ = 0;
     uint32_t dryDelaySamples_ = 144;
     double wetBlend_ = 0.0;
+    int manualTargetMidi_ = -1;
     bool detectedVoiced_ = false;
     int voicedStableHops_ = 0;
     double sourceRatio_ = 1.0, sourceBase_ = 0.0;

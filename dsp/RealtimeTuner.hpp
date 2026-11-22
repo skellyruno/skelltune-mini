@@ -635,6 +635,7 @@ public:
         targetPending_ = false;
         testCandidateMidi_ = -1; testCandidateHops_ = 0;
         testTuneHeldMidi_ = -1; testTuneUntrustedSamples_ = 0;
+        manualTargetMidi_ = -1;
         params_ = {};
         cycleSynth_.reset();
         mixGuard_.reset();
@@ -695,6 +696,10 @@ public:
     double maximumFormantGain() const noexcept { return formantGuard_.maximumObservedGain(); }
     double highBandPeriodicity() const noexcept { return airGuard_.periodicity(); }
     int currentTargetNote() const noexcept { return targetNote_; }
+    // Host-timeline edited target; -1 keeps original algorithm behavior.
+    void setManualTargetMidi(int midi) noexcept {
+        manualTargetMidi_ = midi>=0 && midi<=127 ? midi : -1;
+    }
     int testTuneHeldNote() const noexcept { return testTuneHeldMidi_; }
     static bool canBridgeTestTuneTarget(int held, uint16_t mask,
                                         bool voiced, bool valid,
@@ -934,6 +939,14 @@ public:
                     ++onsetMemoryAppliedHops_;
                     if (result.changed && priorTarget >= 0 && result.targetMidi != priorTarget)
                         ++onsetAssistedTransitions_;
+                }
+                // An explicit recorded pitch edit overrides the selected
+                // scale note on voiced frames, without touching host params.
+                if(manualTargetMidi_>=0 && e.valid && result.voiced) {
+                    result.changed=manualTargetMidi_!=priorTarget;
+                    result.targetMidi=manualTargetMidi_;
+                    result.pending=false;
+                    result.provisionalMidi=-1;
                 }
                 targetNote_ = result.targetMidi;
                 targetPending_ = result.pending;
@@ -1464,6 +1477,7 @@ private:
     int testTuneHeldMidi_ = -1;
     uint32_t testTuneUntrustedSamples_ = 0;
     int targetNote_ = -1;
+    int manualTargetMidi_ = -1;
     std::vector<float> history_;
     Parameters params_{};
     CausalPitchTracker tracker_;

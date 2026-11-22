@@ -475,6 +475,13 @@ public:
         source_ = desired;
         leftWeight_ += transitionStep_ * ((desired == 1 ? 1.0 : 0.0) - leftWeight_);
         rightWeight_ += transitionStep_ * ((desired == 2 ? 1.0 : 0.0) - rightWeight_);
+        // Fully settle after the crossfade: an exponential only approaches
+        // 0/1 asymptotically, which breaks exact inverted-stereo tracking.
+        // The residual (<5e-5) is below one audio detector LSB of interest.
+        const double goalLeft = desired == 1 ? 1.0 : 0.0;
+        const double goalRight = desired == 2 ? 1.0 : 0.0;
+        if (std::abs(leftWeight_ - goalLeft) < 5.0e-5) leftWeight_ = goalLeft;
+        if (std::abs(rightWeight_ - goalRight) < 5.0e-5) rightWeight_ = goalRight;
         const double mid = 0.5 * (double(left) + right);
         return float(mid + leftWeight_ * (double(left) - mid) +
                      rightWeight_ * (double(right) - mid));

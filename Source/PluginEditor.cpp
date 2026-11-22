@@ -565,6 +565,19 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     analyzerToggle_.setClickingTogglesState(false);
     analyzerToggle_.onClick = [this] { toggleAnalyzer(); };
     addAndMakeVisible(analyzerToggle_);
+    clearPitchEdits_.setComponentID("skelly.clearPitchEdits");
+    clearPitchEdits_.setName("Clear manual pitch edits");
+    clearPitchEdits_.setLookAndFeel(&theme_);
+    clearPitchEdits_.setTooltip("Delete all recorded note edits in this project.");
+    clearPitchEdits_.setColour(juce::TextButton::buttonColourId,palette_.panel.brighter(0.08f));
+    clearPitchEdits_.setColour(juce::TextButton::textColourOffId,palette_.boneDim);
+    clearPitchEdits_.onClick=[this] {
+        processor_.pitchEdits().clear();
+        processor_.pitchEditStateChanged();
+        repaint();
+    };
+    addAndMakeVisible(clearPitchEdits_);
+    clearPitchEdits_.setVisible(false);
     setResizable(true, true);
     setResizeLimits(432, 414, 1008, 966);
     if (auto* constraint = getConstrainer())
@@ -574,6 +587,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
 }
 SkellyTuneEditor::~SkellyTuneEditor() {
     analyzerToggle_.onClick = nullptr;
+    clearPitchEdits_.onClick = nullptr;
+    clearPitchEdits_.setLookAndFeel(nullptr);
     speed_.onValueChange = nullptr;
     speed_.onDragStart = nullptr;
     speed_.onDragEnd = nullptr;
@@ -585,6 +600,7 @@ SkellyTuneEditor::~SkellyTuneEditor() {
 }
 void SkellyTuneEditor::toggleAnalyzer() {
     analyzerExpanded_ = !analyzerExpanded_;
+    clearPitchEdits_.setVisible(analyzerExpanded_);
     analyzerToggle_.setButtonText(analyzerExpanded_ ? "COMPACT" : "ANALYZE");
     analyzerToggle_.setTooltip(analyzerExpanded_ ?
         "Drag note lines to pan; double-click to resume following. View only." :
@@ -620,7 +636,10 @@ void SkellyTuneEditor::resized() {
                         std::max(83, juce::roundToInt(83.0f*sx)),
                         std::max(30, juce::roundToInt(30.0f*sy)));
     place(algorithm_, 208, 19, 208, 28);
-    place(analyzerToggle_, 139, 46, 64, 16);            // header row, right of the title
+    place(analyzerToggle_, 139, 46, 64, 16);
+    // Collapsed control must not retain an off-window hit target.
+    if(analyzerExpanded_)place(clearPitchEdits_,355,420,52,20);
+    else clearPitchEdits_.setBounds(0,0,1,1);            // header row, right of the title
     place(inputReadout_, 19, 150, 100, 130);        // left of the dial
     place(targetReadout_, 313, 150, 100, 130);      // right of the dial
     place(key_, 18, 95, 90, 33);
@@ -753,8 +772,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                    juce::Justification::centredLeft);
         g.setColour(muted);
         g.setFont(juce::Font(juce::FontOptions(9.2f)));
-        g.drawText("3 SEC  /  " + juce::String(graphFollow_ ? "FOLLOW" : "PAN"),
-                   276,422,128,17,juce::Justification::centredRight);
+        g.drawText(processor_.displayedHostMs()<0 ? "NO HOST SYNC" :
+                   (graphEditing_ ? "EDIT " + noteLabel(graphEditMidi_) :
+                    "3 SEC  /  " + juce::String(graphFollow_ ? "FOLLOW" : "PAN")),
+                   217,422,132,17,juce::Justification::centredRight);
         // Eight semitones of real note-space, not arbitrary cents around
         // a moving target. Pitch-line drag pans VIEW ONLY; no APVTS writes.
         constexpr float top=451.0f,bottom=569.0f;
@@ -824,6 +845,39 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                 }
             }
         }
+        // Edited notes are real absolute transport-time retune targets.
+        // Render their MIDI lanes only where visible in the current 3s view.
+        if(analyzerSamples_>=2) {
+            const int count=analyzerSamples_;
+            const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
+            const int64_t firstTime=analyzerHostMs_[size_t(first)];
+            const int64_t lastTime=analyzerHostMs_[size_t(
+                (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
+            if(firstTime>=0&&lastTime>firstTime) {
+                juce::Graphics::ScopedSaveState clipEdits(g);
+                g.reduceClipRegion(juce::Rectangle<int>(54,451,352,119));
+                for(int i=0;i<skelly::PitchEditTimeline::kCapacity;++i) {
+                    const auto edit=processor_.pitchEdits().get(i);
+                    if(!edit.valid()||edit.endMs<firstTime||
+                       edit.startMs>lastTime)continue;
+                    const float x1=juce::jlimit(left,right,left+
+                        (right-left)*float(edit.startMs-firstTime)/float(lastTime-firstTime));
+                    const float x2=juce::jlimit(left,right,left+
+                        (right-left)*float(edit.endMs-firstTime)/float(lastTime-firstTime));
+                    const float y=noteY(float(edit.targetMidi));
+                    g.setColour(accent.withAlpha(0.13f));
+                    g.fillRoundedRectangle(x1,y-6.0f,std::max(3.0f,x2-x1),12.0f,3.0f);
+                    g.setColour(accent.brighter(0.25f));
+                    g.drawLine(x1,y,x2,y,2.2f);
+                    g.fillEllipse(x1-3.0f,y-3.0f,6.0f,6.0f);
+                }
+            }
+        }
+        if(graphEditing_ && graphEditMidi_>=0) {
+            const float y=noteY(float(graphEditMidi_));
+            g.setColour(accent.brighter(0.45f));
+            g.drawLine(left,y,right,y,1.7f);
+        }
         g.setColour(text.withAlpha(0.90f));
         g.setFont(juce::Font(juce::FontOptions(9.4f,juce::Font::bold)));
         g.drawText("WHITE  INPUT",24,580,104,15,juce::Justification::centredLeft);
@@ -833,8 +887,8 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.drawText("TARGET  LINE",301,580,103,15,juce::Justification::centredRight);
         g.setColour(muted);
         g.setFont(juce::Font(juce::FontOptions(9.4f)));
-        g.drawText("DRAG NOTES TO PAN   /   DOUBLE-CLICK TO FOLLOW   /   VIEW ONLY",
-                   24,597,383,13,juce::Justification::centred);
+        g.drawText("DRAG NOTE TO RETUNE  /  EMPTY SPACE PANS  /  RIGHT-CLICK UNDO",
+                   20,596,390,13,juce::Justification::centred);
 
     }
 }
@@ -844,9 +898,71 @@ bool SkellyTuneEditor::graphHit(juce::Point<float> position) const noexcept {
     const float y=position.y*620.0f/float(getHeight());
     return x>=49.0f&&x<=409.0f&&y>=446.0f&&y<=574.0f;
 }
+bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
+    if(!graphHit(position)||analyzerSamples_<2||
+       processor_.displayedHostMs()<0)return false;
+    const float x=position.x*432.0f/float(getWidth());
+    const float y=position.y*620.0f/float(getHeight());
+    const int count=analyzerSamples_;
+    const int pick=juce::jlimit(0,count-1,juce::roundToInt(
+        (x-54.0f)*float(count-1)/(405.0f-54.0f)));
+    const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
+    const int index=(first+pick)%kAnalyzerHistory;
+    const float pitch=analyzerOutputMidi_[size_t(index)];
+    const int64_t stamp=analyzerHostMs_[size_t(index)];
+    if(pitch<0.0f||stamp<0)return false;
+    const float pitchY=510.0f-(pitch-graphCenterMidi_)*118.0f/8.0f;
+    if(std::abs(y-pitchY)>12.0f)return false;
+    const int note=analyzerTargetMidi_[size_t(index)];
+    if(note<0)return false;
+    // Select the entire visible contiguous note, not an unrelated
+    // subsequent syllable. A small temporal pad covers its causal onset.
+    int64_t firstMs=stamp,lastMs=stamp;
+    for(int i=pick-1;i>=0;--i) {
+        const int j=(first+i)%kAnalyzerHistory;
+        if(analyzerTargetMidi_[size_t(j)]!=note ||
+           analyzerHostMs_[size_t(j)]<0 ||
+           firstMs-analyzerHostMs_[size_t(j)]>110)break;
+        firstMs=analyzerHostMs_[size_t(j)];
+    }
+    for(int i=pick+1;i<count;++i) {
+        const int j=(first+i)%kAnalyzerHistory;
+        if(analyzerTargetMidi_[size_t(j)]!=note ||
+           analyzerHostMs_[size_t(j)]<0 ||
+           analyzerHostMs_[size_t(j)]-lastMs>110)break;
+        lastMs=analyzerHostMs_[size_t(j)];
+    }
+    graphEditStartMs_=std::max<int64_t>(0,firstMs-35);
+    graphEditEndMs_=std::max(graphEditStartMs_+100,lastMs+65);
+    graphEditMidi_=note;
+    graphDragging_=false;
+    graphEditing_=true;
+    graphFollow_=false;
+    graphDragStartY_=position.y;
+    graphDragStartMidi_=float(note);
+    repaint();
+    return true;
+}
 void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
-    if (!e.mods.isLeftButtonDown() || !graphHit(e.position)) return;
+    if(!graphHit(e.position))return;
+    const float x=e.position.x*432.0f/float(getWidth());
+    if(e.mods.isRightButtonDown()) {
+        if(analyzerSamples_>=2 && processor_.displayedHostMs()>=0) {
+            const int count=analyzerSamples_;
+            const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
+            const int pick=juce::jlimit(0,count-1,juce::roundToInt(
+                (x-54.0f)*float(count-1)/(405.0f-54.0f)));
+            const auto ms=analyzerHostMs_[size_t((first+pick)%kAnalyzerHistory)];
+            if(processor_.pitchEdits().eraseAt(ms))
+                processor_.pitchEditStateChanged();
+            repaint();
+        }
+        return;
+    }
+    if(!e.mods.isLeftButtonDown())return;
+    if(startGraphNoteEdit(e.position))return;
     graphDragging_=true;
+    graphEditing_=false;
     graphFollow_=false;
     graphDragStartY_=e.position.y;
     graphDragStartMidi_=graphCenterMidi_;
@@ -854,20 +970,35 @@ void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
     repaint();
 }
 void SkellyTuneEditor::mouseDrag(const juce::MouseEvent& e) {
-    if (!graphDragging_) return;
+    const float notePixels=std::max(1.0f,118.0f*float(getHeight())/620.0f);
+    if(graphEditing_) {
+        graphEditMidi_=juce::jlimit(24,107,juce::roundToInt(
+            graphDragStartMidi_+(graphDragStartY_-e.position.y)*8.0f/notePixels));
+        repaint();
+        return;
+    }
+    if(!graphDragging_)return;
     const float dy=e.position.y-graphDragStartY_;
-    const float plotPixels=std::max(1.0f,118.0f*float(getHeight())/620.0f);
     graphCenterMidi_=juce::jlimit(36.0f,96.0f,
-        graphDragStartMidi_+dy*8.0f/plotPixels);
+        graphDragStartMidi_+dy*8.0f/notePixels);
     analyzerToggle_.getProperties().set("graphCenter",double(graphCenterMidi_));
     repaint();
 }
 void SkellyTuneEditor::mouseUp(const juce::MouseEvent&) {
+    if(graphEditing_ && graphEditMidi_>=24 &&
+       graphEditEndMs_>graphEditStartMs_) {
+        if(processor_.pitchEdits().add({
+                graphEditStartMs_,graphEditEndMs_,graphEditMidi_})>=0)
+            processor_.pitchEditStateChanged();
+    }
+    graphEditing_=false;
     graphDragging_=false;
+    repaint();
 }
 void SkellyTuneEditor::mouseDoubleClick(const juce::MouseEvent& e) {
-    if (!graphHit(e.position)) return;
+    if(!graphHit(e.position))return;
     graphDragging_=false;
+    graphEditing_=false;
     graphFollow_=true;
     graphCenterMidi_=float(lastTarget_>=0?lastTarget_:60);
     analyzerToggle_.getProperties().set("graphFollow",true);
@@ -964,14 +1095,30 @@ void SkellyTuneEditor::updateLiveFeedback() {
     const float inputMidi = voiced ? float(69.0 +
         12.0*std::log2(double(hz) /
             double(parameters_.getRawParameterValue("a4")->load()))) : -1.0f;
-    analyzerInputMidi_[size_t(analyzerHead_)] = inputMidi;
-    analyzerOutputMidi_[size_t(analyzerHead_)] =
-        voiced ? inputMidi+correction*0.01f : -1.0f;
+    const int64_t hostMs=processor_.displayedHostMs();
+    const int last=(analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory;
+    const int64_t previous=analyzerSamples_>0?analyzerHostMs_[size_t(last)]:-1;
+    // A seek or loop restart is a new timeline fragment. Never draw
+    // a connecting pitch line between unrelated audio locations.
+    if(hostMs>=0 && previous>=0 &&
+       (hostMs<previous || hostMs-previous>1200))
+        analyzerSamples_=0;
+    // Preserve recorded notes when DAW transport stops. Without a
+    // playhead, ordinary live graph display remains supported, but
+    // editing is disabled rather than inventing a timestamp.
+    const bool advancing=hostMs<0||analyzerSamples_==0||hostMs!=previous;
+    if(advancing && !graphEditing_) {
+        analyzerInputMidi_[size_t(analyzerHead_)]=inputMidi;
+        analyzerOutputMidi_[size_t(analyzerHead_)]=
+            voiced ? inputMidi+correction*0.01f : -1.0f;
+        analyzerHostMs_[size_t(analyzerHead_)]=hostMs;
+        analyzerTargetMidi_[size_t(analyzerHead_)]=voiced?target:-1;
+        analyzerHead_=(analyzerHead_+1)%kAnalyzerHistory;
+        analyzerSamples_=std::min(kAnalyzerHistory,analyzerSamples_+1);
+    }
     if (voiced && graphFollow_)
         graphCenterMidi_ += (float(target)-graphCenterMidi_) *
-            (analyzerSamples_==0?1.0f:0.27f);
-    analyzerHead_=(analyzerHead_+1)%kAnalyzerHistory;
-    analyzerSamples_=std::min(kAnalyzerHistory,analyzerSamples_+1);
+            (analyzerSamples_<=1?1.0f:0.27f);
     analyzerToggle_.getProperties().set("analyzerSamples",analyzerSamples_);
     analyzerToggle_.getProperties().set("graphFollow",graphFollow_);
     analyzerToggle_.getProperties().set("graphCenter",double(graphCenterMidi_));

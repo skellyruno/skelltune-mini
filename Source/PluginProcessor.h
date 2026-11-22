@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../dsp/RealtimeTuner.hpp"
+#include "../dsp/PitchEditTimeline.hpp"
 #include <SkellCore/WorldLink.h>
 #include <SkellCore/SkullTheme.h>
 #include <juce_events/juce_events.h>
@@ -80,6 +81,14 @@ public:
     int displayedTargetNote() const noexcept { return displayedTargetNote_.load(std::memory_order_relaxed); }
     bool displayedTargetPending() const noexcept { return displayedTargetPending_.load(std::memory_order_relaxed); }
     float displayedCorrectionCents() const noexcept { return displayedCorrectionCents_.load(std::memory_order_relaxed); }
+    int64_t displayedHostMs() const noexcept {
+        return displayedHostMs_.load(std::memory_order_relaxed);
+    }
+    skelly::PitchEditTimeline& pitchEdits() noexcept { return pitchEdits_; }
+    const skelly::PitchEditTimeline& pitchEdits() const noexcept { return pitchEdits_; }
+    void pitchEditStateChanged() {
+        updateHostDisplay(juce::AudioProcessor::ChangeDetails{}.withNonParameterStateChanged());
+    }
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     skelly::Parameters regularEngineParametersForLabTests() const noexcept {
         return engine_.parameterSnapshotForLabTests();
@@ -87,6 +96,7 @@ public:
 #endif
 private:
     void timerCallback() override;
+    void updateTimelinePosition() noexcept;
     // Shared UI/theme and optional key-link state. Audio processing reads only
     // atomics and never touches a socket, mutex, GUI component or host params.
     std::atomic<int> skinIndex_{1};
@@ -102,6 +112,8 @@ private:
     bool metaWasActive_ = false;   // audio thread only
     void runMeta(float* const* io, int channels, int frames);
 #endif
+    skelly::PitchEditTimeline pitchEdits_;
+    std::atomic<int64_t> displayedHostMs_{-1};
     std::atomic<float> displayedPitchHz_{0.0f};
     std::atomic<float> displayedConfidence_{0.0f};
     std::atomic<int> displayedTargetNote_{-1};

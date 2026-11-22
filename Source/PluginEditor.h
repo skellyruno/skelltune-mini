@@ -119,6 +119,7 @@ private:
     void togglePitchClass(int index);
     void resetManualNotes();
     void toggleAnalyzer();
+    bool startGraphNoteEdit(juce::Point<float> position);
     bool graphHit(juce::Point<float> position) const noexcept;
 
     SkellyTuneRealtimeProcessor& processor_;
@@ -128,14 +129,19 @@ private:
     juce::ComboBox key_, scale_;
     juce::Slider speed_, a4_;
     juce::TextButton analyzerToggle_{"ANALYZE"};
+    juce::TextButton clearPitchEdits_{"CLEAR"};
     bool analyzerExpanded_ = false;
     static constexpr int kAnalyzerHistory = 90;
     // Real pitch and estimated corrected output in absolute MIDI-note
     // coordinates. -1 marks an unvoiced frame (never draw fake zero spikes).
     std::array<float, kAnalyzerHistory> analyzerInputMidi_{}, analyzerOutputMidi_{};
+    std::array<int64_t, kAnalyzerHistory> analyzerHostMs_{};
+    std::array<int, kAnalyzerHistory> analyzerTargetMidi_{};
     int analyzerHead_ = 0, analyzerSamples_ = 0;
     float graphCenterMidi_ = 60.0f, graphDragStartMidi_ = 60.0f, graphDragStartY_ = 0.0f;
-    bool graphFollow_ = true, graphDragging_ = false;
+    bool graphFollow_ = true, graphDragging_ = false, graphEditing_ = false;
+    int graphEditMidi_ = -1;
+    int64_t graphEditStartMs_ = -1, graphEditEndMs_ = -1;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         keyAttachment_, scaleAttachment_;
     // UI is a clockwise fastness controller (0..100), while the existing

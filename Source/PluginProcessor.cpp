@@ -222,11 +222,26 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
     if (state_.getRawParameterValue("bypass")->load() > 0.5f) p.mix = 0.0f;
     return p;
 }
+void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
+    int64_t positionMs=-1;
+    const double rate=getSampleRate();
+    if(rate>0.0) {
+        if(auto* playhead=getPlayHead()) {
+            const auto pos=playhead->getPosition();
+            if(pos.has_value()) {
+                if(const auto samples=pos->getTimeInSamples())
+                    positionMs=int64_t(std::llround(double(*samples)*1000.0/rate));
+            }
+        }
+    }
+    displayedHostMs_.store(positionMs,std::memory_order_relaxed);
+}
 void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce::MidiBuffer&) {
     juce::ScopedNoDenormals guard;
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() <= 0) return;
     const auto params = currentParameters();
+    updateTimelinePosition();
     engine_.setParameters(params);
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     if (state_.getRawParameterValue("meta")->load() > 0.5f) {
@@ -244,6 +259,8 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
         metaWasActive_ = false;
     }
 #endif
+    engine_.setManualTargetMidi(
+        pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
     std::array<const float*, 2> in { b.getReadPointer(0), ch == 2 ? b.getReadPointer(1) : nullptr };
     std::array<float*, 2> out { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
     engine_.process(in.data(), out.data(), b.getNumSamples(), ch);
@@ -261,6 +278,7 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() == 0) return;
     const auto params = currentParameters();
+    updateTimelinePosition();
     engine_.setParameters(params);
     const int capacity = doubleScratch_.getNumSamples();
     // Some hosts can probe a processor before prepareToPlay; never enter a
@@ -288,9 +306,13 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
                 engine_.setParameters(params); // persist host state in first returned 64-bit block
                 metaWasActive_ = false;
             }
+            engine_.setManualTargetMidi(
+                pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
             engine_.process(src, dst, n, ch);
         }
 #else
+        engine_.setManualTargetMidi(
+            pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
         engine_.process(src, dst, n, ch);
 #endif
         for (int c = 0; c < ch; ++c) {
@@ -319,6 +341,8 @@ void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int fr
     meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA),
                         double(p.amount * p.mix), double(p.speedMs));
     const bool bypass = state_.getRawParameterValue("bypass")->load() > 0.5f;
+    meta_.setManualTargetMidi(
+        pitchEdits_.targetAt(displayedHostMs_.load(std::memory_order_relaxed)));
     meta_.process(io, channels, frames, bypass);
     const double hz = meta_.detectedHz(), targetHz = meta_.targetHz();
     const bool voiced = hz > 0.0 && targetHz > 0.0;
@@ -349,10 +373,23 @@ std::optional<double> decodeSavedNumber(const juce::var& raw) {
 } // namespace
 
 void SkellyTuneRealtimeProcessor::getStateInformation(juce::MemoryBlock& block) {
-    if (const auto xml = state_.copyState().createXml())
-        copyXmlToBinary(*xml, block);
-    else
-        block.reset();
+    // Saved XML extends the old APVTS state rather than changing any
+    // published parameter IDs, numeric ranges, or plugin identities.
+    auto safe=state_.copyState();
+    juce::ValueTree edits("PITCH_EDITS");
+    for(int i=0;i<skelly::PitchEditTimeline::kCapacity;++i) {
+        const auto r=pitchEdits_.get(i);
+        if(!r.valid())continue;
+        juce::ValueTree e("EDIT");
+        e.setProperty("slot",i,nullptr);
+        e.setProperty("startMs",static_cast<juce::int64>(r.startMs),nullptr);
+        e.setProperty("endMs",static_cast<juce::int64>(r.endMs),nullptr);
+        e.setProperty("midi",r.targetMidi,nullptr);
+        edits.addChild(e,-1,nullptr);
+    }
+    if(edits.getNumChildren()>0)safe.addChild(edits,-1,nullptr);
+    if(const auto xml=safe.createXml())copyXmlToBinary(*xml,block);
+    else block.reset();
 }
 
 void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int bytes) {
@@ -395,6 +432,30 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
         }
     }
     if (restored > 0 || restoredSkin) state_.replaceState(safeState);
+    // A legacy preset contains no edits: no stale manual note is kept.
+    // Validate every untrusted host XML field independently.
+    pitchEdits_.clear();
+    const auto edits=incoming.getChildWithName("PITCH_EDITS");
+    if(edits.isValid()) {
+        const int count=std::min(edits.getNumChildren(),
+                                 skelly::PitchEditTimeline::kCapacity);
+        for(int i=0;i<count;++i) {
+            const auto e=edits.getChild(i);
+            if(!e.hasType("EDIT"))continue;
+            const auto slot=decodeSavedNumber(e.getProperty("slot"));
+            const auto first=decodeSavedNumber(e.getProperty("startMs"));
+            const auto last=decodeSavedNumber(e.getProperty("endMs"));
+            const auto midi=decodeSavedNumber(e.getProperty("midi"));
+            if(!slot||!first||!last||!midi)continue;
+            if(!std::isfinite(*slot)||!std::isfinite(*first)||
+               !std::isfinite(*last)||!std::isfinite(*midi))continue;
+            if(*slot<0||*slot>=skelly::PitchEditTimeline::kCapacity||
+               *first<0||*last>2147483647.0||*midi<0||*midi>127||
+               std::floor(*slot)!=*slot||std::floor(*first)!=*first||
+               std::floor(*last)!=*last||std::floor(*midi)!=*midi)continue;
+            pitchEdits_.set(int(*slot),{int64_t(*first),int64_t(*last),int(*midi)});
+        }
+    }
     // Invalid/unknown chunks do not damage the current valid state.
 }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {

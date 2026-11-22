@@ -162,6 +162,20 @@ int main() {
                       << editor->getWidth() << "x" << editor->getHeight() << "\n";
             return 47;
         }
+        // The note editor is real state, not merely painted handles:
+        // save, restore and clear it in the actual JUCE host processor.
+        auto* clearEdits=dynamic_cast<juce::TextButton*>(
+            editor->findChildWithID("skelly.clearPitchEdits"));
+        if(!clearEdits || !clearEdits->isVisible())return 60;
+        if(processor.pitchEdits().add({150,500,66})<0)return 61;
+        juce::MemoryBlock editedState;
+        processor.getStateInformation(editedState);
+        processor.pitchEdits().clear();
+        processor.setStateInformation(editedState.getData(),
+                                     static_cast<int>(editedState.getSize()));
+        if(processor.pitchEdits().targetAt(200)!=66)return 62;
+        clearEdits->onClick();
+        if(processor.pitchEdits().targetAt(200)!=-1)return 63;
         analyzer->onClick();
         if (editor->getWidth()!=432 || editor->getHeight()!=414 ||
             !childrenInside() || !validVisual()) return 48;

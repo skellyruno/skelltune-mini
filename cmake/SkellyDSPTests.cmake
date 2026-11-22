@@ -235,6 +235,12 @@ add_executable(dsp_v42_tests tests/test_v42_testtune.cpp)
 target_link_libraries(dsp_v42_tests PRIVATE skelly_dsp)
 add_test(NAME dsp_v42_testtune COMMAND dsp_v42_tests)
 
+# v3.3.3: causal prefade before protected input transients at exact
+# original host PDC, including different callback sizes/sample rates.
+add_executable(dsp_v45_transient_prefade tests/test_v45_transient_prefade.cpp)
+target_link_libraries(dsp_v45_transient_prefade PRIVATE skelly_dsp)
+add_test(NAME dsp_v45_transient_prefade COMMAND dsp_v45_transient_prefade)
+
 # TEST ONLY: Meta engine tests (built only when -DSKELLY_META_TEST=ON).
 if(SKELLY_META_TEST)
     add_executable(dsp_v43_meta tests/test_v43_meta.cpp)

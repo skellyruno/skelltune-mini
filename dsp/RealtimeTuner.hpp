@@ -618,6 +618,12 @@ public:
                             : delayContract(rate_, experimentalMode);
     }
     uint64_t preservedTransientSamples() const noexcept { return preservedTransientSamples_; }
+    // Offline A/B switch: old instantaneous dry re-entry is reproducible
+    // for audio quality regression. Default keeps the click-safe prefade.
+    // UI/host never change this on the audio thread.
+    void setAnticipatoryTransientFadeEnabled(bool enabled) noexcept {
+        anticipatoryTransientFadeEnabled_ = enabled;
+    }
     PitchEstimate lastPitch() const noexcept { return tracker_.last(); }
     CausalCycleSynth::Status cycleSynthStatus() const noexcept { return cycleSynth_.status(); }
     // v3.1 controlled research switch: preserve a trusted voiced correction
@@ -741,6 +747,16 @@ public:
         const double cycleReleaseSmooth = std::exp(-1.0 / (rate_ * 0.00025));
         const double transientMeterStep = 1.0 - std::exp(-1.0 / (rate_ * 0.030));
         const double transientReleaseStep = std::exp(-1.0 / (rate_ * 0.003));
+        // The declared 3-ms host delay means the next transient's tag is
+        // ALREADY in our fixed-size ring before the same input reaches output.
+        // Fade the wet path toward aligned dry ~0.75ms BEFORE a protected
+        // attack; the marked sample itself remains exactly dry at the
+        // published latency. No extra lookahead, allocations or host PDC.
+        const int attackLookahead = std::min(
+            std::max(1, int(std::lround(rate_ * 0.00075))),
+            std::max(0, latency_ - 2));
+        const double attackEntryStep = 1.0 - std::exp(
+            -1.0 / (rate_ * 0.00012));
         for (int i = 0; i < frames; ++i) {
             float in[2] = {0.0f, 0.0f};
             for (int c = 0; c < numChannels; ++c) {
@@ -1089,8 +1105,23 @@ public:
             // after the protected segment; only the first attack is forced
             // immediately, preserving its exact timing and amplitude.
             const bool protectedNow = transientMark_[size_t(dryIdx)] != 0;
-            transientRelease_ = protectedNow ? 1.0 :
-                transientRelease_ * transientReleaseStep;
+            // Previously every new tagged consonant/attack jumped directly
+            // from an unrelated wet read-head phase to delayed dry, causing
+            // ~0.5 sample-step glitches in the real singer opening 80ms.
+            // We can see this FUTURE tag in the existing latency buffer.
+            // Only pre-fade when the wet voice is already audible; the first
+            // attack from silence still follows its original exact path.
+            const bool upcomingProtected = anticipatoryTransientFadeEnabled_ &&
+                attackLookahead > 0 && effectiveMix_ > 0.08 &&
+                transientMark_[size_t((dryIdx + attackLookahead) & mask_)] != 0;
+            if (protectedNow) {
+                transientRelease_ = 1.0; // sample-exact transient at host PDC
+            } else if (upcomingProtected) {
+                transientRelease_ +=
+                    (1.0 - transientRelease_) * attackEntryStep;
+            } else {
+                transientRelease_ *= transientReleaseStep;
+            }
             if (protectedNow) ++preservedTransientSamples_;
             float dryForGuard[2]{};
             float wetForGuard[2]{};
@@ -1273,6 +1304,7 @@ private:
     double transientDiffPower_ = 0.0, transientInputPower_ = 0.0, transientRelease_ = 0.0;
     int transientHold_ = 0;
     uint64_t preservedTransientSamples_ = 0;
+    bool anticipatoryTransientFadeEnabled_ = true;
     bool studioClock_ = false, fastStudio_ = false;
     int channels_ = 2, latency_ = 144, mask_ = 0, write_ = 0;
     double readDelay_ = 144.0, jumpFrom_ = 0, jumpTo_ = 0;

@@ -192,3 +192,25 @@ locks or host latency changes were introduced. A test-only A/B switch
 and `dsp_v44_meta_grain` verify jump/fade accounting and safe output.
 Real-vocal float32 renders must be compared again after this change;
 reduced audible clicks and corrected META PDC are not assumed.
+
+## New real-singer bug fix: anticipatory transient dry/wet handoff
+
+A/B analysis of the tracked singer recording found sudden ~0.50–0.58
+full-scale single-sample steps in REGULAR and TESTTUNE within the first
+80ms, vs ~0.234 in dry/reference and ~0.226 in crossfaded META.
+At the jump samples, the output **exactly equaled the 3ms delayed dry**:
+this pinpointed the instantaneous `protectedNow ? 1.0` transient guard.
+Its existing 3ms latency ring already knows which input sample becomes a
+protected dry attack ~132 samples later. Regular and TESTTUNE now pre-fade
+wet into dry for ~0.75ms *within that existing delay*, then preserve the
+protected attack EXACTLY at the original host-reported PDC sample. No
+additional DAW latency, heap allocation, lock, new parameter, project-state
+change, or separate plugin identity.
+
+A fixed-size engine-only A/B flag `setAnticipatoryTransientFadeEnabled(false)`
+and offline `SKELLY_TRANSIENT_PREFADE_OFF=1` reproduce the old sound;
+these are not exposed to host automation. New `dsp_v45_transient_prefade`
+checks exact sample timing at 44.1/48/96kHz, finite output and block-size
+invariance. New recorded-singer regression in `verify-dsp.yml` measures
+the known first-phrase jump against an unfixed render, failing if the real
+waveform discontinuity does not decrease by at least 20%.

@@ -94,6 +94,8 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         dsp.setShortVoicedBridgeDurationMs(float(std::atof(duration)));
     if(const char* disable=std::getenv("SKELLY_V31_BRIDGE_OFF"))
         dsp.setShortVoicedBridgeEnabled(std::atoi(disable)==0);
+    if (std::getenv("SKELLY_TRANSIENT_PREFADE_OFF"))
+        dsp.setAnticipatoryTransientFadeEnabled(false);
     if (std::getenv("SKELLY_V33_ONSET_MEMORY_OFF"))
         dsp.setHardTuneOnsetMemoryEnabled(false);
     if (std::getenv("SKELLY_V30_PROVISIONAL")) dsp.setProvisionalTransitionEnabled(true);

@@ -41,6 +41,9 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
         juce::Graphics& g, int x, int y, int w, int h, float position,
         float start, float end, juce::Slider& slider) {
     const auto rect = juce::Rectangle<float>(float(x), float(y), float(w), float(h)).reduced(7.0f);
+    // All knob typography and layout offsets scale with the resizable editor.
+    // Previously the large dial still used a 36px value in a 416px control.
+    const float uiScale = std::max(1.0f, std::min(float(w), float(h)) / 178.0f);
     const float cx = rect.getCentreX(), cy = rect.getCentreY();
     const float radius = std::min(rect.getWidth(), rect.getHeight()) * 0.5f;
     const float line = std::max(3.5f, radius * 0.085f);
@@ -87,13 +90,17 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
     // 0ms = fastest hard tune; 200ms = slowest. No inverted "strength"
     // number that disagrees with the saved/APVTS parameter.
     g.setColour(palette.boneDim);
-    g.setFont(juce::Font(juce::FontOptions(juce::jlimit(10.0f, 15.0f,
+    g.setFont(juce::Font(juce::FontOptions(juce::jlimit(10.0f, 30.0f,
         float(w) * 0.062f), juce::Font::bold)));
     const auto p0 = endpoint(start), p1 = endpoint(end);
-    g.drawText("0", juce::Rectangle<int>(int(p0.x) - 18, int(p0.y) + 6, 36, 14),
-               juce::Justification::centred);
-    g.drawText("200", juce::Rectangle<int>(int(p1.x) - 21, int(p1.y) + 6, 42, 14),
-               juce::Justification::centred);
+    const int labelHeight = juce::roundToInt(14.0f * uiScale);
+    const int labelOffset = juce::roundToInt(6.0f * uiScale);
+    const int zeroHalf = juce::roundToInt(18.0f * uiScale);
+    const int endHalf = juce::roundToInt(21.0f * uiScale);
+    g.drawText("0", juce::Rectangle<int>(int(p0.x) - zeroHalf, int(p0.y) + labelOffset,
+               zeroHalf * 2, labelHeight), juce::Justification::centred);
+    g.drawText("200", juce::Rectangle<int>(int(p1.x) - endHalf, int(p1.y) + labelOffset,
+               endHalf * 2, labelHeight), juce::Justification::centred);
 
     const double milliseconds = slider.getValue();
     const auto value = milliseconds < 0.005 ? juce::String("0")
@@ -101,17 +108,21 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
         : juce::String(juce::roundToInt(milliseconds));
     g.setColour(palette.accent);
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(21.0f, 36.0f, float(w) * 0.195f), juce::Font::bold)));
+        juce::jlimit(21.0f, 84.0f, float(w) * 0.195f), juce::Font::bold)));
+    const int innerMargin = juce::roundToInt(8.0f * uiScale);
+    const int textWidth = int(radius * 2) - innerMargin * 2;
     g.drawText(value + " ms", juce::Rectangle<int>(
-        int(cx-radius)+8, int(cy)-32, int(radius*2)-16, 45),
+        int(cx-radius) + innerMargin, int(cy) - juce::roundToInt(32.0f * uiScale),
+        textWidth, juce::roundToInt(45.0f * uiScale)),
         juce::Justification::centred, true);
     g.setColour(palette.boneDim);
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(10.0f, 14.0f, float(w) * 0.068f), juce::Font::bold)));
+        juce::jlimit(10.0f, 34.0f, float(w) * 0.068f), juce::Font::bold)));
     const juce::String response = milliseconds <= 0.005 ? "INSTANT"
         : milliseconds <= 30.0 ? "FAST" : milliseconds <= 100.0 ? "NATURAL" : "SMOOTH";
     g.drawText(response, juce::Rectangle<int>(
-        int(cx-radius)+8, int(cy)+14, int(radius*2)-16, 20),
+        int(cx-radius) + innerMargin, int(cy) + juce::roundToInt(14.0f * uiScale),
+        textWidth, juce::roundToInt(20.0f * uiScale)),
         juce::Justification::centred, true);
 }
 

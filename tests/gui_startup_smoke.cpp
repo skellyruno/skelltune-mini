@@ -151,6 +151,7 @@ int main() {
             meta->setValueNotifyingHost(1.0f);
             meta->endChangeGesture();
         }
+        juce::Thread::sleep(80);
         juce::Timer::callPendingTimersSynchronously();
         if (processor.parameters().getRawParameterValue("meta")->load() < 0.5f ||
             !savePreview("SkellyTuneMini_META_Lab_UI_432.png")) {
@@ -179,6 +180,14 @@ int main() {
         speed->setValue(7.0, juce::sendNotificationSync);
         if (std::abs(processor.parameters().getRawParameterValue("speed")->load() - 7.0f) > 0.02f)
             return 9;
+        // Endpoints must remain the actual 0..200ms host-automatable value.
+        // Save true JUCE editor captures of both extremes for visual QA.
+        speed->setValue(0.0, juce::sendNotificationSync);
+        if (std::abs(processor.parameters().getRawParameterValue("speed")->load()) > 0.02f ||
+            !savePreview("SkellyTuneMini_Knob_0ms_UI_432.png")) return 34;
+        speed->setValue(200.0, juce::sendNotificationSync);
+        if (std::abs(processor.parameters().getRawParameterValue("speed")->load() - 200.0f) > 0.02f ||
+            !savePreview("SkellyTuneMini_Knob_200ms_UI_432.png")) return 35;
         speed->setValue(25.0, juce::sendNotificationSync);
         key->setSelectedId(8, juce::sendNotificationSync); // G (zero-based 7)
         if (std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f)

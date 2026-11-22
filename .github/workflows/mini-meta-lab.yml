@@ -1,0 +1,84 @@
+name: Verify Mini META Lab (test only)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - CMakeLists.txt
+      - Source/**
+      - dsp/**
+      - tests/**
+      - cmake/**
+      - .github/workflows/mini-meta-lab.yml
+
+# Supersede only PR builds, not protected branches or manual runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  meta-dsp:
+    name: Experimental META portable DSP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure opt-in META tests, without JUCE
+        run: cmake -S . -B build-meta-dsp -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DSKELLY_META_TEST=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build tests
+        run: cmake --build build-meta-dsp --parallel 4
+      - name: Run META and regular DSP regressions
+        run: ctest --test-dir build-meta-dsp -C Release --output-on-failure
+
+  windows-meta-lab:
+    name: Windows META Lab VST3 + real JUCE smoke (no binary upload)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure separately identified experimental VST3
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-meta -A x64
+          -DSKELLY_META_TEST=ON
+          -DSKELLY_BUILD_PLUGIN=ON
+          -DSKELLY_BUILD_DSP_TESTS=OFF
+          -DSKELLY_BUILD_GUI_SMOKE=ON
+          -DSKELLY_BUILD_STUDIO=OFF
+          -DSKELLY_BUILD_STUDIO_FAST=OFF
+      - name: Compile actual META Lab VST3 and editor smoke
+        run: cmake --build build-meta --config Release --target SkellyTuneMetaLab_VST3 SkellyTuneGuiSmoke --parallel 2
+      - name: Check lab name, isolated VST3 identity and no release-name bundle
+        shell: pwsh
+        run: |
+          $lab = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3')
+          $release = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune Realtime.vst3')
+          if ($lab.Count -ne 1 -or $release.Count -ne 0) {
+            throw "META Lab build must have exactly one lab bundle and zero release bundles (lab=$($lab.Count), release=$($release.Count))"
+          }
+          $binary = Join-Path $lab[0].FullName 'Contents/x86_64-win/SkellyTune META Lab.vst3'
+          if (!(Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw 'Compiled META Lab x64 module missing'
+          }
+      - name: Exercise real editor, algorithm parameter, knob endpoints, audio and IPC
+        shell: pwsh
+        run: |
+          $smoke = Get-ChildItem -LiteralPath build-meta -Recurse -File -Filter 'SkellyTuneGuiSmoke.exe' | Select-Object -First 1
+          if (!$smoke) { throw 'SkellyTuneGuiSmoke.exe missing' }
+          $env:SKELL_LOCAL_IPC_TEST = '1'
+          try {
+            & $smoke.FullName
+            if ($LASTEXITCODE -ne 0) { throw "META Lab editor/IPC smoke failed: $LASTEXITCODE" }
+          } finally {
+            Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
+          }
+      - name: Upload only genuine JUCE editor screenshots (never the experimental VST3)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-META-Lab-real-editor-screenshots
+          path: |
+            SkellyTuneMini_UI_432.png
+            SkellyTuneMini_META_Lab_UI_432.png
+            SkellyTuneMini_Knob_0ms_UI_432.png
+            SkellyTuneMini_Knob_200ms_UI_432.png
+          if-no-files-found: error
+          retention-days: 7

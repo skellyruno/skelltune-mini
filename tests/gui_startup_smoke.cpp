@@ -328,28 +328,59 @@ int main() {
                 juce::Timer::callPendingTimersSynchronously();
             }
             if (processor.displayedPitchHz() < 175.0f ||
-                processor.displayedTargetNote() < 0) return false;
+                processor.displayedTargetNote() < 0) {
+                std::cerr << "FAIL: real live pitch/target: pitch="
+                          << processor.displayedPitchHz()
+                          << " confidence=" << processor.displayedConfidence()
+                          << " target=" << processor.displayedTargetNote()
+                          << " hostMs=" << processor.displayedHostMs() << "\n";
+                return false;
+            }
             const int inputPc = juce::roundToInt(
                 69.0 + 12.0 * std::log2(double(processor.displayedPitchHz()) / 440.0)) % 12;
             const int targetPc = processor.displayedTargetNote() % 12;
             auto* inputKey = editor->findChildWithID("skelly.note." + juce::String(inputPc));
             auto* targetKey = editor->findChildWithID("skelly.note." + juce::String(targetPc));
-            if (!inputKey || !targetKey) return false;
+            if (!inputKey || !targetKey) {
+                std::cerr << "FAIL: key readouts missing: input_pc=" << inputPc
+                          << " target_pc=" << targetPc << "\n";
+                return false;
+            }
             const double inputLamp = double(inputKey->getProperties()["liveInput"]);
             const double targetLamp = double(targetKey->getProperties()["liveTarget"]);
-            if (inputLamp < 0.10 || targetLamp < 0.10) return false;
+            if (inputLamp < 0.10 || targetLamp < 0.10) {
+                std::cerr << "FAIL: piano light activity: in=" << inputLamp
+                          << " target=" << targetLamp << "\n";
+                return false;
+            }
             auto* inputMeter = editor->findChildWithID("skelly.inputReadout");
             auto* targetMeter = editor->findChildWithID("skelly.targetReadout");
             if (!inputMeter || !targetMeter ||
                 double(inputMeter->getProperties()["pitchConfidence"]) < 0.55 ||
-                double(targetMeter->getProperties()["pitchConfidence"]) < 0.55)
+                double(targetMeter->getProperties()["pitchConfidence"]) < 0.55) {
+                std::cerr << "FAIL: live readout confidence: input="
+                          << (inputMeter ? double(inputMeter->getProperties()["pitchConfidence"]) : -1.0)
+                          << " target="
+                          << (targetMeter ? double(targetMeter->getProperties()["pitchConfidence"]) : -1.0)
+                          << "\n";
                 return false;
+            }
             auto* speedControl = editor->findChildWithID("skelly.speed");
             if (!speedControl ||
                 int(speedControl->getProperties()["traceSamples"]) < 2 ||
-                speedControl->getProperties()["liveStatus"].toString() == "LISTENING")
+                speedControl->getProperties()["liveStatus"].toString() == "LISTENING") {
+                std::cerr << "FAIL: live speed feedback: trace="
+                          << (speedControl ? int(speedControl->getProperties()["traceSamples"]) : -1)
+                          << " status="
+                          << (speedControl ? speedControl->getProperties()["liveStatus"].toString() : juce::String("missing"))
+                          << "\n";
                 return false;
-            return savePreview(filename);
+            }
+            if (!savePreview(filename)) {
+                std::cerr << "FAIL: live view could not save PNG: " << filename << "\n";
+                return false;
+            }
+            return true;
         };
         if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;
         analyzer->onClick();

@@ -799,11 +799,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                    (graphEditing_ ? "EDIT " + noteLabel(graphEditMidi_) :
                     juce::String(double(processor_.displayedHostMs())/1000.0,2)+"s"),
                    210,422,87,17,juce::Justification::centredRight);
-        // Eight semitones of real note-space, not arbitrary cents around
-        // a moving target. Pitch-line drag pans VIEW ONLY; no APVTS writes.
+        // Eight semitones of real note-space. Dragged voiced lines
+        // record host-timed pitch edits, never change published APVTS IDs.
         constexpr float top=451.0f,bottom=569.0f;
         constexpr float left=54.0f,right=405.0f;
-        constexpr float notePixels=(bottom-top)/8.0f;
         const auto noteY=[this](float midi) noexcept {
             return 510.0f-(midi-graphCenterMidi_)*((569.0f-451.0f)/8.0f);
         };

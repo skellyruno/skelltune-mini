@@ -841,9 +841,15 @@ public:
                         const int note = periodTable_.note(index);
                         // Ignore one-hop low-confidence note flutter. Strong
                         // estimates still snap immediately (TESTTUNE feel).
-                        const bool uncertain = e.confidence < 0.87f &&
-                            priorTarget >= 0 && std::abs(note - priorTarget) <= 2 &&
-                            note != priorTarget;
+                        const bool uncertain = priorTarget >= 0 &&
+                            note != priorTarget &&
+                            ((e.confidence < 0.87f &&
+                              std::abs(note - priorTarget) <= 2) ||
+                             // A weak single octave error is often a
+                             // tracker overtone, not a real new vocal.
+                             // Strong octave transitions remain immediate.
+                             (e.confidence < 0.94f &&
+                              std::abs(note - priorTarget) >= 12));
                         if (note == testCandidateMidi_)
                             testCandidateHops_ = std::min(4, testCandidateHops_ + 1);
                         else { testCandidateMidi_ = note; testCandidateHops_ = 1; }
@@ -958,16 +964,14 @@ public:
             }
             const double nextCents =
                 cents_ * smooth + (desiredCents_ * params_.amount) * (1.0 - smooth);
-            if (hard) {
-                // Avoid changing pitch-shifter ratio hundreds of cents in
-                // ONE output sample at 0ms. Targets remain immediate; the
-                // bounded ~1-2ms anti-zipper ramp adds no transport delay.
-                const double maxStep =
-                    (params_.testTune ? 520000.0 : 390000.0) / rate_;
-                cents_ += std::clamp(nextCents - cents_, -maxStep, maxStep);
-            } else {
-                cents_ = nextCents;
-            }
+            // Protect every speed, including abrupt host automation at
+            // 2-4ms where the ordinary exponential still permits large
+            // one-sample pitch-ratio jumps. At default 25ms the physical
+            // smoother is usually below this cap and remains unchanged.
+            // TESTTUNE retains its faster hard/soft snap character.
+            const double maxStep =
+                (params_.testTune ? 520000.0 : 390000.0) / rate_;
+            cents_ += std::clamp(nextCents - cents_, -maxStep, maxStep);
             // A broadband attack (especially /s/ and /sh/) should not inherit
             // a stale tonal pitch ratio. Keep the dry stream time-aligned.
             // v2.9: the high-frequency energy discriminator alone mistakes

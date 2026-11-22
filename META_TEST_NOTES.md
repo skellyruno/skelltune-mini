@@ -268,3 +268,35 @@ without changing bit-exact *bypass output*. Grain wet level snaps
 below 1e-9 to exactly zero to prevent silence-related denormals.
 The expanded `dsp_v46_meta_dry_guard` injects NaN, Inf and subnormal
 samples and asserts finite, bounded output after processing.
+
+## Next major stability pass — phase-continuous META grains
+
+META still used the original constant **120-sample minimum grain delay**,
+which is *younger* than the published 3ms transport PDC at 48/96kHz and
+could read too close to current input at high notes. The new grain base
+is bounded below by the sample-rate-specific 3ms PDC plus cubic-tap safety
+margin. For unsupported very-low-F0/high-rate periods which exceed the
+fixed 8192-sample ring, it remains on the delayed-dry path rather than
+wrapping into uninitialized source history.
+
+At voiced note changes, META now slews the playback ratio across ~2.5ms
+and the grain geometry across ~10ms. A grain reset cannot interrupt a
+still-active crossfade. At each valid reset, a bounded +/-12-sample
+phase search finds a correlated read-head position using twelve previous
+waveform comparisons. The left channel determines the same offset for both
+stereo channels so the stereo image is not decorrelated. Before/after
+normalized phase mismatch counters are testable. Short tracker confidence
+dropouts are bridged for up to three hops to avoid repeated wet/dry
+flutter; new phrases explicitly reset stale grain geometry.
+
+REGULAR and TESTTUNE now both use the bounded per-sample resampler ratio
+slew at **all retune speeds**, rather than only the ultra-hard path;
+default 25ms normally remains under the cap. TESTTUNE additionally confirms
+one more detector hop for unreliable *large octave jumps*, but not for
+strong confident vocal note switches. Host transport delay, old
+parameter IDs, project state and normal plugin identity remain unchanged.
+
+A new META-only `dsp_v49_meta_phase` regression covers measurable
+phase search improvement for detuned rich harmonic grains, stereo
+amplitude/phase preservation, and 96kHz high-pitch finite output.
+User hearing remains the final sound criterion. META is test-only.

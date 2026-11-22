@@ -67,6 +67,10 @@ public:
         grainJumps_ = grainJumpCrossfades_ = 0;
         dryDelaySamples_ = std::max(1u, uint32_t(std::lround(double(sr_) * 0.003)));
         wetBlend_ = 0.0; detectedVoiced_ = false;
+        voicedStableHops_ = 0;
+        sourceRatio_ = 1.0; sourceBase_ = 0.0; grainGeometryValid_ = false;
+        phaseAlignmentAdjustments_ = 0;
+        phaseErrorBefore_ = phaseErrorAfter_ = 0.0;
         tracker_.prepare(double(sr_)); est_ = {};
         for (int l = 0; l < kLanes; ++l) { pos_[l] = out_[l] = 0.0; fade_[l] = flen_[l] = 0; }
         std::memset(anal_.data(), 0, sizeof(float) * anal_.size());
@@ -99,6 +103,22 @@ public:
     }
     uint64_t grainJumps() const noexcept { return grainJumps_; }
     uint64_t grainJumpCrossfades() const noexcept { return grainJumpCrossfades_; }
+    uint64_t phaseAlignmentAdjustments() const noexcept { return phaseAlignmentAdjustments_; }
+    double cumulativePhaseMismatchBefore() const noexcept { return phaseErrorBefore_; }
+    double cumulativePhaseMismatchAfter() const noexcept { return phaseErrorAfter_; }
+    void setPhaseAlignedGrainsEnabled(bool on) noexcept { phaseAlignedGrains_ = on; }
+    // Pure deterministic comparison probe for the exact same alignment
+    // routine used by the live engine; requires a valid PCM history.
+    static double probeAlignedHead(const float* history, double previousHead,
+                                   double candidateHead, int radius,
+                                   double youngestSafeHead) noexcept {
+        return alignHead(history, previousHead, candidateHead, radius,
+                         youngestSafeHead);
+    }
+    static double probePhaseMismatch(const float* history, double a,
+                                     double b) noexcept {
+        return phaseMismatch(history, a, b);
+    }
 
     // Introspection for tests.
     double lastRawLag() const { return raw_; }
@@ -120,6 +140,11 @@ public:
         // voiced-entry/exit transitions and no realtime allocations.
         const double entry = 1.0 - std::exp(-1.0 / (double(sr_) * 0.008));
         const double exit = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
+        // A few milliseconds of ratio slew avoid zippery resampler speed
+        // changes when a new pitch frame or key arrives. The note decision
+        // stays immediate, and the host's fixed 3ms PDC is unchanged.
+        const double ratioAlpha = 1.0 - std::exp(-1.0 / (double(sr_) * 0.0025));
+        const double baseAlpha = 1.0 - std::exp(-1.0 / (double(sr_) * 0.010));
         for (int i = 0; i < frames; ++i) {
             const uint32_t w = w_;
             const float input0 = lanes > 0 ? io[0][i] : 0.0f;
@@ -138,6 +163,8 @@ public:
                 wetBlend_ = 0.0;
                 detectedVoiced_ = false;
                 rearmOnVoiced_ = true;
+                voicedStableHops_ = 0;
+                grainGeometryValid_ = false;
                 w_ = w + 1;
                 continue;
             }
@@ -154,11 +181,29 @@ public:
             const double pin = period_;
             const double pt = sel_ > 0.0 ? sel_ : pin;
             if (!(pin > 0.0) || !(pt > 0.0)) { w_ = w + 1; continue; }
-            const double srat = pin / pt;
-            const double base = std::max(kBaseDly, grain * pt + kFloor);
-            const bool wetReady = detectedVoiced_ &&
+            const double rawRatio = std::clamp(pin / pt, 0.5, 2.0);
+            // The old 120-sample floor was YOUNGER than the advertised
+            // 3ms dry tap at 48kHz and could read even younger on high
+            // notes. Every cubic grain source must be older than PDC
+            // plus interpolation margin, irrespective of note or rate.
+            const double requiredBase = std::max(
+                double(dryDelaySamples_) + kFloor + 4.0,
+                grain * pt + kFloor);
+            if (!grainGeometryValid_) {
+                sourceRatio_ = rawRatio;
+                sourceBase_ = requiredBase;
+                grainGeometryValid_ = true;
+            } else {
+                sourceRatio_ += (rawRatio - sourceRatio_) * ratioAlpha;
+                sourceBase_ += (requiredBase - sourceBase_) * baseAlpha;
+            }
+            const double srat = sourceRatio_;
+            const double base = sourceBase_;
+            const bool safeGeometry = base + pin + 16.0 < double(kRing);
+            const bool wetReady = detectedVoiced_ && safeGeometry &&
                 uint64_t(w) > uint64_t(dryDelaySamples_) +
                     uint64_t(std::ceil(base + pin + 4.0));
+            double sharedPhaseAdjustment = 0.0;
             const double goal = wetReady ? amount_ : 0.0;
             wetBlend_ += (goal - wetBlend_) * (goal > wetBlend_ ? entry : exit);
             wetBlend_ = std::clamp(wetBlend_, 0.0, 1.0);
@@ -179,9 +224,30 @@ public:
                 // one over a bounded pitch period. Each lane remains lock-free.
                 const bool jumpForward = d > base + pin;
                 const bool jumpBackward = d < base;
-                if (jumpForward || jumpBackward) {
+                // Do not restart a crossfade while its old head is still
+                // contributing: that was a second-order grain click when
+                // detector periods moved rapidly near an in-scale boundary.
+                if ((jumpForward || jumpBackward) && fade_[l] == 0) {
                     out_[l] = pos_[l];
-                    pos_[l] += jumpForward ? pin : -pin;
+                    const double oldHead = pos_[l];
+                    const double proposed = pos_[l] + (jumpForward ? pin : -pin);
+                    if (l == 0 && w > uint32_t(2.0 * (base + pin) + 64.0) &&
+                        phaseAlignedGrains_) {
+                        const int radius = std::clamp(int(std::lround(pt * 0.065)), 3, 12);
+                        const double limit = double(w) - double(dryDelaySamples_) - 8.0;
+                        const double selected = alignHead(ring_[0].data(),
+                            oldHead, proposed, radius, limit);
+                        sharedPhaseAdjustment = selected - proposed;
+                        phaseErrorBefore_ += phaseMismatch(ring_[0].data(),
+                                                           oldHead, proposed);
+                        phaseErrorAfter_ += phaseMismatch(ring_[0].data(),
+                                                           oldHead, selected);
+                        if (std::abs(sharedPhaseAdjustment) > 0.1)
+                            ++phaseAlignmentAdjustments_;
+                    }
+                    // One common phase offset for stereo; independent
+                    // per-channel search would shift stereo width/phase.
+                    pos_[l] = proposed + sharedPhaseAdjustment;
                     ++grainJumps_;
                     if (jumpCrossfadeEnabled_) {
                         const uint32_t length = uint32_t(std::clamp(
@@ -309,7 +375,17 @@ private:
             conf_ = ok ? double(est_.confidence) : 0.0;
         }
         raw_ = lag;
-        detectedVoiced_ = lag > 0.0 && conf_ >= 0.6;
+        // YIN occasionally loses one 2.7ms voiced frame on a legitimate
+        // bright vowel. Instantly releasing the wet path on that frame
+        // produced amplitude flutter and repeated 8ms attack fades.
+        // Two confident frames arm wet; three misses disarm it.
+        if (lag > 0.0 && conf_ >= 0.6) {
+            voicedStableHops_ = std::min(voicedStableHops_ + 1, 3);
+            if (voicedStableHops_ >= 2) detectedVoiced_ = true;
+        } else {
+            voicedStableHops_ = 0;
+            if (unvoicedHops_ >= 2) detectedVoiced_ = false;
+        }
         double target = log_;
         double detectedLog = log_;
         if (lag > 0.0) {
@@ -321,6 +397,11 @@ private:
                 smooth_ = lg;
                 period_ = lag;
                 rearmOnVoiced_ = false;
+                // Never restart a phrase on an old grain trajectory.
+                // The dry lane has already taken over during the pause.
+                grainGeometryValid_ = false;
+                for (int lane = 0; lane < kLanes; ++lane)
+                    fade_[lane] = flen_[lane] = 0;
             }
             unvoicedHops_ = 0;
             sel_ = std::exp2(sl);
@@ -350,6 +431,45 @@ private:
         else n_ = 0;
     }
 
+    static double phaseMismatch(const float* r, double a, double b) noexcept {
+        double diff = 0.0, energy = 1.0e-9;
+        // Past-only 24-sample waveform comparison; no allocation, FFT,
+        // locks or host calls on the realtime grain boundary.
+        for (int i = 0; i < 12; ++i) {
+            const double t = double(i) * 2.0;
+            const double x = tap(r, a - t, true);
+            const double y = tap(r, b - t, true);
+            diff += (x - y) * (x - y);
+            energy += x*x + y*y;
+        }
+        return diff / energy;
+    }
+    static double alignHead(const float* r, double previous,
+                            double proposed, int radius,
+                            double youngestSafe) noexcept {
+        if (proposed > youngestSafe) return proposed;
+        double best = proposed;
+        const double originalError = phaseMismatch(r, previous, proposed);
+        double bestError = originalError;
+        radius = std::clamp(radius, 0, 16);
+        for (int offset = -radius; offset <= radius; ++offset) {
+            const double candidate = proposed + double(offset);
+            if (candidate > youngestSafe || candidate < 30.0) continue;
+            const double error = phaseMismatch(r, previous, candidate);
+            // A modest geometric penalty prevents chasing a noise spike
+            // away from a credible detector-provided pitch period.
+            const double penalized = error + 0.001 * double(std::abs(offset));
+            if (penalized < bestError) {
+                bestError = penalized;
+                best = candidate;
+            }
+        }
+        // Require meaningful correlation improvement; random background
+        // noise must not force jittery read-head offsets.
+        if (best != proposed && bestError < originalError * 0.90)
+            return best;
+        return proposed;
+    }
     static float tap(const float* r, double p, bool highQuality) noexcept {
         const double f = std::floor(p);
         const uint32_t i = static_cast<uint32_t>(static_cast<int64_t>(f)) & kRingM;
@@ -380,6 +500,11 @@ private:
     uint32_t dryDelaySamples_ = 144;
     double wetBlend_ = 0.0;
     bool detectedVoiced_ = false;
+    int voicedStableHops_ = 0;
+    double sourceRatio_ = 1.0, sourceBase_ = 0.0;
+    bool grainGeometryValid_ = false, phaseAlignedGrains_ = true;
+    uint64_t phaseAlignmentAdjustments_ = 0;
+    double phaseErrorBefore_ = 0.0, phaseErrorAfter_ = 0.0;
     uint64_t grainJumps_ = 0, grainJumpCrossfades_ = 0;
     skelly::CausalPitchTracker tracker_; skelly::PitchEstimate est_{};
     double f1_ = 0, f2_ = 0, c50_ = 0.99, c70_ = 0.2, curveRef_ = 1.0;

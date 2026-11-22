@@ -248,7 +248,10 @@ void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
 }
 void SkellyTuneRealtimeProcessor::processEditedAudio(
     float* const* io,int channels,int frames,int blockOffset,bool useMeta) {
-    if(frames<=0||getSampleRate()<=0.0)return;
+    // JUCE standalone smoke calls prepareToPlay directly without a host
+    // rate. Never discard the whole audio callback because
+    // AudioProcessor::getSampleRate() still reports zero.
+    if(frames<=0 || !(preparedAudioRate_>0.0))return;
     const double rate=preparedAudioRate_;
     const auto blockMs=displayedHostMs_.load(std::memory_order_relaxed);
     for(int offset=0;offset<frames;) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "../dsp/GraphViewport.hpp"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <algorithm>
 #include <array>
@@ -143,6 +144,7 @@ private:
     std::array<int64_t, kAnalyzerHistory> analyzerHostMs_{};
     std::array<int, kAnalyzerHistory> analyzerTargetMidi_{};
     int analyzerHead_ = 0, analyzerSamples_ = 0;
+    skelly::PitchGraphGestureSnapshot<kAnalyzerHistory> graphGesture_;
     float graphCenterMidi_ = 60.0f, graphDragStartMidi_ = 60.0f, graphDragStartY_ = 0.0f;
     bool graphFollow_ = true, graphDragging_ = false, graphEditing_ = false;
     int graphEditMidi_ = -1, graphEditInitialMidi_ = -1;

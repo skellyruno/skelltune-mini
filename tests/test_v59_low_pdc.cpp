@@ -30,8 +30,8 @@ int main() {
             Parameters p; p.mix=0; p.amount=1;p.pitchClasses=0x0fff;
             mini.setParameters(p);
             const int frames=fs/2;
-            std::vector<float> in(std::size_t(frames)),left(std::size_t(frames)),
-                               right(std::size_t(frames));
+            const auto frameCount=static_cast<std::size_t>(frames);
+            std::vector<float> in(frameCount),left(frameCount),right(frameCount);
             for(int i=0;i<frames;++i)
                 in[std::size_t(i)]=i==371 ? 0.9f : i==452 ? -0.6f :
                     i>fs/4 ? float(0.1*std::sin(2*kPi*321.0*i/fs)) : 0.0f;
@@ -76,7 +76,8 @@ int main() {
         MetaTest meta;meta.prepare(fs,1.5);
         require(meta.latencySamples()==expected,"META PDC mismatches main engine");
         meta.setParameters(0x0fff,440,0,0);
-        std::vector<float> x(std::size_t(fs/2)),out(std::size_t(fs/2));
+        const auto metaCount=static_cast<std::size_t>(fs/2);
+        std::vector<float> x(metaCount),out(metaCount);
         for(int i=0;i<int(x.size());++i)
             x[std::size_t(i)]=i==314 ? 0.83f :
                 float(0.08*std::sin(2*kPi*315*i/fs));

@@ -349,3 +349,9 @@ if(SKELLY_META_TEST)
     target_link_libraries(dsp_v62_meta_tuning_cache PRIVATE skelly_dsp)
     add_test(NAME dsp_v62_meta_tuning_cache COMMAND dsp_v62_meta_tuning_cache)
 endif()
+
+# This graph/clock test is NOT an experimental META-only feature. Run it
+# in the normal Mini suite as well as in the three-mode META suite.
+add_executable(dsp_v61_graph_viewport tests/test_v61_graph_viewport.cpp)
+target_link_libraries(dsp_v61_graph_viewport PRIVATE skelly_dsp)
+add_test(NAME dsp_v61_graph_viewport COMMAND dsp_v61_graph_viewport)

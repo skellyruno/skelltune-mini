@@ -2,9 +2,44 @@
 // Three-second absolute DAW time viewport for pitch rendering and click/erase.
 // Host-clock-free sessions keep the previous evenly-spaced live-note fallback.
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
 namespace skelly {
+// Fixed, message-thread-only view of the phrase being edited. Audio and live
+// analyzer history continue advancing underneath this immutable gesture view.
+template <std::size_t Capacity>
+class PitchGraphGestureSnapshot {
+    static_assert(Capacity > 0, "graph history must be nonempty");
+public:
+    void freeze(int head, int available,
+                const std::array<float,Capacity>& input,
+                const std::array<float,Capacity>& output,
+                const std::array<int64_t,Capacity>& clock) noexcept {
+        frames_ = std::clamp(available,0,int(Capacity));
+        const int end=((head%int(Capacity))+int(Capacity))%int(Capacity);
+        for(int i=0;i<frames_;++i) {
+            const auto index=std::size_t((end+int(Capacity)-frames_+i)%int(Capacity));
+            input_[std::size_t(i)]=input[index];
+            output_[std::size_t(i)]=output[index];
+            clock_[std::size_t(i)]=clock[index];
+        }
+        newestMs_=frames_>0?clock_[std::size_t(frames_-1)]:-1;
+    }
+    void release() noexcept { frames_=0; newestMs_=-1; }
+    bool active() const noexcept { return frames_>0; }
+    int count() const noexcept { return frames_; }
+    int64_t newestMs() const noexcept { return newestMs_; }
+    float inputAt(int i) const noexcept { return input_[std::size_t(i)]; }
+    float outputAt(int i) const noexcept { return output_[std::size_t(i)]; }
+    int64_t timeAt(int i) const noexcept { return clock_[std::size_t(i)]; }
+private:
+    std::array<float,Capacity> input_{},output_{};
+    std::array<int64_t,Capacity> clock_{};
+    int frames_=0;
+    int64_t newestMs_=-1;
+};
 inline float graphViewportTimeX(int64_t sampleMs,int64_t newestMs,
                                 float left,float right) noexcept {
     if(newestMs<0 || sampleMs<0 || !std::isfinite(left) ||

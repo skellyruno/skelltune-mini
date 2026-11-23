@@ -5,6 +5,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <limits>
 
 class SkellyTuneEditor final : public juce::AudioProcessorEditor, private juce::Timer {
 public:
@@ -16,6 +17,8 @@ public:
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
+    void mouseWheelMove(const juce::MouseEvent&,
+                        const juce::MouseWheelDetails&) override;
 private:
     struct SimpleTheme final : juce::LookAndFeel_V4 {
         skellcore::ui::SkullPalette palette =
@@ -121,6 +124,7 @@ private:
     void toggleAnalyzer();
     bool startGraphNoteEdit(juce::Point<float> position);
     bool graphHit(juce::Point<float> position) const noexcept;
+    int graphPickHistoryIndex(float x) const noexcept;
 
     SkellyTuneRealtimeProcessor& processor_;
     juce::AudioProcessorValueTreeState& parameters_;

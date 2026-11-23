@@ -103,6 +103,8 @@ public:
     int framesUntilBoundary(int64_t blockMs,int offset,int remaining,
                             double sampleRate) const noexcept {
         if(remaining<=0)return 0;
+        // Avoid 48 atomics and time math on a typical unedited host block.
+        if(!hasEdits())return remaining;
         const auto now=frameMs(blockMs,offset,sampleRate);
         if(now<0)return remaining;
         const auto boundary=nextBoundaryAfter(now);
@@ -116,6 +118,10 @@ public:
     }
     int add(PitchEditRecord r) noexcept {
         if(!acceptable(r))return -1;
+        const auto latest=get(kCapacity-1);
+        // Repeated mouse-up notifications must not evict older edits.
+        if(latest.startMs==r.startMs && latest.endMs==r.endMs &&
+           latest.targetMidi==r.targetMidi)return kCapacity-1;
         // Keep the newest edit in the highest slot even after erasing
         // older ones. The old first-free-slot policy let an older
         // overlapping note override a freshly redrawn pitch blob.

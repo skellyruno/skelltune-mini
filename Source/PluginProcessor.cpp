@@ -4,6 +4,7 @@
 #include "../dsp/SafePresetValue.hpp"
 #include <array>
 #include <algorithm>
+#include <limits>
 
 SkellyTuneRealtimeProcessor::SkellyTuneRealtimeProcessor()
     : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
@@ -241,13 +242,20 @@ void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
         if(auto* playhead=getPlayHead()) {
             const auto pos=playhead->getPosition();
             if(pos) {
-                if(const auto samples=pos->getTimeInSamples())
-                    positionMs=int64_t(std::llround(double(*samples)*1000.0/rate));
+                if(const auto samples=pos->getTimeInSamples()) {
+                    // Ignore negative preroll and out-of-range host samples
+                    // before llround, avoiding undefined signed overflow.
+                    if(*samples>=0) {
+                        const double ms=double(*samples)*1000.0/rate;
+                        if(std::isfinite(ms) && ms>=0.0 && ms<=2147483647.0)
+                            positionMs=int64_t(std::llround(ms));
+                    }
+                }
                 else if(const auto seconds=pos->getTimeInSeconds()) {
                     // FL Studio/other VST3 hosts may supply seconds but
                     // omit sample position. Never fabricate a clock.
                     if(std::isfinite(*seconds) && *seconds>=0.0 &&
-                       *seconds<=2147483.0)
+                       *seconds<=2147483.647)
                         positionMs=int64_t(std::llround(*seconds*1000.0));
                 }
             }
@@ -337,7 +345,14 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
         for (int c = 0; c < ch; ++c) {
             const double* src = b.getReadPointer(c, offset);
             float* dst = doubleScratch_.getWritePointer(c);
-            for (int i = 0; i < n; ++i) dst[i] = std::isfinite(src[i]) ? float(src[i]) : 0.0f;
+            for (int i = 0; i < n; ++i) {
+                const double sample=src[i];
+                // Extremely large but finite double audio must not
+                // become an infinity inside float scratch.
+                dst[i]=(std::isfinite(sample) &&
+                        std::abs(sample)<=double(std::numeric_limits<float>::max()))
+                    ?float(sample):0.0f;
+            }
         }
         float* dst[2] = {doubleScratch_.getWritePointer(0),
                          ch == 2 ? doubleScratch_.getWritePointer(1) : nullptr};
@@ -473,12 +488,15 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
             restoredSkin=true;
         }
     }
-    if (restored > 0 || restoredSkin) state_.replaceState(safeState);
-    // A legacy preset contains no edits: no stale manual note is kept.
-    // Validate every untrusted host XML field independently.
-    pitchEdits_.clear();
     const auto edits=incoming.getChildWithName("PITCH_EDITS");
+    // An XML chunk with no known fields is not a valid user project;
+    // it must not silently wipe existing manual pitch corrections.
+    if(restored==0 && !restoredSkin && !edits.isValid())return;
+    if (restored > 0 || restoredSkin) state_.replaceState(safeState);
+    // Valid legacy presets have no manual edits, so clear them on recall.
+    pitchEdits_.clear();
     if(edits.isValid()) {
+        std::array<bool,skelly::PitchEditTimeline::kCapacity> seen{};
         const int count=std::min(edits.getNumChildren(),
                                  skelly::PitchEditTimeline::kCapacity);
         for(int i=0;i<count;++i) {
@@ -495,7 +513,10 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
                *first<0||*last>2147483647.0||*midi<0||*midi>127||
                std::floor(*slot)!=*slot||std::floor(*first)!=*first||
                std::floor(*last)!=*last||std::floor(*midi)!=*midi)continue;
-            pitchEdits_.set(int(*slot),{int64_t(*first),int64_t(*last),int(*midi)});
+            const int index=int(*slot);
+            if(seen[std::size_t(index)])continue; // first valid slot wins
+            seen[std::size_t(index)]=true;
+            pitchEdits_.set(index,{int64_t(*first),int64_t(*last),int(*midi)});
         }
     }
     // Invalid/unknown chunks do not damage the current valid state.

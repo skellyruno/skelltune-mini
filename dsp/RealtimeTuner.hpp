@@ -564,7 +564,8 @@ public:
     // must be chosen before preparing; it is never an automatable mode.
     void prepare(double sampleRate, int maxChannels = 2, bool studioClock = false,
                  bool fastStudio = false, double realtimeLatencyMs = 3.0) {
-        rate_ = std::clamp(sampleRate, 8000.0, 192000.0);
+        rate_ = std::clamp(std::isfinite(sampleRate) ? sampleRate : 48000.0,
+                           8000.0, 192000.0);
         channels_ = std::clamp(maxChannels, 1, 2);
         // Host compensated realtime delay is selected only in prepareToPlay.
         // Its dry/transient path remains sample-exact, even at 1.5ms.

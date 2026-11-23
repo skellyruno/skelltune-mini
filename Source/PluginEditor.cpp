@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "../dsp/ScaleMask.hpp"
+#include "../dsp/GraphViewport.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -412,6 +413,7 @@ void SkellyTuneEditor::AlgorithmSelector::paint(juce::Graphics& g) {
     }
 }
 void SkellyTuneEditor::AlgorithmSelector::mouseDown(const juce::MouseEvent& e) {
+    if(!e.mods.isLeftButtonDown())return; // context click does not change DSP
     const int index = segmentAt(e.position.x);
     if (index != selected_) {
         selected_ = index;
@@ -554,8 +556,8 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     // 432x414 Mini interface, host preset and automation remain identical.
     analyzerToggle_.setComponentID("skelly.analyzerToggle");
     analyzerToggle_.setName("Expand pitch graph");
-    analyzerToggle_.setTooltip("Open the pitch editor. Drag a voiced note to retune; "
-                               "use UNDO or CLEAR to manage edits.");
+    analyzerToggle_.setTooltip("Pitch editor: drag notes, mouse wheel pans pitches, "
+                               "double-click follows; UNDO/CLEAR manage edits.");
     analyzerToggle_.setColour(juce::TextButton::buttonColourId,
                              palette_.panel.brighter(0.10f));
     analyzerToggle_.setColour(juce::TextButton::buttonOnColourId,
@@ -629,7 +631,7 @@ void SkellyTuneEditor::toggleAnalyzer() {
     undoPitchEdits_.setVisible(analyzerExpanded_);
     analyzerToggle_.setButtonText(analyzerExpanded_ ? "COMPACT" : "ANALYZE");
     analyzerToggle_.setTooltip(analyzerExpanded_ ?
-        "Drag a voiced pitch line to retune. Empty space pans; double-click follows." :
+        "Drag notes to retune. Wheel pans pitches; double-click follows." :
         "Expand the live pitch editor; edits apply to all three algorithms.");
     // Change only editor dimensions. This setting isn't in saved APVTS
     // state and can never invalidate an old FL Studio project.
@@ -850,10 +852,22 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
             juce::Path incoming,corrected;
             const int n=analyzerSamples_;
             const int first=(analyzerHead_+kAnalyzerHistory-n)%kAnalyzerHistory;
+            const int64_t newestMs=analyzerHostMs_[size_t(
+                (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
             bool inputOpen=false,outputOpen=false;
             for(int i=0;i<n;++i) {
                 const int index=(first+i)%kAnalyzerHistory;
-                const float x=left+(right-left)*float(i)/float(n-1);
+                const int64_t stamp=analyzerHostMs_[size_t(index)];
+                const float x=skelly::graphViewportX(
+                    i,n,stamp,newestMs,left,right);
+                if(i>0) {
+                    const int previous=(index+kAnalyzerHistory-1)%kAnalyzerHistory;
+                    if(skelly::graphDiscontinuity(
+                           analyzerHostMs_[size_t(previous)],stamp)) {
+                        inputOpen=false;
+                        outputOpen=false;
+                    }
+                }
                 const float a=analyzerInputMidi_[size_t(index)];
                 const float b=analyzerOutputMidi_[size_t(index)];
                 if(a>=0.0f&&std::isfinite(a)) {
@@ -907,10 +921,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                     const auto edit=processor_.pitchEdits().get(i);
                     if(!edit.valid()||edit.endMs<firstTime||
                        edit.startMs>lastTime)continue;
-                    const float x1=juce::jlimit(left,right,left+
-                        (right-left)*float(edit.startMs-firstTime)/float(lastTime-firstTime));
-                    const float x2=juce::jlimit(left,right,left+
-                        (right-left)*float(edit.endMs-firstTime)/float(lastTime-firstTime));
+                    const float x1=skelly::graphViewportTimeX(
+                        edit.startMs,lastTime,left,right);
+                    const float x2=skelly::graphViewportTimeX(
+                        edit.endMs,lastTime,left,right);
                     const float y=noteY(float(edit.targetMidi));
                     g.setColour(accent.withAlpha(0.13f));
                     g.fillRoundedRectangle(x1,y-6.0f,std::max(3.0f,x2-x1),12.0f,3.0f);
@@ -948,14 +962,47 @@ bool SkellyTuneEditor::graphHit(juce::Point<float> position) const noexcept {
     const float y=position.y*700.0f/float(getHeight());
     return x>=49.0f&&x<=409.0f&&y>=446.0f&&y<=654.0f;
 }
+int SkellyTuneEditor::graphPickHistoryIndex(float x) const noexcept {
+    if(analyzerSamples_<=0)return -1;
+    const int n=analyzerSamples_;
+    const int first=(analyzerHead_+kAnalyzerHistory-n)%kAnalyzerHistory;
+    const int64_t newest=analyzerHostMs_[size_t(
+        (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
+    int closestIndex=0;
+    float closestDistance=std::numeric_limits<float>::max();
+    for(int i=0;i<n;++i) {
+        const int index=(first+i)%kAnalyzerHistory;
+        const float at=skelly::graphViewportX(
+            i,n,analyzerHostMs_[size_t(index)],newest,54.0f,405.0f);
+        const float distance=std::abs(x-at);
+        if(distance<closestDistance) {
+            closestDistance=distance;
+            closestIndex=i;
+        }
+    }
+    return closestIndex;
+}
+void SkellyTuneEditor::mouseWheelMove(
+    const juce::MouseEvent& e,const juce::MouseWheelDetails& details) {
+    if(!graphHit(e.position)) {
+        juce::AudioProcessorEditor::mouseWheelMove(e,details);
+        return;
+    }
+    if(!std::isfinite(details.deltaY) || details.deltaY==0.0f)return;
+    graphCenterMidi_=skelly::graphWheelPan(graphCenterMidi_,details.deltaY);
+    graphFollow_=false;
+    analyzerToggle_.getProperties().set("graphFollow",false);
+    analyzerToggle_.getProperties().set("graphCenter",double(graphCenterMidi_));
+    repaint();
+}
 bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
     if(!graphHit(position)||analyzerSamples_<2||
        processor_.displayedHostMs()<0)return false;
     const float x=position.x*432.0f/float(getWidth());
     const float y=position.y*700.0f/float(getHeight());
     const int count=analyzerSamples_;
-    const int pick=juce::jlimit(0,count-1,juce::roundToInt(
-        (x-54.0f)*float(count-1)/(405.0f-54.0f)));
+    const int pick=graphPickHistoryIndex(x);
+    if(pick<0)return false;
     const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
     const int index=(first+pick)%kAnalyzerHistory;
     const float pitch=analyzerOutputMidi_[size_t(index)];
@@ -1002,8 +1049,8 @@ void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
         if(analyzerSamples_>=2 && processor_.displayedHostMs()>=0) {
             const int count=analyzerSamples_;
             const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
-            const int pick=juce::jlimit(0,count-1,juce::roundToInt(
-                (x-54.0f)*float(count-1)/(405.0f-54.0f)));
+            const int pick=graphPickHistoryIndex(x);
+            if(pick<0)return;
             const auto ms=analyzerHostMs_[size_t((first+pick)%kAnalyzerHistory)];
             // Right-click must hit the actual edited target line; clicking
             // blank piano-roll space must never delete an unrelated note.
@@ -1075,9 +1122,14 @@ void SkellyTuneEditor::mouseDoubleClick(const juce::MouseEvent& e) {
     repaint();
 }
 void SkellyTuneEditor::togglePitchClass(int index) {
-    const int root = juce::roundToInt(parameters_.getRawParameterValue("key")->load());
-    const int scale = juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
-    const int savedMask = juce::roundToInt(parameters_.getRawParameterValue("noteMask")->load());
+    // Match the same externally followed scale displayed by refreshNotes().
+    const auto linked=processor_.linkedMusicalKey();
+    const bool follow=processor_.followingSkellKey() && linked.valid();
+    const int root=follow?linked.root:
+        juce::roundToInt(parameters_.getRawParameterValue("key")->load());
+    const int scale=follow?(linked.mode==0?1:2):
+        juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
+    const int savedMask=juce::roundToInt(parameters_.getRawParameterValue("noteMask")->load());
     const auto previous = skelly::effectiveMask(root,scale,savedMask);
     const auto next = skelly::toggleNote(previous,index);
     if (next == previous) return;
@@ -1127,10 +1179,17 @@ int SkellyTuneEditor::currentAlgorithm() const {
     return parameters_.getRawParameterValue("testTune")->load() > 0.5f ? 1 : 0;
 }
 void SkellyTuneEditor::chooseAlgorithm(int index) {
-    // Exactly one algorithm is active: REGULAR = neither flag set.
-    setBoolParameter(parameters_, "testTune", index == 1);
+    // Enter META before disabling TESTTUNE; no intermediate REGULAR block.
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
-    setBoolParameter(parameters_, "meta", index == 2);
+    if(index==2) {
+        setBoolParameter(parameters_,"meta",true);
+        setBoolParameter(parameters_,"testTune",false);
+        return;
+    }
+#endif
+    setBoolParameter(parameters_,"testTune",index==1);
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    setBoolParameter(parameters_,"meta",false);
 #endif
 }
 void SkellyTuneEditor::updateLiveFeedback() {
@@ -1176,8 +1235,11 @@ void SkellyTuneEditor::updateLiveFeedback() {
     const int64_t previous=analyzerSamples_>0?analyzerHostMs_[size_t(last)]:-1;
     // A seek or loop restart is a new timeline fragment. Never draw
     // a connecting pitch line between unrelated audio locations.
-    if(hostMs>=0 && previous>=0 &&
-       (hostMs<previous || hostMs-previous>1200))
+    // Treat DAW-clock loss/recovery like a seek, never join separate timelines.
+    if(analyzerSamples_>0 &&
+       ((hostMs<0)!=(previous<0) ||
+        (hostMs>=0 && previous>=0 &&
+         (hostMs<previous || hostMs-previous>1200))))
         analyzerSamples_=0;
     // Preserve recorded notes when DAW transport stops. Without a
     // playhead, ordinary live graph display remains supported, but

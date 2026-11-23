@@ -63,6 +63,14 @@ public:
         hop_ = std::max<uint32_t>(32, static_cast<uint32_t>(double(sr_) * 0.0027));
         // Preparing detector FIR coefficients is expensive; do it only
         // from prepareToPlay, NEVER from the audio callback's mode switch.
+        // exp2 factors are independent of A4 and song key. Prepare
+        // once outside the realtime callback before host automation.
+        if(!periodFactorsReady_) {
+            for(int midi=0;midi<kMaxEntry;++midi)
+                periodFactors_[std::size_t(midi)] =
+                    std::exp2((kRefNote-(double(midi)+kNoteBias))/12.0);
+            periodFactorsReady_=true;
+        }
         tracker_.prepare(double(sr_));
         stereoRouter_.prepare(double(sr_));
         phaseCrossfade_.prepare(); // precompute Hann outside realtime process
@@ -163,6 +171,15 @@ public:
     double lastPeriod() const { return period_; }
     double retuneMs() const noexcept { return speed_; }
     int latencySamples() const noexcept { return int(dryDelaySamples_); }
+    uint64_t processedSamples() const noexcept { return w_; }
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    void setSampleClockForUnitTests(uint64_t frame) noexcept {
+        w_=frame;
+        grainGeometryValid_=false;
+        wetBlend_=0.0;
+        for(int l=0;l<kLanes;++l)fade_[l]=flen_[l]=0;
+    }
+#endif
     // A true 1/e time constant in milliseconds, for any host sample rate.
     static double smoothingRetention(double speedMs, double rate,
                                      uint32_t elapsedSamples) noexcept {
@@ -192,7 +209,8 @@ public:
         const double ratioAlpha = 1.0 - std::exp(-1.0 / (double(sr_) * 0.0025));
         const double baseAlpha = 1.0 - std::exp(-1.0 / (double(sr_) * 0.010));
         for (int i = 0; i < frames; ++i) {
-            const uint32_t w = w_;
+            // No uint32 rollover at ~24h on long live sessions.
+            const uint64_t w = w_;
             const float input0 = lanes > 0 ? io[0][i] : 0.0f;
             // Host audio is untrusted: one NaN in the grain ring can poison
             // all future resampling heads, even when wetBlend is zero.
@@ -288,17 +306,17 @@ public:
                     out_[l] = pos_[l];
                     const double oldHead = pos_[l];
                     const double proposed = pos_[l] + (jumpForward ? pin : -pin);
-                    if (l == 0 && w > uint32_t(2.0 * (base + pin) + 64.0) &&
+                    if (l == 0 && w > uint64_t(2.0 * (base + pin) + 64.0) &&
                         phaseAlignedGrains_) {
                         const int radius = std::clamp(int(std::lround(pt * 0.065)), 3, 12);
                         const double limit = double(w) - double(dryDelaySamples_) - 8.0;
+                        double before=0.0, after=0.0;
                         const double selected = alignHead(ring_[0].data(),
-                            oldHead, proposed, radius, limit);
+                            oldHead, proposed, radius, limit,&before,&after);
                         sharedPhaseAdjustment = selected - proposed;
-                        phaseErrorBefore_ += phaseMismatch(ring_[0].data(),
-                                                           oldHead, proposed);
-                        phaseErrorAfter_ += phaseMismatch(ring_[0].data(),
-                                                           oldHead, selected);
+                        // Reuse identical phase comparisons from alignment.
+                        phaseErrorBefore_ += before;
+                        phaseErrorAfter_ += after;
                         if (std::abs(sharedPhaseAdjustment) > 0.1)
                             ++phaseAlignmentAdjustments_;
                     }
@@ -358,12 +376,25 @@ private:
     void buildTable() {
         tableDirty_ = false; count_ = 0;
         const double srv = double(sr_);
-        if (!(srv >= kSrMin && srv <= kSrMax) || !(reference_ >= kRefMin && reference_ <= kRefMax)) return;
+        if (!(srv >= kSrMin && srv <= kSrMax) ||
+            !(reference_ >= kRefMin && reference_ <= kRefMax)) return;
+        // Direct portable calls without prepare() still work, while the
+        // normal JUCE path always precomputes on the setup thread.
+        if(!periodFactorsReady_) {
+            for(int midi=0;midi<kMaxEntry;++midi)
+                periodFactors_[std::size_t(midi)] =
+                    std::exp2((kRefNote-(double(midi)+kNoteBias))/12.0);
+            periodFactorsReady_=true;
+        }
+        const double base=srv/reference_;
         for (int oct = 0; oct < kOctaves; ++oct)
             for (int semi = 0; semi < kSemis; ++semi) {
                 if (((mask_ >> semi) & 1u) == 0u) continue;
-                const double e = (oct * 12.0 + kNoteBias + semi - kRefNote) / 12.0;
-                tbl_[size_t(count_++)] = srv / (std::exp2(e) * reference_);
+                const int midi=oct*kSemis+semi;
+                const double period=base*periodFactors_[std::size_t(midi)];
+                tbl_[std::size_t(count_)]=period;
+                logTbl_[std::size_t(count_)]=std::log2(period);
+                ++count_;
             }
     }
     // nearest enabled entry in the LOG domain
@@ -372,10 +403,10 @@ private:
         int lo = 0, hi = count_;
         while (lo < hi) {
             const int mid = (lo + hi) >> 1;
-            if (std::log2(tbl_[size_t(mid)]) > lg) lo = mid + 1; else hi = mid;
+            if (logTbl_[size_t(mid)] > lg) lo = mid + 1; else hi = mid;
         }
         const int a = lo ? lo - 1 : 0, b = std::min(lo, count_ - 1);
-        const double la = std::log2(tbl_[size_t(a)]), lb = std::log2(tbl_[size_t(b)]);
+        const double la = logTbl_[size_t(a)], lb = logTbl_[size_t(b)];
         return std::fabs(la - lg) <= std::fabs(lb - lg) ? la : lb;
     }
 
@@ -442,9 +473,6 @@ private:
             if (voicedStableHops_ >= 2) detectedVoiced_ = true;
         } else {
             voicedStableHops_ = 0;
-            // Three misses to release, as required by the original onset
-            // specification. Two can occur inside one 256-frame host block.
-            if (unvoicedHops_ >= 3) detectedVoiced_ = false;
         }
         double target = log_;
         double detectedLog = log_;
@@ -472,6 +500,8 @@ private:
             detectedLog = lg;
         } else {
             unvoicedHops_ = std::min<uint32_t>(unvoicedHops_ + 1, 1000000u);
+            // Release exactly on the third consecutive unvoiced hop.
+            if(unvoicedHops_>=3)detectedVoiced_=false;
             // The first re-entry after >=90ms of unvoiced audio is a
             // new phrase. Avoid recycling a stale smoother pitch.
             if (unvoicedHops_ * uint64_t(hop_) >=
@@ -517,28 +547,32 @@ private:
     }
     static double alignHead(const float* r, double previous,
                             double proposed, int radius,
-                            double youngestSafe) noexcept {
+                            double youngestSafe,
+                            double* before=nullptr,double* after=nullptr) noexcept {
+        // One set of comparisons supplies both head choice and mismatch
+        // telemetry. The strict phase-improvement gate is unchanged.
+        const double originalError = phaseMismatch(r, previous, proposed);
+        if(before)*before=originalError;
+        if(after)*after=originalError;
         if (proposed > youngestSafe) return proposed;
         double best = proposed;
-        const double originalError = phaseMismatch(r, previous, proposed);
-        double bestError = originalError;
+        double bestError = originalError, bestRawError=originalError;
         radius = std::clamp(radius, 0, 16);
         for (int offset = -radius; offset <= radius; ++offset) {
             const double candidate = proposed + double(offset);
             if (candidate > youngestSafe || candidate < 30.0) continue;
             const double error = phaseMismatch(r, previous, candidate);
-            // A modest geometric penalty prevents chasing a noise spike
-            // away from a credible detector-provided pitch period.
             const double penalized = error + 0.001 * double(std::abs(offset));
             if (penalized < bestError) {
                 bestError = penalized;
+                bestRawError=error;
                 best = candidate;
             }
         }
-        // Require meaningful correlation improvement; random background
-        // noise must not force jittery read-head offsets.
-        if (best != proposed && bestError < originalError * 0.90)
+        if(best != proposed && bestError < originalError * 0.90) {
+            if(after)*after=bestRawError;
             return best;
+        }
         return proposed;
     }
     static float tap(const float* r, double p, bool highQuality) noexcept {
@@ -561,7 +595,8 @@ private:
             c * r[(i + 1u) & kRingM] + d * r[(i + 2u) & kRingM]);
     }
 
-    uint32_t sr_ = 48000, hop_ = 129, n_ = 0, fresh_ = 0, w_ = 0;
+    uint32_t sr_ = 48000, hop_ = 129, n_ = 0, fresh_ = 0;
+    uint64_t w_ = 0;
     uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0,
            speed_ = 25.0, lowLatency_ = 0.0;
     bool smoothDetected_ = true, fileDetector_ = false, tableDirty_ = true;
@@ -590,7 +625,9 @@ private:
     double pos_[kLanes]{}, out_[kLanes]{}; uint32_t fade_[kLanes]{}, flen_[kLanes]{};
     std::array<float, kRing> anal_{};
     std::array<std::array<float, kRing>, kLanes> ring_{};
-    std::array<double, kMaxEntry> tbl_{}; int count_ = 0;
+    std::array<double, kMaxEntry> tbl_{},logTbl_{},periodFactors_{};
+    bool periodFactorsReady_=false;
+    int count_ = 0;
     std::array<double, kRing> m_{};
 };
 

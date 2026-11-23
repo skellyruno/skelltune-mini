@@ -67,6 +67,16 @@ inline float graphViewportX(int index,int count,int64_t sampleMs,
     if(count<=1)return right;
     return left+std::clamp(float(index)/float(count-1),0.0f,1.0f)*(right-left);
 }
+// A sparse or stale history point must never be selected just because
+// it is the mathematically nearest cached note to the mouse position.
+// This is UI-only: never used by the realtime audio callback.
+inline bool graphEditableSampleHit(float pointerX,float sampleX,
+                                   int64_t sampleMs,int64_t newestMs) noexcept {
+    return std::isfinite(pointerX) && std::isfinite(sampleX) &&
+           sampleMs>=0 && newestMs>=sampleMs &&
+           newestMs-sampleMs<=3000 &&
+           std::abs(pointerX-sampleX)<=11.0f;
+}
 inline bool graphDiscontinuity(int64_t previousMs,int64_t currentMs) noexcept {
     return previousMs>=0 && currentMs>=0 &&
            (currentMs<previousMs || currentMs-previousMs>110);

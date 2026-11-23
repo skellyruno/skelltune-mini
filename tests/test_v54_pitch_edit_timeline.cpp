@@ -12,6 +12,12 @@ int main(){
     check(t.targetAt(199)==-1 && t.targetAt(200)==62 &&
           t.targetAt(699)==62 && t.targetAt(700)==-1,"edge sample");
     check(t.add({300,400,67})>=0 && t.targetAt(350)==67,"overlap priority");
+    const auto overlay=t.latestAt(350);
+    check(overlay.valid() && overlay.startMs==300 &&
+          overlay.endMs==400 && overlay.targetMidi==67,
+          "saved overlay cannot be reselected for editing");
+    check(!t.latestAt(100).valid() && !t.latestAt(-1).valid(),
+          "blank graph space selected a saved note");
     check(t.eraseAt(350)&&t.targetAt(350)==62,"erase highest edit");
     check(t.add({-1,300,60})==-1,"negative transport");
     check(t.add({800,800,60})==-1,"empty interval");

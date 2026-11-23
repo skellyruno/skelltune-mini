@@ -364,8 +364,8 @@ if(SKELLY_META_TEST)
     add_test(NAME dsp_v63_meta_bypass_pdc COMMAND dsp_v63_meta_bypass_pdc)
 endif()
 
-// v64: fail-safe direct DSP API probes for invalid tracker rates, NaN
-// confidence/bridge controls and missing planar host audio lanes.
+# v64: fail-safe direct DSP API probes for invalid tracker rates, NaN
+# confidence/bridge controls and missing planar host audio lanes.
 add_executable(dsp_v64_host_safety tests/test_v64_host_safety.cpp)
 target_link_libraries(dsp_v64_host_safety PRIVATE skelly_dsp)
 add_test(NAME dsp_v64_host_safety COMMAND dsp_v64_host_safety)

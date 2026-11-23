@@ -137,9 +137,18 @@ class CausalPitchTracker {
 public:
     void setFastVocalAcquisitionEnabled(bool enabled) noexcept { fastVocalAcquisitionEnabled_ = enabled; }
     void setMinimumConfidence(float confidence) noexcept {
-        minimumConfidence_ = std::clamp(confidence, 0.48f, 0.75f);
+        // std::clamp(NaN, ...) returns NaN and bypasses the confidence
+        // rejection comparison. Invalid research/host values must not
+        // silently make every pitch candidate look trustworthy.
+        minimumConfidence_ = std::isfinite(confidence) ?
+            std::clamp(confidence, 0.48f, 0.75f) : 0.62f;
     }
+    float minimumConfidence() const noexcept { return minimumConfidence_; }
     void prepare(double rate) noexcept {
+        // This tracker is also used directly in offline research. Reject
+        // invalid rates before lround, division and FIR coefficient setup.
+        rate = std::clamp(std::isfinite(rate) ? rate : 48000.0,
+                          8000.0, 384000.0);
         factor_ = std::clamp(int(std::lround(rate / 12000.0)), 1, 16);
         reducedRate_ = rate / double(factor_);
         lowLag_ = std::clamp(int(reducedRate_ / 850.0), 2, 250);
@@ -680,7 +689,13 @@ public:
     }
     uint64_t bridgedHops() const noexcept { return bridgedHops_; }
     void setShortVoicedBridgeDurationMs(float ms) noexcept {
-        maxShortVoicedBridgeMs_ = std::clamp(double(ms), 0.0, 35.0);
+        // A NaN bridge duration previously reached an audio-thread
+        // floating-point-to-int conversion in the voiced gate.
+        maxShortVoicedBridgeMs_ = std::isfinite(ms) ?
+            std::clamp(double(ms), 0.0, 35.0) : 12.0;
+    }
+    double shortVoicedBridgeDurationMs() const noexcept {
+        return maxShortVoicedBridgeMs_;
     }
     // Offline A/B guard used to verify v2.9, not a user-facing automation ID.
     void setHarmonicAwareWetGateEnabled(bool enabled) noexcept { harmonicWetGateEnabled_ = enabled; }
@@ -789,8 +804,13 @@ public:
     // in/out may alias: each sample is captured before writing any output channels.
     // Planar buffers; sample-count and channel count may vary per audio callback.
     void process(const float* const* input, float* const* output, int frames, int numChannels) noexcept {
-        if (!input || !output || frames <= 0 || history_.empty()) return;
-        numChannels = std::clamp(numChannels, 1, channels_);
+        if (!input || !output || frames <= 0 || history_.empty() ||
+            numChannels <= 0) return;
+        numChannels = std::min(numChannels, channels_);
+        // A malformed standalone/host probe may contain null planar
+        // lanes. Never dereference one or partially write earlier lanes.
+        for (int c=0;c<numChannels;++c)
+            if (input[c]==nullptr || output[c]==nullptr) return;
         const int capacity = mask_ + 1;
         const double smooth = params_.speedMs <= 0.0001f ? 0.0 :
             std::exp(-1.0 / (rate_ * double(params_.speedMs) * .001));

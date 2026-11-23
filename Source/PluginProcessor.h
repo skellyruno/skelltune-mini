@@ -81,6 +81,9 @@ public:
     int displayedTargetNote() const noexcept { return displayedTargetNote_.load(std::memory_order_relaxed); }
     bool displayedTargetPending() const noexcept { return displayedTargetPending_.load(std::memory_order_relaxed); }
     float displayedCorrectionCents() const noexcept { return displayedCorrectionCents_.load(std::memory_order_relaxed); }
+    // Displays follow the SAME transient A4 as DSP, including SkellKey linked
+    // concert-pitch overrides (without mutating the saved APVTS A4 value).
+    float displayedReferenceA() const noexcept { return displayedReferenceA_.load(std::memory_order_relaxed); }
     int64_t displayedHostMs() const noexcept {
         return displayedHostMs_.load(std::memory_order_relaxed);
     }
@@ -127,5 +130,6 @@ private:
     std::atomic<int> displayedTargetNote_{-1};
     std::atomic<bool> displayedTargetPending_{false};
     std::atomic<float> displayedCorrectionCents_{0.0f};
+    std::atomic<float> displayedReferenceA_{440.0f};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SkellyTuneRealtimeProcessor)
 };

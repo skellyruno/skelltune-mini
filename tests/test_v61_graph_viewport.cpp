@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 using namespace skelly;
 static void check(bool ok,const char* msg){
     if(!ok){std::cerr<<"FAIL "<<msg<<"\n";std::exit(1);}
@@ -16,6 +17,18 @@ int main(){
           "uneven DAW times drawn with uniform index");
     check(graphViewportX(2,3,3000,3000,l,r)==r,
           "playhead sample not at right");
+    check(graphViewportTimeMs(l,3000,l,r)==0 &&
+          graphViewportTimeMs(r,3000,l,r)==3000,
+          "graph timeline inverse did not preserve endpoints");
+    check(graphViewportTimeMs(graphViewportTimeX(2500,3000,l,r),
+                              3000,l,r)==2500,
+          "right-click erased nearest GUI frame instead of actual host time");
+    check(graphViewportTimeMs(l-20,5000,l,r)==2000 &&
+          graphViewportTimeMs(r+20,5000,l,r)==5000,
+          "right-click timestamp escaped three-second viewport");
+    check(graphViewportTimeMs(std::numeric_limits<float>::quiet_NaN(),
+                              5000,l,r)==-1,
+          "NaN pointer position fabricated a timeline edit");
     check(graphViewportTimeX(0,3000,l,r)==l &&
           graphViewportTimeX(4000,3000,l,r)==r,
           "old/future pitch edit line unclipped");

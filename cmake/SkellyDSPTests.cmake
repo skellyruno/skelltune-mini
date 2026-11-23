@@ -355,3 +355,11 @@ endif()
 add_executable(dsp_v61_graph_viewport tests/test_v61_graph_viewport.cpp)
 target_link_libraries(dsp_v61_graph_viewport PRIVATE skelly_dsp)
 add_test(NAME dsp_v61_graph_viewport COMMAND dsp_v61_graph_viewport)
+
+# The three-mode Lab's bypass must preserve the same fixed dry/PDC timeline
+# as REGULAR and TESTTUNE, even in small and irregular host callback blocks.
+if(SKELLY_META_TEST)
+    add_executable(dsp_v63_meta_bypass_pdc tests/test_v63_meta_bypass_pdc.cpp)
+    target_link_libraries(dsp_v63_meta_bypass_pdc PRIVATE skelly_dsp)
+    add_test(NAME dsp_v63_meta_bypass_pdc COMMAND dsp_v63_meta_bypass_pdc)
+endif()

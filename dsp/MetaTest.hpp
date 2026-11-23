@@ -71,6 +71,12 @@ public:
                     std::exp2((kRefNote-(double(midi)+kNoteBias))/12.0);
             periodFactorsReady_=true;
         }
+        // Fixed sample-rate coefficients belong to prepare(), not every
+        // host sub-block (which can be split at manual pitch-edit edges).
+        entryAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.008));
+        exitAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
+        ratioAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.0025));
+        baseAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.010));
         tracker_.prepare(double(sr_));
         stereoRouter_.prepare(double(sr_));
         phaseCrossfade_.prepare(); // precompute Hann outside realtime process
@@ -78,6 +84,7 @@ public:
     }
     void reset() {
         n_ = fresh_ = 0; f1_ = f2_ = 0.0; curveRef_ = 1.0; w_ = 0;
+        wasBypassed_ = false;
         smooth_ = log_ = std::log2(200.0);
         raw_ = sel_ = conf_ = lastTrustedLag_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
         manualTargetMidi_ = -1;
@@ -168,6 +175,15 @@ public:
     }
     double targetHz() const { return sel_ > 0.0 ? double(sr_) / sel_ : 0.0; }
     double shiftCents() const { return sel_ > 0.0 && period_ > 0.0 ? 1200.0 * std::log2(period_ / sel_) : 0.0; }
+    // Meter/graph estimate of the AUDIO actually heard: the slewed source
+    // ratio multiplied by the present wet contribution. Unlike shiftCents(),
+    // this returns zero on bypass, dry Mix/Amount, or before voice acquisition.
+    // Blended dry/wet pitch is not a single pure frequency; this is a UI estimate.
+    double estimatedOutputCorrectionCents() const noexcept {
+        if (!(wetBlend_ > 0.0) || !(sourceRatio_ > 0.0) ||
+            !std::isfinite(sourceRatio_)) return 0.0;
+        return 1200.0 * std::log2(sourceRatio_) * wetBlend_;
+    }
     double lastPeriod() const { return period_; }
     double retuneMs() const noexcept { return speed_; }
     int latencySamples() const noexcept { return int(dryDelaySamples_); }
@@ -196,26 +212,38 @@ public:
         if(frames<=0 || lanes<=0 || io==nullptr)return;
         lanes=std::min(lanes,kLanes);
         for(int c=0;c<lanes;++c)if(io[c]==nullptr)return;
-        if (tableDirty_) buildTable();
+        if (bypass && !wasBypassed_) {
+            // Host bypass is still a plugin audio path: preserve the reported
+            // 1.5ms transport delay instead of moving dry audio 72 samples
+            // early relative to REGULAR, TESTTUNE, and DAW compensation.
+            raw_=sel_=conf_=lastTrustedLag_=0.0;
+            est_={}; wetBlend_=0.0; detectedVoiced_=false;
+            rearmOnVoiced_=true; voicedStableHops_=0;
+            unvoicedHops_=0; grainGeometryValid_=false;
+            n_=fresh_=0; f1_=f2_=0.0;
+            tracker_.reset(); stereoRouter_.reset();
+        }
+        wasBypassed_=bypass;
+        if (!bypass && tableDirty_) buildTable();
         const double grain = std::max(1.0, 2.0 - lowLatency_);
         // The grain's source age varies with pitch. Use the existing ring's
         // exact host-aligned 3ms dry tap for silence/consonants, with smooth
         // voiced-entry/exit transitions and no realtime allocations.
-        const double entry = 1.0 - std::exp(-1.0 / (double(sr_) * 0.008));
-        const double exit = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
+        const double entry = entryAlpha_;
+        const double exit = exitAlpha_;
         // A few milliseconds of ratio slew avoid zippery resampler speed
         // changes when a new pitch frame or key arrives. The note decision
         // stays immediate, and the host's fixed 3ms PDC is unchanged.
-        const double ratioAlpha = 1.0 - std::exp(-1.0 / (double(sr_) * 0.0025));
-        const double baseAlpha = 1.0 - std::exp(-1.0 / (double(sr_) * 0.010));
+        const double ratioAlpha = ratioAlpha_;
+        const double baseAlpha = baseAlpha_;
         for (int i = 0; i < frames; ++i) {
             // No uint32 rollover at ~24h on long live sessions.
             const uint64_t w = w_;
             const float input0 = lanes > 0 ? io[0][i] : 0.0f;
             // Host audio is untrusted: one NaN in the grain ring can poison
             // all future resampling heads, even when wetBlend is zero.
-            // Keep bypass output untouched; sanitize only internal history
-            // and the detector stream (same contract as RealtimeTuner).
+            // Sanitize internal history and maintain a delayed dry bypass,
+            // matching the fixed host PDC in all three test algorithms.
             const float in0 = (std::isfinite(input0) &&
                 std::abs(input0) >= 1.0e-30f) ? input0 : 0.0f;
             for (int l = 0; l < lanes; ++l) {
@@ -224,15 +252,8 @@ public:
                     std::abs(value) >= 1.0e-30f) ? value : 0.0f;
             }
             if (bypass) {
-                // Bypass stays sample-exact but must not advertise a stale
-                // green note from the pre-bypass vocal to the host/editor.
-                raw_=sel_=conf_=lastTrustedLag_=0.0;
-                est_={};
-                wetBlend_ = 0.0;
-                detectedVoiced_ = false;
-                rearmOnVoiced_ = true;
-                voicedStableHops_ = 0;
-                grainGeometryValid_ = false;
+                for(int l=0;l<lanes;++l)
+                    io[l][i] = ring_[l][(w - dryDelaySamples_) & kRingM];
                 w_ = w + 1;
                 continue;
             }
@@ -600,7 +621,11 @@ private:
     uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0,
            speed_ = 25.0, lowLatency_ = 0.0;
     bool smoothDetected_ = true, fileDetector_ = false, tableDirty_ = true;
-    bool rearmOnVoiced_ = true;
+    bool rearmOnVoiced_ = true, wasBypassed_ = false;
+    double entryAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.008));
+    double exitAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.004));
+    double ratioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.0025));
+    double baseAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.010));
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;
     PhaseCrossfadeLut phaseCrossfade_;

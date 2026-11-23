@@ -105,6 +105,39 @@ jobs:
           } finally {
             Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
           }
+      # One 3-in-1 research VST3, same pinned Windows validator as the
+      # normal plugin. Do not build or upload a second two-mode preview.
+      - name: Download pinned pluginval 2.0.0-beta3 for three-mode Lab
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip'
+          Invoke-WebRequest -Uri 'https://github.com/Tracktion/pluginval/releases/download/v2.0.0-beta3/pluginval_Windows.zip' -OutFile $archive
+          $expectedSha256 = 'da158e918b60430c6a5223cd99cc2e746bda604e583258c400898caf4e95c523'
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) { throw "Pinned pluginval hash mismatch: $actualSha256" }
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'skelly-meta-pluginval'
+          Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot -Force
+          $validator = Get-ChildItem -LiteralPath $toolRoot -Recurse -File -Filter 'pluginval.exe' | Select-Object -First 1
+          if (!$validator) { throw 'Verified pluginval executable missing' }
+          "PLUGINVAL_EXE=$($validator.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Validate actual 3-mode META Lab VST3 with pluginval strictness 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundles = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3')
+          if ($bundles.Count -ne 1) { throw "Expected one Lab VST3; got $($bundles.Count)" }
+          $stdout = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stdout'
+          $stderr = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stderr'
+          $argumentLine = '--strictness-level 5 "' + $bundles[0].FullName + '"'
+          $process = Start-Process -FilePath $env:PLUGINVAL_EXE -ArgumentList $argumentLine `
+            -WorkingDirectory $PWD.Path -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+          if ($null -eq $process.ExitCode -or $process.ExitCode -ne 0) {
+            throw "META Lab pluginval strictness 5 failed: exit=$($process.ExitCode)"
+          }
       - name: Upload genuine META Lab editor screenshots
         if: success()
         uses: actions/upload-artifact@v4

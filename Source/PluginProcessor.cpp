@@ -299,6 +299,7 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() <= 0) return;
     const auto params = currentParameters();
+    displayedReferenceA_.store(params.referenceA,std::memory_order_relaxed);
     updateTimelinePosition();
     engine_.setParameters(params);
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
@@ -333,6 +334,7 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() == 0) return;
     const auto params = currentParameters();
+    displayedReferenceA_.store(params.referenceA,std::memory_order_relaxed);
     updateTimelinePosition();
     engine_.setParameters(params);
     const int capacity = doubleScratch_.getNumSamples();
@@ -408,7 +410,9 @@ void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int fr
     displayedTargetNote_.store(voiced ? int(std::lround(69.0 + 12.0 * std::log2(targetHz / double(p.referenceA)))) : -1,
                                std::memory_order_relaxed);
     displayedTargetPending_.store(false, std::memory_order_relaxed);
-    displayedCorrectionCents_.store(voiced ? float(meta_.shiftCents()) : 0.0f, std::memory_order_relaxed);
+    displayedCorrectionCents_.store(voiced ?
+        float(meta_.estimatedOutputCorrectionCents()) : 0.0f,
+        std::memory_order_relaxed);
 }
 #endif
 juce::AudioProcessorEditor* SkellyTuneRealtimeProcessor::createEditor() {

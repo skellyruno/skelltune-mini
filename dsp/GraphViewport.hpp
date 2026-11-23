@@ -12,6 +12,19 @@ inline float graphViewportTimeX(int64_t sampleMs,int64_t newestMs,
     const double age=std::clamp(double(newestMs)-double(sampleMs),0.0,3000.0);
     return right-float(age/3000.0)*float(right-left);
 }
+// Exact inverse of the visible three-second DAW pitch-time axis. Using the
+// nearest cached GUI point for an ERASE hit can delete an adjacent note if
+// the host drops/merges UI updates; the pointer's real time is authoritative.
+inline int64_t graphViewportTimeMs(float x,int64_t newestMs,
+                                  float left,float right) noexcept {
+    if(newestMs<0 || !std::isfinite(x) || !std::isfinite(left) ||
+       !std::isfinite(right) || !(right>left))return -1;
+    const double fraction=std::clamp(
+        (double(right)-double(x))/double(right-left),0.0,1.0);
+    const int64_t time=std::int64_t(std::llround(
+        double(newestMs)-fraction*3000.0));
+    return std::max<int64_t>(0,time);
+}
 inline float graphViewportX(int index,int count,int64_t sampleMs,
                             int64_t newestMs,float left,float right) noexcept {
     if(newestMs>=0 && sampleMs>=0)

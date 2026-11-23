@@ -73,7 +73,12 @@ int main() {
     bypassVoice.fill(.125f);
     float* bypassBuffer[1]={bypassVoice.data()};
     meta.process(bypassBuffer,1,128,true);
-    for(float x:bypassVoice)check(x==.125f,"bypass changed source samples");
+    // The host plugin always advertises 1.5ms PDC. After the delay
+    // pipeline fills, bypass must emit exact delayed dry, not early input.
+    for(float x:bypassVoice)check(std::isfinite(x),"bypass emitted nonfinite PCM");
+    for(int i=meta.latencySamples();i<128;++i)
+        check(bypassVoice[std::size_t(i)]==.125f,
+              "bypass failed to preserve exact dry after host PDC");
     check(meta.detectedHz()==0.0&&meta.targetHz()==0.0,
           "bypass advertised a stale green note");
     std::cout<<"PASS: bounded clock, idle editor, 1.5ms META, sanitized"

@@ -908,18 +908,19 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         }
         // Edited notes are real absolute transport-time retune targets.
         // Render their MIDI lanes only where visible in the current 3s view.
-        if(analyzerSamples_>=2) {
-            const int count=analyzerSamples_;
-            const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
-            const int64_t firstTime=analyzerHostMs_[size_t(first)];
+        if(analyzerSamples_>=1) {
             const int64_t lastTime=analyzerHostMs_[size_t(
                 (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
-            if(firstTime>=0&&lastTime>firstTime) {
+            // Saved edits can begin BEFORE the first GUI note sample after
+            // opening the editor; show the whole 3s time viewport, not only
+            // timestamps already observed by the 30Hz callback.
+            if(lastTime>=0) {
+                const int64_t earliest=std::max<int64_t>(0,lastTime-3000);
                 juce::Graphics::ScopedSaveState clipEdits(g);
                 g.reduceClipRegion(juce::Rectangle<int>(54,451,352,199));
                 for(int i=0;i<skelly::PitchEditTimeline::kCapacity;++i) {
                     const auto edit=processor_.pitchEdits().get(i);
-                    if(!edit.valid()||edit.endMs<firstTime||
+                    if(!edit.valid()||edit.endMs<earliest||
                        edit.startMs>lastTime)continue;
                     const float x1=skelly::graphViewportTimeX(
                         edit.startMs,lastTime,left,right);
@@ -934,13 +935,27 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                 }
             }
         }
-        if(graphEditing_ && graphEditMidi_>=0) {
-            // Never draw the drag preview over the editor's title/buttons.
+        if(graphEditing_ && graphEditMidi_>=24 &&
+           graphEditMidi_!=graphEditInitialMidi_ && analyzerSamples_>0) {
+            // A note edit is a finite time span, not a three-second global
+            // pitch change. Display exactly the interval that mouse-up saves.
             juce::Graphics::ScopedSaveState preview(g);
             g.reduceClipRegion(juce::Rectangle<int>(54,451,352,199));
-            const float y=noteY(float(graphEditMidi_));
-            g.setColour(accent.brighter(0.45f));
-            g.drawLine(left,y,right,y,1.7f);
+            const int64_t newest=analyzerHostMs_[size_t(
+                (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
+            if(newest>=0) {
+                const float x1=skelly::graphViewportTimeX(
+                    graphEditStartMs_,newest,left,right);
+                const float x2=skelly::graphViewportTimeX(
+                    graphEditEndMs_,newest,left,right);
+                if(x2>x1) {
+                    const float y=noteY(float(graphEditMidi_));
+                    g.setColour(accent.withAlpha(0.20f));
+                    g.fillRoundedRectangle(x1,y-7.0f,x2-x1,14.0f,4.0f);
+                    g.setColour(accent.brighter(0.45f));
+                    g.drawLine(x1,y,x2,y,2.2f);
+                }
+            }
         }
         g.setColour(text.withAlpha(0.90f));
         g.setFont(juce::Font(juce::FontOptions(9.4f,juce::Font::bold)));
@@ -951,7 +966,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.drawText("TARGET  LINE",301,660,103,15,juce::Justification::centredRight);
         g.setColour(muted);
         g.setFont(juce::Font(juce::FontOptions(9.4f)));
-        g.drawText("DRAG PITCH TO EDIT  |  RIGHT-CLICK ERASES  |  DOUBLE-CLICK FOLLOWS",
+        g.drawText("DRAG NOTE TO RETUNE  |  WHEEL PANS  |  RIGHT-CLICK ERASES",
                    20,676,390,13,juce::Justification::centred);
 
     }
@@ -1047,11 +1062,11 @@ void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
     const float x=e.position.x*432.0f/float(getWidth());
     if(e.mods.isRightButtonDown()) {
         if(analyzerSamples_>=2 && processor_.displayedHostMs()>=0) {
-            const int count=analyzerSamples_;
-            const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
-            const int pick=graphPickHistoryIndex(x);
-            if(pick<0)return;
-            const auto ms=analyzerHostMs_[size_t((first+pick)%kAnalyzerHistory)];
+            const int64_t newest=analyzerHostMs_[size_t(
+                (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
+            const auto ms=skelly::graphViewportTimeMs(
+                x,newest,54.0f,405.0f);
+            if(ms<0)return;
             // Right-click must hit the actual edited target line; clicking
             // blank piano-roll space must never delete an unrelated note.
             const int note=processor_.pitchEdits().targetAt(ms);
@@ -1202,7 +1217,7 @@ void SkellyTuneEditor::updateLiveFeedback() {
     const float hz = processor_.displayedPitchHz();
     const int target = processor_.displayedTargetNote();
     const float correction = processor_.displayedCorrectionCents();
-    const double a4=double(parameters_.getRawParameterValue("a4")->load());
+    const double a4=double(processor_.displayedReferenceA());
     const bool voiced = std::isfinite(hz) && hz>40.0f && hz<2400.0f &&
         std::isfinite(correction) && std::isfinite(a4) && a4>0.0 &&
         processor_.displayedConfidence()>=0.55f &&
@@ -1210,7 +1225,7 @@ void SkellyTuneEditor::updateLiveFeedback() {
 
     voicedFade_ += ((voiced ? 1.0f : 0.0f) - voicedFade_) * (voiced ? 0.55f : 0.18f);
     if (voiced) {
-        const double a4 = parameters_.getRawParameterValue("a4")->load();
+        const double a4 = processor_.displayedReferenceA();
         const double inputMidi = 69.0 + 12.0 * std::log2(double(hz) / a4);
         const float deviation = float(juce::jlimit(-100.0, 100.0, (inputMidi - double(target)) * 100.0));
         dispDeviation_ += (deviation - dispDeviation_) * 0.5f;
@@ -1229,7 +1244,7 @@ void SkellyTuneEditor::updateLiveFeedback() {
     // breaks the polyline instead of drawing a spurious pitch plunge.
     const float inputMidi = voiced ? float(69.0 +
         12.0*std::log2(double(hz) /
-            double(parameters_.getRawParameterValue("a4")->load()))) : -1.0f;
+            double(processor_.displayedReferenceA()))) : -1.0f;
     const int64_t hostMs=processor_.displayedHostMs();
     const int last=(analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory;
     const int64_t previous=analyzerSamples_>0?analyzerHostMs_[size_t(last)]:-1;

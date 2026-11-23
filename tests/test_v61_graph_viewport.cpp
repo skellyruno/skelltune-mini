@@ -43,6 +43,24 @@ int main(){
           graphWheelPan(95,4)==96.0f &&
           graphWheelPan(37,-4)==36.0f,
           "wheel pan direction or range");
+    // A snapshot stays visually stable while the live ring moves and wraps.
+    std::array<float,4> in{{62.0f,63.0f,60.0f,61.0f}};
+    std::array<float,4> out{{62.5f,63.5f,60.5f,61.5f}};
+    std::array<int64_t,4> times{{300,400,100,200}};
+    PitchGraphGestureSnapshot<4> gesture;
+    gesture.freeze(2,4,in,out,times); // ring chronology: 100,200,300,400
+    check(gesture.active() && gesture.count()==4 &&
+          gesture.newestMs()==400 && gesture.inputAt(0)==60.0f &&
+          gesture.outputAt(3)==63.5f && gesture.timeAt(2)==300,
+          "wrapped live drag snapshot order");
+    in.fill(90.0f);out.fill(99.0f);times.fill(1000);
+    check(gesture.inputAt(0)==60.0f && gesture.outputAt(3)==63.5f &&
+          gesture.newestMs()==400,"live capture shifted selected note");
+    gesture.release();
+    check(!gesture.active()&&gesture.count()==0&&gesture.newestMs()==-1,
+          "drag release did not restore live following");
+    gesture.freeze(1,0,in,out,times);
+    check(!gesture.active(),"empty graph snapshot incorrectly armed");
     PitchEditTimeline edits;
     check(edits.framesUntilBoundary(-1,0,256,48000.0)==256,
           "empty timeline split buffer");

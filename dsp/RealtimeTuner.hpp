@@ -654,7 +654,9 @@ public:
     // to catch a one-block factory-state regression after META -> REGULAR.
     Parameters parameterSnapshotForLabTests() const noexcept { return params_; }
 #endif
-    DelayContract outputDelayContract(bool experimentalMode) const noexcept {
+    // Host PDC is the same for all realtime synthesis engines; only the
+    // variable grain source age differs, and it must not be host-compensated.
+    DelayContract outputDelayContract(bool /*experimentalMode*/) const noexcept {
         return studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_) : studioDelayContract(rate_))
                             : DelayContract{latency_,true,true,false};
     }

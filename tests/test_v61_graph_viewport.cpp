@@ -38,6 +38,13 @@ int main(){
           graphDiscontinuity(3000,3200) &&
           !graphDiscontinuity(3000,3100),
           "seek or dropped frames joined");
+    check(graphEditableSampleHit(300.0f,308.0f,2600,3000) &&
+          !graphEditableSampleHit(300.0f,320.0f,2600,3000) &&
+          !graphEditableSampleHit(300.0f,300.0f,-1,3000) &&
+          !graphEditableSampleHit(300.0f,300.0f,0,4000) &&
+          !graphEditableSampleHit(std::numeric_limits<float>::infinity(),
+                                  300.0f,2500,3000),
+          "graph point hit snapped to distant/stale/invalid note");
     check(graphWheelPan(60,0.5f)==64.0f &&
           graphWheelPan(60,-0.25f)==58.0f &&
           graphWheelPan(95,4)==96.0f &&

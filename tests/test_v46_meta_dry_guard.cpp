@@ -47,7 +47,10 @@ int main(){
     for(int i=0;i<frames;i+=128){
         float* io[1]={bypassOut.data()+i};bypass.process(io,1,128,true);
     }
-    need(bypassOut==source,"META bypass not bit-exact");
+    // A bypassed plugin still reports PDC to the host. Both its normal
+    // Amount=0 path and bypass must emit the SAME delayed dry PCM.
+    need(bypass.latencySamples()==delay,"META bypass latency differs from dry");
+    need(bypassOut==dryOut,"META bypass must match exact delayed dry PCM");
     // A host can send NaNs, infinities and subnormals while switching
     // devices or loading projects. Reject those within META's internal
     // pitch tracker and grain history without contaminating future audio.

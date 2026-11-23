@@ -54,6 +54,18 @@ public:
     bool hasEdits() const noexcept {
         return activeCount_.load(std::memory_order_acquire)>0;
     }
+    // GUI-only read of the latest visible overlay, including its exact
+    // persisted span. Enables re-editing a saved note without relying on
+    // a 30 Hz detector sample that may no longer be under that green line.
+    PitchEditRecord latestAt(int64_t hostMs) const noexcept {
+        if(hostMs<0 || !hasEdits())return {};
+        for(int i=kCapacity-1;i>=0;--i) {
+            const auto r=get(i);
+            if(r.valid() && hostMs>=r.startMs && hostMs<r.endMs)
+                return r;
+        }
+        return {};
+    }
     int targetAt(int64_t hostMs) const noexcept {
         // Unedited vocal: avoid scanning 48 atomics on every host buffer.
         if(hostMs<0 || activeCount_.load(std::memory_order_acquire)==0)return -1;

@@ -46,7 +46,13 @@ static double cents(double a, double b) { return 1200.0 * std::log2(a / b); }
 // Runs x through the engine in 128-frame blocks, advancing through the buffer.
 static std::vector<float> run(skelly::MetaTest& m, std::vector<float> x, bool bypass = false) {
     std::vector<float> r = x;
-    for (size_t i = 0; i + 128 <= x.size(); i += 128) { float* io[2] = {x.data() + i, r.data() + i}; m.process(io, 2, 128, bypass); }
+    // Hosts can end an audio stream with a short block; process that tail,
+    // rather than silently leaving the last 64 samples unprocessed.
+    for (size_t i = 0; i < x.size(); i += 128) {
+        const int count=int(std::min<size_t>(128,x.size()-i));
+        float* io[2] = {x.data() + i, r.data() + i};
+        m.process(io, 2, count, bypass);
+    }
     return x;
 }
 

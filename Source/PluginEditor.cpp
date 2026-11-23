@@ -811,7 +811,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.setColour(muted);
         g.setFont(juce::Font(juce::FontOptions(9.2f)));
         g.drawText(processor_.displayedHostMs()<0 ? "NO HOST SYNC" :
-                   (graphEditing_ ? "EDIT " + noteLabel(graphEditMidi_) + " / LIVE" :
+                   (graphEditing_ ? "EDIT " + noteLabel(graphEditMidi_) :
                     juce::String(double(processor_.displayedHostMs())/1000.0,2)+"s"),
                    210,422,87,17,juce::Justification::centredRight);
         // Eight semitones of real note-space. Dragged voiced lines
@@ -907,12 +907,12 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                     analyzerInputMidi_[size_t(latest)];
                 const float nowOut=pinned?graphGesture_.outputAt(n-1):
                     analyzerOutputMidi_[size_t(latest)];
-                if(nowIn>=0.0f) {
+                if(nowIn>=0.0f && std::isfinite(nowIn)) {
                     const float y=noteY(nowIn);
                     g.setColour(text);
                     g.fillEllipse(right-3.0f,y-3.0f,6.0f,6.0f);
                 }
-                if(nowOut>=0.0f) {
+                if(nowOut>=0.0f && std::isfinite(nowOut)) {
                     const float y=noteY(nowOut);
                     g.setColour(accent);
                     g.fillEllipse(right-3.5f,y-3.5f,7.0f,7.0f);
@@ -990,7 +990,9 @@ bool SkellyTuneEditor::graphHit(juce::Point<float> position) const noexcept {
     if (!analyzerExpanded_ || getWidth() <= 0 || getHeight() <= 0) return false;
     const float x=position.x*432.0f/float(getWidth());
     const float y=position.y*700.0f/float(getHeight());
-    return x>=49.0f&&x<=409.0f&&y>=446.0f&&y<=654.0f;
+    // Only the plotted data rectangle is interactive. The previous
+    // enlarged hit box made clicks on the axis border erase end notes.
+    return x>=54.0f&&x<=405.0f&&y>=451.0f&&y<=649.0f;
 }
 int SkellyTuneEditor::graphPickHistoryIndex(float x) const noexcept {
     if(analyzerSamples_<=0)return -1;
@@ -998,12 +1000,14 @@ int SkellyTuneEditor::graphPickHistoryIndex(float x) const noexcept {
     const int first=(analyzerHead_+kAnalyzerHistory-n)%kAnalyzerHistory;
     const int64_t newest=analyzerHostMs_[size_t(
         (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
-    int closestIndex=0;
+    int closestIndex=-1;
     float closestDistance=std::numeric_limits<float>::max();
     for(int i=0;i<n;++i) {
         const int index=(first+i)%kAnalyzerHistory;
+        const int64_t stamp=analyzerHostMs_[size_t(index)];
         const float at=skelly::graphViewportX(
-            i,n,analyzerHostMs_[size_t(index)],newest,54.0f,405.0f);
+            i,n,stamp,newest,54.0f,405.0f);
+        if(!skelly::graphEditableSampleHit(x,at,stamp,newest))continue;
         const float distance=std::abs(x-at);
         if(distance<closestDistance) {
             closestDistance=distance;
@@ -1018,7 +1022,8 @@ void SkellyTuneEditor::mouseWheelMove(
         juce::AudioProcessorEditor::mouseWheelMove(e,details);
         return;
     }
-    if(!std::isfinite(details.deltaY) || details.deltaY==0.0f)return;
+    if(graphEditing_ || graphDragging_ ||
+       !std::isfinite(details.deltaY) || details.deltaY==0.0f)return;
     graphCenterMidi_=skelly::graphWheelPan(graphCenterMidi_,details.deltaY);
     graphFollow_=false;
     analyzerToggle_.getProperties().set("graphFollow",false);
@@ -1026,13 +1031,47 @@ void SkellyTuneEditor::mouseWheelMove(
     repaint();
 }
 bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
-    if(!graphHit(position)||analyzerSamples_<2||
+    if(!graphHit(position)||analyzerSamples_<1||
        processor_.displayedHostMs()<0)return false;
     const float x=position.x*432.0f/float(getWidth());
     const float y=position.y*700.0f/float(getHeight());
-    const int count=analyzerSamples_;
+    const int newestIndex=(analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory;
+    const int64_t newest=analyzerHostMs_[size_t(newestIndex)];
+    if(newest<0)return false;
+    // Prefer an already saved green edit line over the older estimated
+    // output trace. The stored edit can exist before any second GUI tick.
+    const auto begin=[this,position](int note,int64_t from,int64_t to) {
+        if(note<24||note>107||from<0||to<=from)return false;
+        graphEditStartMs_=from;
+        graphEditEndMs_=to;
+        graphEditMidi_=note;
+        graphEditInitialMidi_=note;
+        graphDragging_=false;
+        graphEditing_=true;
+        graphFollow_=false;
+        analyzerToggle_.getProperties().set("graphFollow",false);
+        graphDragStartY_=position.y;
+        graphDragStartMidi_=float(note);
+        graphGesture_.freeze(analyzerHead_,analyzerSamples_,
+                             analyzerInputMidi_,analyzerOutputMidi_,analyzerHostMs_);
+        repaint();
+        return true;
+    };
+    const int64_t clickMs=skelly::graphViewportTimeMs(
+        x,newest,54.0f,405.0f);
+    if(clickMs<0)return false;
+    const auto prior=processor_.pitchEdits().latestAt(clickMs);
+    if(prior.valid()) {
+        const float priorY=550.0f-
+            (float(prior.targetMidi)-graphCenterMidi_)*198.0f/8.0f;
+        if(std::abs(y-priorY)<=10.0f)
+            return begin(prior.targetMidi,prior.startMs,prior.endMs);
+    }
+
+    if(analyzerSamples_<2)return false;
     const int pick=graphPickHistoryIndex(x);
     if(pick<0)return false;
+    const int count=analyzerSamples_;
     const int first=(analyzerHead_+kAnalyzerHistory-count)%kAnalyzerHistory;
     const int index=(first+pick)%kAnalyzerHistory;
     const float pitch=analyzerOutputMidi_[size_t(index)];
@@ -1042,8 +1081,7 @@ bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
     if(std::abs(y-pitchY)>10.0f)return false;
     const int note=analyzerTargetMidi_[size_t(index)];
     if(note<0)return false;
-    // Select the entire visible contiguous note, not an unrelated
-    // subsequent syllable. A small temporal pad covers its causal onset.
+    // This is a contiguous detector note, not an unrelated syllable.
     int64_t firstMs=stamp,lastMs=stamp;
     for(int i=pick-1;i>=0;--i) {
         const int j=(first+i)%kAnalyzerHistory;
@@ -1059,26 +1097,15 @@ bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
            analyzerHostMs_[size_t(j)]-lastMs>110)break;
         lastMs=analyzerHostMs_[size_t(j)];
     }
-    graphEditStartMs_=std::max<int64_t>(0,firstMs-35);
-    graphEditEndMs_=std::max(graphEditStartMs_+100,lastMs+65);
-    graphEditMidi_=note;
-    graphEditInitialMidi_=note;
-    graphDragging_=false;
-    graphEditing_=true;
-    graphFollow_=false;
-    analyzerToggle_.getProperties().set("graphFollow",false);
-    graphDragStartY_=position.y;
-    graphDragStartMidi_=float(note);
-    graphGesture_.freeze(analyzerHead_,analyzerSamples_,
-                         analyzerInputMidi_,analyzerOutputMidi_,analyzerHostMs_);
-    repaint();
-    return true;
+    const int64_t from=std::max<int64_t>(0,firstMs-35);
+    const int64_t to=std::max(from+100,lastMs+65);
+    return begin(note,from,to);
 }
 void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
     if(!graphHit(e.position))return;
     const float x=e.position.x*432.0f/float(getWidth());
     if(e.mods.isRightButtonDown()) {
-        if(analyzerSamples_>=2 && processor_.displayedHostMs()>=0) {
+        if(analyzerSamples_>=1 && processor_.displayedHostMs()>=0) {
             const int64_t newest=analyzerHostMs_[size_t(
                 (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
             const auto ms=skelly::graphViewportTimeMs(
@@ -1108,6 +1135,10 @@ void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
     graphFollow_=false;
     graphDragStartY_=e.position.y;
     graphDragStartMidi_=graphCenterMidi_;
+    // Panning during recording holds the visible phrase in place too;
+    // pitch acquisition keeps updating the underlying circular buffer.
+    graphGesture_.freeze(analyzerHead_,analyzerSamples_,
+                         analyzerInputMidi_,analyzerOutputMidi_,analyzerHostMs_);
     analyzerToggle_.getProperties().set("graphFollow",false);
     repaint();
 }
@@ -1278,6 +1309,7 @@ void SkellyTuneEditor::updateLiveFeedback() {
         // A transport seek/loop invalidates the position being dragged.
         // Cancel rather than silently write a note into the wrong take.
         graphEditing_=false;
+        graphDragging_=false;
         graphGesture_.release();
     }
     // Preserve recorded notes when DAW transport stops. Without a

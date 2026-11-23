@@ -52,8 +52,10 @@ public:
 
     MetaTest() { reset(); }
 
-    void prepare(double sampleRate) {
+    void prepare(double sampleRate, double dryLatencyMs = 3.0) {
         sr_ = static_cast<uint32_t>(sampleRate);
+        dryLatencyMs_ = std::clamp(
+            std::isfinite(dryLatencyMs) ? dryLatencyMs : 3.0, 1.5, 3.0);
         hop_ = std::max<uint32_t>(32, static_cast<uint32_t>(sampleRate * 0.0027));
         // Preparing detector FIR coefficients is expensive; do it only
         // from prepareToPlay, NEVER from the audio callback's mode switch.
@@ -72,7 +74,10 @@ public:
         // pause can re-arm the same causal one-shot without allocations.
         rearmOnVoiced_ = true; unvoicedHops_ = 0;
         grainJumps_ = grainJumpCrossfades_ = 0;
-        dryDelaySamples_ = std::max(1u, uint32_t(std::lround(double(sr_) * 0.003)));
+        // Same fixed dry/transient transport as REGULAR + TESTTUNE.
+        // Keep this setting across META's per-mode reset() calls.
+        dryDelaySamples_ = std::max(
+            1u, uint32_t(std::lround(double(sr_) * dryLatencyMs_ * 0.001)));
         wetBlend_ = 0.0; detectedVoiced_ = false;
         voicedStableHops_ = 0;
         sourceRatio_ = 1.0; sourceBase_ = 0.0; grainGeometryValid_ = false;
@@ -148,6 +153,7 @@ public:
     double shiftCents() const { return sel_ > 0.0 && period_ > 0.0 ? 1200.0 * std::log2(period_ / sel_) : 0.0; }
     double lastPeriod() const { return period_; }
     double retuneMs() const noexcept { return speed_; }
+    int latencySamples() const noexcept { return int(dryDelaySamples_); }
     // A true 1/e time constant in milliseconds, for any host sample rate.
     static double smoothingRetention(double speedMs, double rate,
                                      uint32_t elapsedSamples) noexcept {
@@ -548,6 +554,7 @@ private:
     PhaseCrossfadeLut phaseCrossfade_;
     uint32_t unvoicedHops_ = 0;
     uint32_t dryDelaySamples_ = 144;
+    double dryLatencyMs_ = 3.0;
     double wetBlend_ = 0.0;
     int manualTargetMidi_ = -1;
     bool detectedVoiced_ = false;

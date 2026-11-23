@@ -562,15 +562,17 @@ public:
     // Never change host PDC from the realtime process callback.
     // Existing calls preserve the original realtime/50ms profiles. Fast Studio
     // must be chosen before preparing; it is never an automatable mode.
-    void prepare(double sampleRate, int maxChannels = 2, bool studioClock = false, bool fastStudio = false) {
+    void prepare(double sampleRate, int maxChannels = 2, bool studioClock = false,
+                 bool fastStudio = false, double realtimeLatencyMs = 3.0) {
         rate_ = std::clamp(sampleRate, 8000.0, 192000.0);
         channels_ = std::clamp(maxChannels, 1, 2);
-        // Fixed, nominal audio delay ~= 3 ms, rounded to integer samples.
+        // Host compensated realtime delay is selected only in prepareToPlay.
+        // Its dry/transient path remains sample-exact, even at 1.5ms.
         studioClock_ = studioClock;
         fastStudio_ = studioClock && fastStudio;
         latency_ = studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_).reportedSamples
                                               : studioDelayContract(rate_).reportedSamples)
-                                 : delayContract(rate_, false).reportedSamples;
+                                 : delayContract(rate_, false, realtimeLatencyMs).reportedSamples;
         int capacity = 1;
         while (capacity < int(rate_ * 0.20) + 8192) capacity <<= 1;
         mask_ = capacity - 1;
@@ -654,7 +656,7 @@ public:
 #endif
     DelayContract outputDelayContract(bool experimentalMode) const noexcept {
         return studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_) : studioDelayContract(rate_))
-                            : delayContract(rate_, experimentalMode);
+                            : DelayContract{latency_,true,true,false};
     }
     uint64_t preservedTransientSamples() const noexcept { return preservedTransientSamples_; }
     // Offline A/B switch: old instantaneous dry re-entry is reproducible

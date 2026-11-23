@@ -329,3 +329,10 @@ if(SKELLY_META_TEST)
     target_link_libraries(dsp_v57_meta_fade_lut PRIVATE skelly_dsp)
     add_test(NAME dsp_v57_meta_fade_lut COMMAND dsp_v57_meta_fade_lut)
 endif()
+
+# Real 1.5ms transport contract, sample-exact dry at three sample rates,
+# full-wet finite/peak guard, META dry parity and reset robustness.
+# Historical portable callers retain the previous 3ms prepare default.
+add_executable(dsp_v59_low_pdc tests/test_v59_low_pdc.cpp)
+target_link_libraries(dsp_v59_low_pdc PRIVATE skelly_dsp)
+add_test(NAME dsp_v59_low_pdc COMMAND dsp_v59_low_pdc)

@@ -150,10 +150,16 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
 #elif defined(SKELLY_STUDIO_PROFILE) && SKELLY_STUDIO_PROFILE
     engine_.prepare(sampleRate, getTotalNumInputChannels(), true);
 #else
-    engine_.prepare(sampleRate, getTotalNumInputChannels());
+    // 1.5ms fixed PDC in this Mini VST3, set before processing starts.
+    // Existing 40/50ms Studio products and legacy portable DSP defaults
+    // retain their own contracts; no realtime latency automation.
+    engine_.prepare(sampleRate, getTotalNumInputChannels(),
+                    false, false, 1.5);
 #endif
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
-    meta_.prepare(sampleRate);
+    // META retains its own grain-source history, but the dry/transient
+    // transport must match this same host PDC in every selected algorithm.
+    meta_.prepare(sampleRate, 1.5);
     metaWasActive_ = false;
 #endif
     // Both modes share the same sample-accurate dry/transient transport delay.
@@ -163,6 +169,9 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     const auto cycle = engine_.outputDelayContract(true);
     jassert(realtime.reportedSamples == cycle.reportedSamples);
     setLatencySamples(realtime.reportedSamples);
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    jassert(meta_.latencySamples() == realtime.reportedSamples);
+#endif
 }
 void SkellyTuneRealtimeProcessor::releaseResources() {
     preparedAudioRate_ = 0.0;

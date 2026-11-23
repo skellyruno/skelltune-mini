@@ -74,7 +74,16 @@ int main() {
             earlyAudio.getSample(1, 46) != 0.125) return 3;
         std::cerr << "STEP: unprepared 64-bit probe passthrough ok\n" << std::flush;
         processor.prepareToPlay(48000.0, 256);
-        std::cerr << "STEP: prepare ok\n" << std::flush;
+#if !defined(SKELLY_STUDIO_PROFILE) && !defined(SKELLY_STUDIO_FAST_PROFILE)
+        // Host-visible PDC must REALLY be reduced to 72 samples at 48k,
+        // not merely an updated plugin label.
+        if (processor.getLatencySamples() != 72) {
+            std::cerr << "FAIL: 1.5ms VST3 PDC expected 72 frames, got "
+                      << processor.getLatencySamples() << "\n";
+            return 69;
+        }
+#endif
+        std::cerr << "STEP: prepare + sample-exact host PDC ok\n" << std::flush;
         std::cerr << "STEP: before editor construction\n" << std::flush;
         std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
         if (!processor.worldLink.requested() || !processor.followingSkellKey()) {

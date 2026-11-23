@@ -93,6 +93,20 @@ jobs:
           if (!(Test-Path -LiteralPath $binary -PathType Leaf)) {
             throw 'Compiled META Lab x64 module missing'
           }
+      - name: Normalize and strictly validate META Lab VST3 moduleinfo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m unittest discover -s tests -p "test_vst3_moduleinfo.py" -v
+          if ($LASTEXITCODE -ne 0) { throw 'VST3 metadata normalizer regression failed' }
+          $lab = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3')
+          if ($lab.Count -ne 1) { throw "Expected one META Lab VST3 to normalize; got $($lab.Count)" }
+          $moduleInfo = Join-Path $lab[0].FullName 'Contents/Resources/moduleinfo.json'
+          if (!(Test-Path -LiteralPath $moduleInfo -PathType Leaf)) {
+            throw 'META Lab moduleinfo.json is missing'
+          }
+          python tools/normalize_vst3_moduleinfo.py --path "$moduleInfo" --cmake-file CMakeLists.txt --expected-name "SkellyTune META Lab"
+          if ($LASTEXITCODE -ne 0) { throw 'META Lab strict metadata normalization failed' }
       - name: Exercise real editor, algorithm parameter, knob endpoints, audio and IPC
         shell: pwsh
         run: |
@@ -167,6 +181,12 @@ jobs:
           if (!$lab) { throw 'META Lab x64 test bundle missing' }
           New-Item -ItemType Directory -Force -Path META-LAB-TEST-ONLY | Out-Null
           Copy-Item -LiteralPath $lab.FullName -Destination 'META-LAB-TEST-ONLY' -Recurse
+          $moduleInfo = Join-Path 'META-LAB-TEST-ONLY' 'SkellyTune META Lab.vst3/Contents/Resources/moduleinfo.json'
+          if (!(Test-Path -LiteralPath $moduleInfo -PathType Leaf)) {
+            throw 'Staged META Lab metadata missing'
+          }
+          python -c "import json,sys; doc=json.load(open(sys.argv[1],encoding='utf-8')); assert doc['Name']=='SkellyTune META Lab'; assert len(doc['Classes'])==2" "$moduleInfo"
+          if ($LASTEXITCODE -ne 0) { throw 'Staged META Lab metadata failed strict JSON' }
           @'
           SKELLYTUNE META LAB — OWNER RESEARCH TEST ONLY
           NOT A RELEASE. NOT FOR REDISTRIBUTION OR PRODUCTION.
@@ -175,10 +195,16 @@ jobs:
           META's output delay/PDC and consonant processing are not fully verified.
           '100' dial = 100ms. '0' dial = 0ms (fast hard correction).
           '@ | Set-Content -Path 'META-LAB-TEST-ONLY/README-TEST-ONLY.txt'
-          $file = Join-Path 'META-LAB-TEST-ONLY' 'SkellyTune META Lab.vst3/Contents/x86_64-win/SkellyTune META Lab.vst3'
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
-          "$hash *SkellyTune META Lab.vst3/Contents/x86_64-win/SkellyTune META Lab.vst3" |
-            Set-Content -Path 'META-LAB-TEST-ONLY/SHA256SUMS.txt'
+          $packageRoot = Join-Path $PWD 'META-LAB-TEST-ONLY'
+          $manifest = foreach ($relative in @(
+            'SkellyTune META Lab.vst3/Contents/x86_64-win/SkellyTune META Lab.vst3',
+            'SkellyTune META Lab.vst3/Contents/Resources/moduleinfo.json'
+          )) {
+            $file = Join-Path $packageRoot $relative
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            "$hash *$relative"
+          }
+          $manifest | Set-Content -LiteralPath (Join-Path $packageRoot 'SHA256SUMS.txt') -Encoding utf8
       - name: Upload owner's temporary META Lab TEST-ONLY binary
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/mini-pr16-vst3-program-name-20261121'
         uses: actions/upload-artifact@v4

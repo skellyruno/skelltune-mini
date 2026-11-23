@@ -3,7 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
-  pull_request:
+  # Development PRs use mini-meta-lab.yml exclusively: one Windows VST3
+  # with REGULAR, TESTTUNE and META, avoiding duplicate preview builds.
+  # Retain the normal product's protected-branch/manual validation.
 
 # Cancel superseded PR runs only. Never cancel main or manual verification.
 concurrency:

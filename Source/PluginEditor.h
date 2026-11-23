@@ -141,7 +141,7 @@ private:
     int analyzerHead_ = 0, analyzerSamples_ = 0;
     float graphCenterMidi_ = 60.0f, graphDragStartMidi_ = 60.0f, graphDragStartY_ = 0.0f;
     bool graphFollow_ = true, graphDragging_ = false, graphEditing_ = false;
-    int graphEditMidi_ = -1;
+    int graphEditMidi_ = -1, graphEditInitialMidi_ = -1;
     int64_t graphEditStartMs_ = -1, graphEditEndMs_ = -1;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         keyAttachment_, scaleAttachment_;

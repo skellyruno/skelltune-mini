@@ -25,7 +25,12 @@ public:
     void set(int i,PitchEditRecord r) noexcept {
         if(i<0||i>=kCapacity)return;
         if(!acceptable(r))r={};
-        const bool wasValid=get(i).valid();
+        const auto before=get(i);
+        // A repeated editor state/clear request must not churn seqlocks
+        // read by the realtime thread when the record is already equal.
+        if(before.startMs==r.startMs && before.endMs==r.endMs &&
+           before.targetMidi==r.targetMidi)return;
+        const bool wasValid=before.valid();
         Slot& s=slots_[std::size_t(i)];
         s.seq.fetch_add(1,std::memory_order_acq_rel);
         s.start.store(r.startMs,std::memory_order_relaxed);
@@ -45,6 +50,9 @@ public:
                           s.note.load(std::memory_order_relaxed)};
         const unsigned seq2=s.seq.load(std::memory_order_acquire);
         return seq1==seq2 && acceptable(r) ? r : PitchEditRecord{};
+    }
+    bool hasEdits() const noexcept {
+        return activeCount_.load(std::memory_order_acquire)>0;
     }
     int targetAt(int64_t hostMs) const noexcept {
         // Unedited vocal: avoid scanning 48 atomics on every host buffer.
@@ -83,8 +91,14 @@ public:
     // are in whole milliseconds, so boundary resolution is <=1ms; the
     // host buffer size must not delay the correction by another block.
     static int64_t frameMs(int64_t blockMs,int offset,double sampleRate) noexcept {
-        if(blockMs<0||offset<0||!(sampleRate>0.0))return -1;
-        return blockMs+int64_t(std::floor(double(offset)*1000.0/sampleRate));
+        // Reject broken host rates and requests beyond the bounded
+        // persisted edit clock. Never cast NaN/inf/overflow to int64_t.
+        if(blockMs<0 || blockMs>2147483647LL || offset<0 ||
+           !std::isfinite(sampleRate) || !(sampleRate>0.0))return -1;
+        const double position=double(blockMs)+
+            std::floor(double(offset)*1000.0/sampleRate);
+        if(!std::isfinite(position) || position>2147483647.0)return -1;
+        return int64_t(position);
     }
     int framesUntilBoundary(int64_t blockMs,int offset,int remaining,
                             double sampleRate) const noexcept {
@@ -121,8 +135,9 @@ public:
         return false;
     }
     void clear() noexcept {
+        if(!hasEdits())return; // preserve realtime seqlocks on empty project
         for(int i=0;i<kCapacity;++i)set(i,{});
-     }
+    }
 private:
     struct Slot {
         std::atomic<unsigned> seq{0};

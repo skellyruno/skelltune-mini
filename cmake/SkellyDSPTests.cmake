@@ -336,3 +336,10 @@ endif()
 add_executable(dsp_v59_low_pdc tests/test_v59_low_pdc.cpp)
 target_link_libraries(dsp_v59_low_pdc PRIVATE skelly_dsp)
 add_test(NAME dsp_v59_low_pdc COMMAND dsp_v59_low_pdc)
+
+if(SKELLY_META_TEST)
+    # Invalid host input, timeline, bypass and zero-allocation edit guards.
+    add_executable(dsp_v60_meta_host_guard tests/test_v60_meta_host_guard.cpp)
+    target_link_libraries(dsp_v60_meta_host_guard PRIVATE skelly_dsp)
+    add_test(NAME dsp_v60_meta_host_guard COMMAND dsp_v60_meta_host_guard)
+endif()

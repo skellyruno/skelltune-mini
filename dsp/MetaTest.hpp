@@ -53,10 +53,14 @@ public:
     MetaTest() { reset(); }
 
     void prepare(double sampleRate, double dryLatencyMs = 3.0) {
-        sr_ = static_cast<uint32_t>(sampleRate);
+        // Reject NaN, infinity, negative and out-of-engine sample rates
+        // before converting to an unsigned integer or preparing the tracker.
+        const double safeRate=std::clamp(
+            std::isfinite(sampleRate)?sampleRate:48000.0,kSrMin,kSrMax);
+        sr_ = static_cast<uint32_t>(std::lround(safeRate));
         dryLatencyMs_ = std::clamp(
             std::isfinite(dryLatencyMs) ? dryLatencyMs : 3.0, 1.5, 3.0);
-        hop_ = std::max<uint32_t>(32, static_cast<uint32_t>(sampleRate * 0.0027));
+        hop_ = std::max<uint32_t>(32, static_cast<uint32_t>(double(sr_) * 0.0027));
         // Preparing detector FIR coefficients is expensive; do it only
         // from prepareToPlay, NEVER from the audio callback's mode switch.
         tracker_.prepare(double(sr_));
@@ -92,6 +96,11 @@ public:
     }
     // mask: C=bit0..B=bit11. Speed is TRUE host milliseconds (0..200).
     void setParameters(uint16_t mask, double referenceA, double amount, double speed, double lowLatency = 0.0) {
+        // Defend against untrusted host state and standalone A/B inputs.
+        // The 12-bit chromatic mask must never read reserved bits.
+        mask=uint16_t(mask & 0x0fffu);
+        if(!std::isfinite(referenceA) || referenceA<kRefMin ||
+           referenceA>kRefMax)referenceA=440.0;
         if (mask != mask_ || referenceA != reference_) tableDirty_ = true;
         mask_ = mask; reference_ = referenceA;
         amount_ = std::clamp(std::isfinite(amount) ? amount : 1.0, 0.0, 1.0);
@@ -165,7 +174,11 @@ public:
     int tableCount() const { return count_; }
 
     void process(float* const* io, int lanes, int frames, bool bypass = false) {
-        lanes = std::min(lanes, kLanes);
+        // A host can probe an unprepared instance with zero frames or
+        // channels. Reject missing planar pointers before dereferencing.
+        if(frames<=0 || lanes<=0 || io==nullptr)return;
+        lanes=std::min(lanes,kLanes);
+        for(int c=0;c<lanes;++c)if(io[c]==nullptr)return;
         if (tableDirty_) buildTable();
         const double grain = std::max(1.0, 2.0 - lowLatency_);
         // The grain's source age varies with pitch. Use the existing ring's
@@ -193,6 +206,10 @@ public:
                     std::abs(value) >= 1.0e-30f) ? value : 0.0f;
             }
             if (bypass) {
+                // Bypass stays sample-exact but must not advertise a stale
+                // green note from the pre-bypass vocal to the host/editor.
+                raw_=sel_=conf_=lastTrustedLag_=0.0;
+                est_={};
                 wetBlend_ = 0.0;
                 detectedVoiced_ = false;
                 rearmOnVoiced_ = true;

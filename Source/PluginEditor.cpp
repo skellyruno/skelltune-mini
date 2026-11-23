@@ -572,8 +572,11 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     clearPitchEdits_.setColour(juce::TextButton::buttonColourId,palette_.panel.brighter(0.08f));
     clearPitchEdits_.setColour(juce::TextButton::textColourOffId,palette_.boneDim);
     clearPitchEdits_.onClick=[this] {
+        if(!processor_.pitchEdits().hasEdits())return;
         processor_.pitchEdits().clear();
         processor_.pitchEditStateChanged();
+        clearPitchEdits_.setEnabled(false);
+        undoPitchEdits_.setEnabled(false);
         repaint();
     };
     addAndMakeVisible(clearPitchEdits_);
@@ -589,10 +592,15 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     undoPitchEdits_.onClick=[this] {
         if(processor_.pitchEdits().undoLast())
             processor_.pitchEditStateChanged();
+        const bool hasEdits=processor_.pitchEdits().hasEdits();
+        undoPitchEdits_.setEnabled(hasEdits);
+        clearPitchEdits_.setEnabled(hasEdits);
         repaint();
     };
     addAndMakeVisible(undoPitchEdits_);
     undoPitchEdits_.setVisible(false);
+    clearPitchEdits_.setEnabled(processor_.pitchEdits().hasEdits());
+    undoPitchEdits_.setEnabled(processor_.pitchEdits().hasEdits());
     setResizable(true, true);
     setResizeLimits(432, 414, 1008, 966);
     if (auto* constraint = getConstrainer())
@@ -913,6 +921,9 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
             }
         }
         if(graphEditing_ && graphEditMidi_>=0) {
+            // Never draw the drag preview over the editor's title/buttons.
+            juce::Graphics::ScopedSaveState preview(g);
+            g.reduceClipRegion(juce::Rectangle<int>(54,451,352,199));
             const float y=noteY(float(graphEditMidi_));
             g.setColour(accent.brighter(0.45f));
             g.drawLine(left,y,right,y,1.7f);
@@ -949,7 +960,7 @@ bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
     const int index=(first+pick)%kAnalyzerHistory;
     const float pitch=analyzerOutputMidi_[size_t(index)];
     const int64_t stamp=analyzerHostMs_[size_t(index)];
-    if(pitch<0.0f||stamp<0)return false;
+    if(!std::isfinite(pitch)||pitch<0.0f||stamp<0)return false;
     const float pitchY=550.0f-(pitch-graphCenterMidi_)*198.0f/8.0f;
     if(std::abs(y-pitchY)>10.0f)return false;
     const int note=analyzerTargetMidi_[size_t(index)];
@@ -974,9 +985,11 @@ bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
     graphEditStartMs_=std::max<int64_t>(0,firstMs-35);
     graphEditEndMs_=std::max(graphEditStartMs_+100,lastMs+65);
     graphEditMidi_=note;
+    graphEditInitialMidi_=note;
     graphDragging_=false;
     graphEditing_=true;
     graphFollow_=false;
+    analyzerToggle_.getProperties().set("graphFollow",false);
     graphDragStartY_=position.y;
     graphDragStartMidi_=float(note);
     repaint();
@@ -992,8 +1005,19 @@ void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
             const int pick=juce::jlimit(0,count-1,juce::roundToInt(
                 (x-54.0f)*float(count-1)/(405.0f-54.0f)));
             const auto ms=analyzerHostMs_[size_t((first+pick)%kAnalyzerHistory)];
-            if(processor_.pitchEdits().eraseAt(ms))
+            // Right-click must hit the actual edited target line; clicking
+            // blank piano-roll space must never delete an unrelated note.
+            const int note=processor_.pitchEdits().targetAt(ms);
+            const float y=e.position.y*700.0f/float(getHeight());
+            const float targetY=550.0f-
+                (float(note)-graphCenterMidi_)*198.0f/8.0f;
+            if(note>=0 && std::abs(y-targetY)<=9.0f &&
+               processor_.pitchEdits().eraseAt(ms)) {
                 processor_.pitchEditStateChanged();
+                const bool remaining=processor_.pitchEdits().hasEdits();
+                clearPitchEdits_.setEnabled(remaining);
+                undoPitchEdits_.setEnabled(remaining);
+            }
             repaint();
         }
         return;
@@ -1024,11 +1048,17 @@ void SkellyTuneEditor::mouseDrag(const juce::MouseEvent& e) {
     repaint();
 }
 void SkellyTuneEditor::mouseUp(const juce::MouseEvent&) {
+    // Just selecting an existing note must not silently overwrite it:
+    // commit only if the pointer actually moved to a new MIDI note.
     if(graphEditing_ && graphEditMidi_>=24 &&
+       graphEditMidi_!=graphEditInitialMidi_ &&
        graphEditEndMs_>graphEditStartMs_) {
         if(processor_.pitchEdits().add({
-                graphEditStartMs_,graphEditEndMs_,graphEditMidi_})>=0)
+                graphEditStartMs_,graphEditEndMs_,graphEditMidi_})>=0) {
             processor_.pitchEditStateChanged();
+            clearPitchEdits_.setEnabled(true);
+            undoPitchEdits_.setEnabled(true);
+        }
     }
     graphEditing_=false;
     graphDragging_=false;
@@ -1106,11 +1136,18 @@ void SkellyTuneEditor::chooseAlgorithm(int index) {
 void SkellyTuneEditor::updateLiveFeedback() {
     // Follow automation / preset recall.
     algorithm_.setSelected(currentAlgorithm());
+    const bool anyEdits=processor_.pitchEdits().hasEdits();
+    if(clearPitchEdits_.isEnabled()!=anyEdits)clearPitchEdits_.setEnabled(anyEdits);
+    if(undoPitchEdits_.isEnabled()!=anyEdits)undoPitchEdits_.setEnabled(anyEdits);
 
     const float hz = processor_.displayedPitchHz();
     const int target = processor_.displayedTargetNote();
     const float correction = processor_.displayedCorrectionCents();
-    const bool voiced = hz > 40.0f && processor_.displayedConfidence() >= 0.55f && target >= 0;
+    const double a4=double(parameters_.getRawParameterValue("a4")->load());
+    const bool voiced = std::isfinite(hz) && hz>40.0f && hz<2400.0f &&
+        std::isfinite(correction) && std::isfinite(a4) && a4>0.0 &&
+        processor_.displayedConfidence()>=0.55f &&
+        target>=0 && target<=127;
 
     voicedFade_ += ((voiced ? 1.0f : 0.0f) - voicedFade_) * (voiced ? 0.55f : 0.18f);
     if (voiced) {

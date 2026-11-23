@@ -179,7 +179,17 @@ int main() {
             editor->findChildWithID("skelly.undoPitchEdits"));
         if(!clearEdits || !clearEdits->isVisible() ||
            !undoEdits || !undoEdits->isVisible())return 60;
+        if(clearEdits->isEnabled() || undoEdits->isEnabled()) {
+            std::cerr<<"FAIL: empty pitch editor has active erase buttons\n";
+            return 70;
+        }
         if(processor.pitchEdits().add({150,500,66})<0)return 61;
+        juce::Thread::sleep(55);
+        juce::Timer::callPendingTimersSynchronously();
+        if(!clearEdits->isEnabled() || !undoEdits->isEnabled()) {
+            std::cerr<<"FAIL: pitch-editor buttons stayed disabled after recording a note\n";
+            return 71;
+        }
         juce::MemoryBlock editedState;
         processor.getStateInformation(editedState);
         processor.pitchEdits().clear();
@@ -192,6 +202,7 @@ int main() {
            processor.pitchEdits().targetAt(200)!=66)return 65;
         clearEdits->onClick();
         if(processor.pitchEdits().targetAt(200)!=-1)return 63;
+        if(clearEdits->isEnabled() || undoEdits->isEnabled())return 72;
         analyzer->onClick();
         if (editor->getWidth()!=432 || editor->getHeight()!=414 ||
             !childrenInside() || !validVisual()) return 48;

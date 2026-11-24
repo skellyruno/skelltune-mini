@@ -122,7 +122,7 @@ public:
         setFilter();
     }
     // mask: C=bit0..B=bit11. Speed is TRUE host milliseconds (0..200).
-    void setParameters(uint16_t mask, double referenceA, double amount, double speed, double lowLatency = 0.0) {
+    void setParameters(uint16_t mask, double referenceA, double amount, double speed, double lowLatency = 0.0, double mix = 1.0) {
         // Defend against untrusted host state and standalone A/B inputs.
         // The 12-bit chromatic mask must never read reserved bits.
         mask=uint16_t(mask & 0x0fffu);
@@ -131,6 +131,7 @@ public:
         if (mask != mask_ || referenceA != reference_) tableDirty_ = true;
         mask_ = mask; reference_ = referenceA;
         amount_ = std::clamp(std::isfinite(amount) ? amount : 1.0, 0.0, 1.0);
+        mix_ = std::clamp(std::isfinite(mix) ? mix : 1.0, 0.0, 1.0);
         speed_ = std::clamp(std::isfinite(speed) ? speed : 25.0, 0.0, 200.0);
         lowLatency_ = std::clamp(std::isfinite(lowLatency) ? lowLatency : 0.0, 0.0, 1.0);
     }
@@ -186,7 +187,7 @@ public:
             (detectedVoiced_?lastTrustedLag_:0.0);
         return lag>0.0?double(sr_)/lag:0.0;
     }
-    double targetHz() const { return sel_ > 0.0 ? double(sr_) / sel_ : 0.0; }
+    double targetHz() const { return (count_ > 0 || manualTargetMidi_ >= 0) && sel_ > 0.0 ? double(sr_) / sel_ : 0.0; }
     double shiftCents() const { return sel_ > 0.0 && period_ > 0.0 ? 1200.0 * std::log2(period_ / sel_) : 0.0; }
     // Meter/graph estimate of the AUDIO actually heard: the slewed source
     // ratio multiplied by the present wet contribution. Unlike shiftCents(),
@@ -322,7 +323,11 @@ public:
             // into unrelated phase and generates a brief extra tone.
             const double cycle = lastTrustedLag_ > 0.0 ? lastTrustedLag_ : pin;
             if (!(pin > 0.0) || !(pt > 0.0)) { w_ = w + 1; continue; }
-            const double rawRatio = std::clamp(pin / pt, 0.5, 2.0);
+            // Amount changes the correction in cents, not the wet/dry gain.
+            // The full-amount path retains its exact previous arithmetic.
+            const double fullRatio = std::clamp(pin / pt, 0.5, 2.0);
+            const double rawRatio = amount_ == 1.0 ? fullRatio :
+                std::exp2(amount_ * std::log2(fullRatio));
             // The old 120-sample floor was YOUNGER than the advertised
             // 3ms dry tap at 48kHz and could read even younger on high
             // notes. Every cubic grain source must be older than PDC
@@ -345,7 +350,10 @@ public:
                 uint64_t(w) > uint64_t(dryDelaySamples_) +
                     uint64_t(std::ceil(base + cycle + 4.0));
             double sharedPhaseAdjustment = 0.0;
-            const double goal = wetReady ? amount_ : 0.0;
+            // A disabled scale must not resample an otherwise in-tune voice.
+            // Explicit graph edits can still supply a target with no scale.
+            const bool enabled = (count_ > 0 || manualTargetMidi_ >= 0) && amount_ > 0.0;
+            const double goal = wetReady && enabled ? mix_ : 0.0;
             wetBlend_ += (goal - wetBlend_) * (goal > wetBlend_ ? entry : exit);
             wetBlend_ = std::clamp(wetBlend_, 0.0, 1.0);
             // Release exactly to zero to avoid long-silence denormal
@@ -719,7 +727,7 @@ private:
     uint32_t sr_ = 48000, hop_ = 129, n_ = 0, fresh_ = 0;
     uint64_t w_ = 0;
     uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0,
-           speed_ = 25.0, lowLatency_ = 0.0;
+           speed_ = 25.0, lowLatency_ = 0.0, mix_ = 1.0;
     bool smoothDetected_ = true, fileDetector_ = false, tableDirty_ = true;
     bool rearmOnVoiced_ = true, wasBypassed_ = false;
     double entryAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.008));

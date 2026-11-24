@@ -387,3 +387,9 @@ add_test(NAME dsp_v67_retune_quality COMMAND dsp_v67_retune_quality)
 add_executable(dsp_v68_bass_attack tests/test_v68_bass_attack.cpp)
 target_link_libraries(dsp_v68_bass_attack PRIVATE skelly_dsp)
 add_test(NAME dsp_v68_bass_attack COMMAND dsp_v68_bass_attack)
+
+# v69: independent Amount and Mix, disabled-scale transparency and explicit
+# pitch edits across all Mini engines, with irregular host blocks.
+add_executable(dsp_v69_amount_mix tests/test_v69_amount_mix.cpp)
+target_link_libraries(dsp_v69_amount_mix PRIVATE skelly_dsp)
+add_test(NAME dsp_v69_amount_mix COMMAND dsp_v69_amount_mix)

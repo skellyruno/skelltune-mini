@@ -393,11 +393,11 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
 void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int frames) {
     const auto p = currentParameters();
     // True 0-200ms retune time constant, consistent with REGULAR/TESTTUNE.
-    // META research must respect the existing host Mix control as well
-    // as Amount. Previously Mix=0 still emitted fully retuned META grains.
-    // The experimental engine handles Amount=0 as sample-exact 3ms dry.
+    // Match the other engines: Amount controls pitch correction in cents;
+    // Mix independently controls the blend of the processed and dry voices.
+    // Zero Amount or Mix retains the declared fixed dry transport delay.
     meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA),
-                        double(p.amount * p.mix), double(p.speedMs));
+                        double(p.amount), double(p.speedMs), 0.0, double(p.mix));
     const bool bypass = state_.getRawParameterValue("bypass")->load() > 0.5f;
     // processEditedAudio() already supplies the note for THIS sub-block.
     // Resetting it to the host block's first-note target here silently

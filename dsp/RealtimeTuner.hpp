@@ -306,9 +306,16 @@ private:
     PitchEstimate analyze() noexcept {
         if (decimated_ < uint64_t(window_ + normalHighLag_ + 3)) return {};
         const bool extendedReady=decimated_ >= uint64_t(window_+highLag_+3);
+        // The longest analysis reads window+highLag+hop samples. Unwrap
+        // this bounded history once per detector hop instead of masking
+        // both ring indices for every lag pair (including full refreshes).
+        // The original pair order and double accumulation are unchanged.
+        std::array<float,1024> recent;
+        const int needed=window_+(extendedReady?highLag_:normalHighLag_)+hop_;
+        for(int i=0;i<needed;++i) recent[size_t(i)]=past(i);
         double energy = 0.0;
         for (int i = 0; i < window_; ++i) {
-            const double s = past(i);
+            const double s = recent[size_t(i)];
             energy += s * s;
         }
         if (energy / window_ < 0.000004) {
@@ -334,13 +341,13 @@ private:
             double diff = full ? 0.0 : difference_[lag];
             if (full) {
                 for (int j = 0; j < window_; ++j) {
-                    const double e = double(past(j)) - double(past(j + lag));
+                    const double e = double(recent[size_t(j)]) - double(recent[size_t(j + lag)]);
                     diff += e*e;
                 }
             } else {
                 for (int j = 0; j < hop_; ++j) {
-                    const double entered = double(past(j)) - double(past(j+lag));
-                    const double departed = double(past(window_+j)) - double(past(window_+j+lag));
+                    const double entered = double(recent[size_t(j)]) - double(recent[size_t(j+lag)]);
+                    const double departed = double(recent[size_t(window_+j)]) - double(recent[size_t(window_+j+lag)]);
                     diff += entered*entered - departed*departed;
                 }
             }
@@ -414,12 +421,12 @@ private:
                 double diff=recalc?0.0:difference_[lag];
                 if(recalc) {
                     for(int j=0;j<window_;++j) {
-                        const double e=double(past(j))-double(past(j+lag)); diff+=e*e;
+                        const double e=double(recent[size_t(j)])-double(recent[size_t(j+lag)]); diff+=e*e;
                     }
                 } else {
                     for(int j=0;j<hop_;++j) {
-                        const double entered=double(past(j))-double(past(j+lag));
-                        const double departed=double(past(window_+j))-double(past(window_+j+lag));
+                        const double entered=double(recent[size_t(j)])-double(recent[size_t(j+lag)]);
+                        const double departed=double(recent[size_t(window_+j)])-double(recent[size_t(window_+j+lag)]);
                         diff+=entered*entered-departed*departed;
                     }
                 }
@@ -1041,10 +1048,18 @@ public:
                 }
                 // An explicit recorded pitch edit overrides the selected
                 // scale note on voiced frames, without touching host params.
-                if(manualTargetMidi_>=0 && e.valid && result.voiced) {
+                // A manual edit supplies its own target even with no
+                // enabled scale notes. Still require reliable vocal evidence.
+                if(manualTargetMidi_>=0 && e.valid && e.hertz>0.0f &&
+                   e.confidence>=(params_.testTune?0.72f:0.58f)) {
+                    result.voiced=true;
                     result.changed=manualTargetMidi_!=priorTarget;
                     result.targetMidi=manualTargetMidi_;
                     result.pending=false;
+                    result.provisionalMidi=-1;
+                }
+                if (params_.pitchClasses==0 && manualTargetMidi_<0) {
+                    result.targetMidi=-1;result.voiced=false;result.pending=false;
                     result.provisionalMidi=-1;
                 }
                 targetNote_ = result.targetMidi;
@@ -1134,6 +1149,8 @@ public:
                     // This is causal and adds zero samples of transport delay.
                     const bool bridge = shortVoicedBridgeEnabled_ && !result.pending &&
                         targetNote_ >= 0 && voiced_ &&
+                        (manualTargetMidi_>=0 ||
+                         (params_.pitchClasses & (1u<<(targetNote_%12))) != 0) &&
                         trustedVoiceSamples_ < int(rate_ * 0.001 * maxShortVoicedBridgeMs_) &&
                         voicedEnvelope_ > 0.014 && noiseScore < 0.22 &&
                         onsetCue_.score() < 0.5;

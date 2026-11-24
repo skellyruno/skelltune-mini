@@ -113,7 +113,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         meta.setSmoothDetected(std::getenv("SKELLY_META_AS_WRITTEN") == nullptr);
         const double speed = std::getenv("SKELLY_META_SPEED") ? std::atof(std::getenv("SKELLY_META_SPEED"))
                                                                : double(p.speedMs);
-        meta.setParameters(p.pitchClasses, double(p.referenceA), double(p.amount), speed);
+        meta.setParameters(p.pitchClasses, double(p.referenceA), double(p.amount), speed, 0.0, double(p.mix));
     }
 #endif
     const size_t total=w.samples.size()/size_t(w.channels);

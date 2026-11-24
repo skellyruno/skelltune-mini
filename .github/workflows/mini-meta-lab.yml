@@ -46,6 +46,7 @@ jobs:
           mkdir -p three-mode-real
           cp benchmark/v33/raw_levelmatched_20-28.wav three-mode-real/DRY_real_voice.wav
           cp benchmark/v33/autotune_pro_levelmatched_20-28.wav three-mode-real/REFERENCE_AutoTunePro.wav
+          export SKELLY_MINI_PDC=1 SKELLY_BLOCK=128
           for speed in 0 10 25; do
             ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/REGULAR_"$speed"ms.wav" "$speed" 100 100 0 0 2773
             SKELLY_TESTTUNE=1 ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/TESTTUNE_"$speed"ms.wav" "$speed" 100 100 0 0 2773

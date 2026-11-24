@@ -152,7 +152,7 @@ public:
         factor_ = std::clamp(int(std::lround(rate / 12000.0)), 1, 16);
         reducedRate_ = rate / double(factor_);
         lowLag_ = std::clamp(int(reducedRate_ / 850.0), 2, 250);
-        highLag_ = std::clamp(int(std::ceil(reducedRate_ / 65.0)), lowLag_ + 1, 500);
+        highLag_ = std::clamp(int(std::ceil(reducedRate_ / 65.0)) + 2, lowLag_ + 1, 500);
         fastWindow_ = std::clamp(int(std::round(reducedRate_ * 0.012)), 112, 384);
         steadyWindow_ = std::clamp(int(std::round(reducedRate_ * 0.014)), fastWindow_, 384);
         stableHops_ = 0; stableLastF0_ = 0.0f;
@@ -651,6 +651,7 @@ public:
         params_ = {};
         cycleSynth_.reset();
         mixGuard_.reset();
+        mixGuardActivation_ = 0.0;
         formantGuard_.reset();
         formantActive_ = false;
         nearZeroSamples_ = 0;
@@ -826,6 +827,7 @@ public:
         const double cycleReleaseSmooth = std::exp(-1.0 / (rate_ * 0.00025));
         const double transientMeterStep = 1.0 - std::exp(-1.0 / (rate_ * 0.030));
         const double transientReleaseStep = std::exp(-1.0 / (rate_ * 0.003));
+        const double mixGuardGateStep = 1.0 - std::exp(-1.0 / (rate_ * 0.0015));
         // The declared 3-ms host delay means the next transient's tag is
         // ALREADY in our fixed-size ring before the same input reaches output.
         // Fade the wet path toward aligned dry ~0.75ms BEFORE a protected
@@ -925,9 +927,13 @@ public:
                         testCandidateHops_ = 0;
                     }
                     if (testTuneHeldMidi_ >= 0 &&
-                        (params_.pitchClasses & (1u<<(testTuneHeldMidi_%12))) == 0)
+                        (params_.pitchClasses & (1u<<(testTuneHeldMidi_%12))) == 0) {
                         testTuneHeldMidi_ = -1;
+                        testCandidateMidi_ = -1;
+                        testCandidateHops_ = 0;
+                    }
                 }
+                bool testTuneHeldIncompatiblePeriod = false;
                 if (params_.testTune && e.valid && result.voiced &&
                     e.confidence >= 0.72f && e.hertz > 0.0f) {
                     // testtune: nearest in-scale note in the PERIOD domain (samples per cycle).
@@ -939,7 +945,11 @@ public:
                         const int note = periodTable_.note(index);
                         // Ignore one-hop low-confidence note flutter. Strong
                         // estimates still snap immediately (TESTTUNE feel).
+                        // A previous manual edit or a live scale change may leave
+                        // priorTarget outside the current allowed scale. Never
+                        // retain that pitch as the uncertainty fallback.
                         const bool uncertain = priorTarget >= 0 &&
+                            (params_.pitchClasses & (1u << (priorTarget % 12))) != 0 &&
                             note != priorTarget &&
                             ((e.confidence < 0.87f &&
                               std::abs(note - priorTarget) <= 2) ||
@@ -947,11 +957,19 @@ public:
                              // tracker overtone, not a real new vocal.
                              // Strong octave transitions remain immediate.
                              (e.confidence < 0.94f &&
-                              std::abs(note - priorTarget) >= 12));
+                              std::abs(note - priorTarget) >= 10));
                         if (note == testCandidateMidi_)
                             testCandidateHops_ = std::min(4, testCandidateHops_ + 1);
                         else { testCandidateMidi_ = note; testCandidateHops_ = 1; }
-                        const bool hold = uncertain && testCandidateHops_ < 2;
+                        const bool octaveCandidate = priorTarget >= 0 &&
+                            std::abs(note-priorTarget) >= 10;
+                        const bool hold = uncertain &&
+                            testCandidateHops_ < (octaveCandidate ? 4 : 2);
+                        // Holding the old MIDI target is NOT permission to
+                        // calculate a new ratio from an incompatible period.
+                        // A weak octave-down detector frame previously steered
+                        // the audio +1200 cents for a few milliseconds.
+                        testTuneHeldIncompatiblePeriod = hold && octaveCandidate;
                         result.changed = !hold && note != priorTarget;
                         result.targetMidi = hold ? priorTarget : note;
                         result.pending = false;
@@ -1009,7 +1027,7 @@ public:
                 // permission to retune a fresh low-confidence F0 estimate.
                 // Brief uncertain voiced hops use the existing safe bridge.
                 const bool trustedEstimate = !params_.testTune ||
-                    e.confidence >= 0.72f;
+                    (e.confidence >= 0.72f && !testTuneHeldIncompatiblePeriod);
                 if (e.valid && result.voiced && trustedEstimate &&
                     workingTarget >= 0 && usableTarget) {
                     f0_ = e.hertz;
@@ -1017,7 +1035,13 @@ public:
                         smoothF0_ = f0_;
                     } else {
                         // Track pitch period smoothly, but still follow vibrato.
-                        const double blend = 1.0 - std::exp(-double(tracker_.hopHostSamples())/(rate_*0.012));
+                        // Large, confident pitch changes must also update the
+                        // source-cycle length. A stale 12ms period is a bad
+                        // phase-wrap distance during a fast note transition.
+                        const double excursion=std::abs(std::log2(f0_/smoothF0_));
+                        const double periodSeconds=(hard && e.confidence>=0.88f &&
+                            excursion>1.0/12.0) ? 0.003 : 0.012;
+                        const double blend = 1.0 - std::exp(-double(tracker_.hopHostSamples())/(rate_*periodSeconds));
                         smoothF0_ += blend*(f0_-smoothF0_);
                     }
                     hasF0_ = true;
@@ -1371,12 +1395,24 @@ public:
             // contract, fully wet tuning, or sample-exact protected attacks.
             const bool guardEligible = voiced_ && !targetPending_ &&
                 transientRelease_ < 0.01 && noiseScore < 0.3;
-            const double mixGain = mixGuard_.process(dryForGuard, wetForGuard,
+            // A detector/pending flag can change in one sample. The old
+            // eligibility switch could remove up to 3 dB instantly, even
+            // though CoherentMixGuard's internal gain was smoothed. Fade
+            // the eligibility separately; the dry and fully wet endpoints
+            // and sample-exact transient path remain unchanged.
+            mixGuard_.process(dryForGuard, wetForGuard,
                 numChannels, effectiveMix_, guardEligible);
+            mixGuardActivation_ += mixGuardGateStep *
+                ((guardEligible ? 1.0 : 0.0) - mixGuardActivation_);
+            if (mixGuardActivation_ < 1.0e-9) mixGuardActivation_ = 0.0;
+            const double towardWet = std::clamp((effectiveMix_-0.075)/0.15,0.0,1.0);
+            const double towardDry = std::clamp((0.925-effectiveMix_)/0.15,0.0,1.0);
+            const double mixGain = 1.0 + (mixGuard_.gain()-1.0) *
+                towardWet*towardDry*mixGuardActivation_;
             for (int c = 0; c < numChannels; ++c) {
                 output[c][i] = float(dryForGuard[c] * transientRelease_ +
                     synthesizedForGuard[c] * (1.0 - transientRelease_) *
-                    (guardEligible ? mixGain : 1.0));
+                    mixGain);
                 // The host normally enables FTZ/DAZ, but this guarantee
                 // also holds when rendering offline without JUCE.
                 if (!std::isfinite(output[c][i]) ||
@@ -1489,6 +1525,7 @@ private:
     int nearZeroSamples_ = 0;
     CausalCycleSynth cycleSynth_;
     CoherentMixGuard mixGuard_;
+    double mixGuardActivation_ = 0.0;
     FormantEnvelopeGuard formantGuard_;
     bool formantActive_=false;
     HarmonicAirGuard airGuard_;

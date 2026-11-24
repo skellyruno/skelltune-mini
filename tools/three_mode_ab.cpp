@@ -95,10 +95,10 @@ struct Result {Samples out;double ms=0,rms=0,peak=0,step=0,steadyHz=0,steadyCent
 Result render(const Samples& dry,int mode,double speed) {
     skelly::RealtimeTuner normal; skelly::MetaTest meta;
     if(mode==2) {
-        meta.prepare(rate);
+        meta.prepare(rate,1.5);
         meta.setParameters(0x0fff,440.0,1.0,speed);
     } else {
-        normal.prepare(rate,1);
+        normal.prepare(rate,1,false,false,1.5);
         skelly::Parameters p;p.pitchClasses=0x0fff;p.referenceA=440.0f;
         p.speedMs=float(speed);p.amount=1.0f;p.mix=1.0f;p.testTune=mode==1;
         normal.setParameters(p);

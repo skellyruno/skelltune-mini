@@ -151,9 +151,10 @@ public:
     // routine used by the live engine; requires a valid PCM history.
     static double probeAlignedHead(const float* history, double previousHead,
                                    double candidateHead, int radius,
-                                   double youngestSafeHead) noexcept {
+                                   double youngestSafeHead,
+                                   const float* right=nullptr) noexcept {
         return alignHead(history, previousHead, candidateHead, radius,
-                         youngestSafeHead);
+                         youngestSafeHead,nullptr,nullptr,right);
     }
     static double probePhaseMismatch(const float* history, double a,
                                      double b) noexcept {
@@ -333,7 +334,8 @@ public:
                         const double limit = double(w) - double(dryDelaySamples_) - 8.0;
                         double before=0.0, after=0.0;
                         const double selected = alignHead(ring_[0].data(),
-                            oldHead, proposed, radius, limit,&before,&after);
+                            oldHead, proposed, radius, limit,&before,&after,
+                            lanes == 2 ? ring_[1].data() : nullptr);
                         sharedPhaseAdjustment = selected - proposed;
                         // Reuse identical phase comparisons from alignment.
                         phaseErrorBefore_ += before;
@@ -354,8 +356,14 @@ public:
                         flen_[l] = fade_[l] = 0;
                     }
                 }
-                if (pos_[l] > double(w)) pos_[l] = double(w);
-                if (pos_[l] < double(w) - kRing + 8.0) pos_[l] = double(w) - kRing + 8.0;
+                // Cubic interpolation uses two younger taps. Both the
+                // outgoing and incoming grain must remain causal, even if
+                // a large target jump moves the smoothed base underneath
+                // an active crossfade. Keep older taps in ring history too.
+                const double youngest = double(w) - double(dryDelaySamples_) - 4.0;
+                const double oldest = double(w) - double(kRing) + 8.0;
+                pos_[l] = std::clamp(pos_[l], oldest, youngest);
+                out_[l] = std::clamp(out_[l], oldest, youngest);
 
                 double k = 1.0;
                 if (fade_[l]) {
@@ -489,14 +497,19 @@ private:
         // produced amplitude flutter and repeated 8ms attack fades.
         // Two confident frames arm wet; three misses disarm it.
         if (lag > 0.0 && conf_ >= 0.6) {
-            lastTrustedLag_ = lag; // display-only one/two-hop voiced bridge
+            lastTrustedLag_ = lag; // trusted period for both audio and display
             voicedStableHops_ = std::min(voicedStableHops_ + 1, 3);
             if (voicedStableHops_ >= 2) detectedVoiced_ = true;
         } else {
             voicedStableHops_ = 0;
         }
         double target = log_;
-        double detectedLog = log_;
+        // A short invalid detector hop is NOT evidence that the input
+        // pitch has reached the target. Hold the last measured period
+        // instead of slewing toward the snapped period (a spurious unity
+        // excursion during the audible wet-release envelope).
+        double detectedLog = lastTrustedLag_ > 0.0
+            ? std::log2(lastTrustedLag_) : smooth_;
         if (lag > 0.0) {
             const double lg = std::log2(lag);
             const double sl = manualTargetMidi_>=0 ?
@@ -569,10 +582,26 @@ private:
     static double alignHead(const float* r, double previous,
                             double proposed, int radius,
                             double youngestSafe,
-                            double* before=nullptr,double* after=nullptr) noexcept {
+                            double* before=nullptr,double* after=nullptr,
+                            const float* right=nullptr) noexcept {
+        // Weight the common offset by both channel energies. A silent
+        // left lane must not dictate the phase of an audible right lane.
+        // Mono keeps the exact former search score.
+        const auto mismatch = [&](double a, double b) noexcept {
+            if (!right) return phaseMismatch(r,a,b);
+            double diff=0.0, energy=1.0e-9;
+            for (int i=0;i<12;++i) {
+                const double t=double(i)*2.0;
+                for (const float* lane : {r,right}) {
+                    const double x=tap(lane,a-t,true), y=tap(lane,b-t,true);
+                    diff+=(x-y)*(x-y); energy+=x*x+y*y;
+                }
+            }
+            return diff/energy;
+        };
         // One set of comparisons supplies both head choice and mismatch
         // telemetry. The strict phase-improvement gate is unchanged.
-        const double originalError = phaseMismatch(r, previous, proposed);
+        const double originalError = mismatch(previous, proposed);
         if(before)*before=originalError;
         if(after)*after=originalError;
         if (proposed > youngestSafe) return proposed;
@@ -582,7 +611,7 @@ private:
         for (int offset = -radius; offset <= radius; ++offset) {
             const double candidate = proposed + double(offset);
             if (candidate > youngestSafe || candidate < 30.0) continue;
-            const double error = phaseMismatch(r, previous, candidate);
+            const double error = mismatch(previous, candidate);
             const double penalized = error + 0.001 * double(std::abs(offset));
             if (penalized < bestError) {
                 bestError = penalized;

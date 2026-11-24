@@ -369,3 +369,9 @@ endif()
 add_executable(dsp_v64_host_safety tests/test_v64_host_safety.cpp)
 target_link_libraries(dsp_v64_host_safety PRIVATE skelly_dsp)
 add_test(NAME dsp_v64_host_safety COMMAND dsp_v64_host_safety)
+
+# Listening round 2: test all available engines, including near-floor tracker
+# interpolation, false octave transitions, and META causal phase continuity.
+add_executable(dsp_v66_listening_round tests/test_v66_listening_round.cpp)
+target_link_libraries(dsp_v66_listening_round PRIVATE skelly_dsp)
+add_test(NAME dsp_v66_listening_round COMMAND dsp_v66_listening_round)

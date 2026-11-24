@@ -152,7 +152,8 @@ public:
         factor_ = std::clamp(int(std::lround(rate / 12000.0)), 1, 16);
         reducedRate_ = rate / double(factor_);
         lowLag_ = std::clamp(int(reducedRate_ / 850.0), 2, 250);
-        highLag_ = std::clamp(int(std::ceil(reducedRate_ / 65.0)) + 2, lowLag_ + 1, 500);
+        normalHighLag_ = std::clamp(int(std::ceil(reducedRate_ / 65.0)) + 2, lowLag_ + 1, 500);
+        highLag_ = std::clamp(int(std::ceil(reducedRate_ / 50.0)) + 2, normalHighLag_, 500);
         fastWindow_ = std::clamp(int(std::round(reducedRate_ * 0.012)), 112, 384);
         steadyWindow_ = std::clamp(int(std::round(reducedRate_ * 0.014)), fastWindow_, 384);
         stableHops_ = 0; stableLastF0_ = 0.0f;
@@ -195,7 +196,7 @@ public:
         samples_.fill(0.0f); fir_.fill(0.0f);
         firIndex_ = 0; write_ = 0; downCount_ = 0; decimated_ = 0;
         sinceUpdate_ = 0; estimate_ = {}; useSlowWindow_ = false; window_ = fastWindow_;
-        initializedDifference_ = false; differenceAge_ = 0;
+        initializedDifference_ = false; differenceAge_ = 0; extendedDifferenceReady_=false;
         stableHops_ = 0; stableLastF0_ = 0.0f;
         // Continuity evidence belongs to the current phrase/session.
         // Retaining it across prepare/reset can reject the first real low
@@ -303,7 +304,8 @@ private:
         return std::min(b, b - 0.25 * (a - c) * offset);
     }
     PitchEstimate analyze() noexcept {
-        if (decimated_ < uint64_t(window_ + highLag_ + 3)) return {};
+        if (decimated_ < uint64_t(window_ + normalHighLag_ + 3)) return {};
+        const bool extendedReady=decimated_ >= uint64_t(window_+highLag_+3);
         double energy = 0.0;
         for (int i = 0; i < window_; ++i) {
             const double s = past(i);
@@ -328,7 +330,7 @@ private:
         // A full recomputation is also required on the first valid analysis.
         const bool full = !initializedDifference_ || ++differenceAge_ >= 256;
         difference_[0] = 0.0;
-        for (int lag = 1; lag <= highLag_; ++lag) {
+        for (int lag = 1; lag <= normalHighLag_; ++lag) {
             double diff = full ? 0.0 : difference_[lag];
             if (full) {
                 for (int j = 0; j < window_; ++j) {
@@ -347,12 +349,12 @@ private:
         if (full) { initializedDifference_ = true; differenceAge_ = 0; }
         double running = 0.0;
         cmnd_[0] = 1.0f;
-        for (int lag = 1; lag <= highLag_; ++lag) {
+        for (int lag = 1; lag <= normalHighLag_; ++lag) {
             running += difference_[lag];
             cmnd_[lag] = float(difference_[lag] * lag / std::max(1e-20, running));
         }
         int best = -1;
-        for (int lag = lowLag_; lag < highLag_ - 1; ++lag) {
+        for (int lag = lowLag_; lag < normalHighLag_ - 1; ++lag) {
             if (cmnd_[lag] < 0.16f && cmnd_[lag] <= cmnd_[lag+1]) {
                 best = lag;
                 break;
@@ -360,7 +362,7 @@ private:
         }
         if (best < 0) {
             best = lowLag_;
-            for (int lag = lowLag_+1; lag < highLag_-1; ++lag)
+            for (int lag = lowLag_+1; lag < normalHighLag_-1; ++lag)
                 if (cmnd_[lag] < cmnd_[best]) best = lag;
         }
         // v1.7: YIN's first-below-threshold strategy can select an octave-high
@@ -371,10 +373,10 @@ private:
         // signals: a 220 Hz sinusoid and a 110 Hz signal containing only
         // even harmonics are mathematically indistinguishable.
         const int twice = best * 2;
-        if (twice + 2 < highLag_ && cmnd_[best] < 0.16f) {
+        if (twice + 2 < normalHighLag_ && cmnd_[best] < 0.16f) {
             int slower = twice;
             for (int candidate = twice - 2; candidate <= twice + 2; ++candidate) {
-                if (candidate > best + 2 && candidate < highLag_ - 1 &&
+                if (candidate > best + 2 && candidate < normalHighLag_ - 1 &&
                     cmnd_[candidate] < cmnd_[slower]) slower = candidate;
             }
             // v3.3.2: compare INTERPOLATED valley depths. Lags are integers at the 12 kHz
@@ -397,6 +399,46 @@ private:
                 best = slower;
             }
         }
+        // Keep the established 65..850 Hz estimator identical. Extend only
+        // when it cannot find a reliable in-range period, or a clearly
+        // better low fundamental explains a near-octave upper candidate.
+        const bool ordinaryReliable=cmnd_[best]<1.0f-minimumConfidence_ &&
+            reducedRate_/double(best)>=65.0 && best<normalHighLag_-2;
+        const bool possibleLowOctave=2*best>=normalHighLag_-5 && 2*best<=highLag_+3;
+        // Calculate longer lags only when the original range actually needs
+        // them. A skipped hop invalidates the extended rolling accumulator.
+        const bool searchDeep=extendedReady && (!ordinaryReliable || possibleLowOctave);
+        if (searchDeep) {
+            const bool recalc=full || !extendedDifferenceReady_;
+            for(int lag=normalHighLag_+1;lag<=highLag_;++lag) {
+                double diff=recalc?0.0:difference_[lag];
+                if(recalc) {
+                    for(int j=0;j<window_;++j) {
+                        const double e=double(past(j))-double(past(j+lag)); diff+=e*e;
+                    }
+                } else {
+                    for(int j=0;j<hop_;++j) {
+                        const double entered=double(past(j))-double(past(j+lag));
+                        const double departed=double(past(window_+j))-double(past(window_+j+lag));
+                        diff+=entered*entered-departed*departed;
+                    }
+                }
+                difference_[lag]=std::max(0.0,diff);
+                running+=difference_[lag];
+                cmnd_[lag]=float(difference_[lag]*lag/std::max(1e-20,running));
+            }
+            int deep=-1;
+            for(int lag=normalHighLag_-2;lag<highLag_-1;++lag) {
+                if(cmnd_[lag]<=cmnd_[lag-1] && cmnd_[lag]<=cmnd_[lag+1] &&
+                   cmnd_[lag]<0.13f && (deep<0 || cmnd_[lag]<cmnd_[deep])) deep=lag;
+            }
+            if(deep>=0) {
+                const bool octaveEvidence=std::abs(deep-2*best)<=3 &&
+                    valleyDepth(best)-valleyDepth(deep)>0.15;
+                if(!ordinaryReliable || octaveEvidence) best=deep;
+            }
+        }
+        extendedDifferenceReady_=searchDeep;
         const float confidence = std::clamp(1.0f - cmnd_[best], 0.0f, 1.0f);
         if (goodAgeHops_ < 1000000) ++goodAgeHops_;
         if (confidence >= 0.85f) { goodLag_ = best; goodAgeHops_ = 0; }
@@ -410,12 +452,12 @@ private:
             if (std::abs(denom) > 1e-9) lag += std::clamp(0.5 * (a-c)/denom, -0.5, 0.5);
         }
         const float f0 = float(reducedRate_ / lag);
-        return {f0, confidence, std::isfinite(f0) && f0 >= 65.0f && f0 <= 850.0f};
+        return {f0, confidence, std::isfinite(f0) && f0 >= 50.0f && f0 <= 850.0f};
     }
     float minimumConfidence_ = 0.62f;
     static constexpr int kGoodLagMaxAgeHops = 45; // ~60 ms at 12 kHz / 16-sample hops
     int goodLag_ = 0, goodAgeHops_ = 1000000;
-    int factor_ = 4, lowLag_ = 14, highLag_ = 200, window_ = 288, hop_ = 16;
+    int factor_ = 4, lowLag_ = 14, normalHighLag_=200, highLag_ = 244, window_ = 288, hop_ = 16;
     int fastWindow_ = 168, steadyWindow_ = 168, slowWindow_ = 288;
     int stableHops_ = 0;
     float stableLastF0_ = 0.0f;
@@ -436,7 +478,7 @@ private:
     std::array<float,33> fir_{};
     std::array<float,4096> samples_{};
     std::array<double,512> difference_{};
-    bool initializedDifference_ = false;
+    bool initializedDifference_ = false, extendedDifferenceReady_=false;
     int differenceAge_ = 0;
     std::array<float,512> cmnd_{};
     PitchEstimate estimate_{};
@@ -1187,7 +1229,7 @@ public:
             // exp2 is equivalent to pow(2,x) at double precision but avoids
             // the general-purpose exponent path in the audio callback.
             const double ratio = std::clamp(std::exp2(cents_ / 1200.0), 0.5, 2.0);
-            const double period = rate_ / std::clamp(smoothF0_, 65.0, 850.0);
+            const double period = rate_ / std::clamp(smoothF0_, 50.0, 850.0);
             const double slope = 1.0 - ratio;
             // Pitch-synchronous variable-delay shifter: a continuous read head moves at
             // ratio * sampleRate; when it must wrap, switch by one input pitch period.

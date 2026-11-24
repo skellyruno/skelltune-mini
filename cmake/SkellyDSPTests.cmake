@@ -381,3 +381,9 @@ add_test(NAME dsp_v66_listening_round COMMAND dsp_v66_listening_round)
 add_executable(dsp_v67_retune_quality tests/test_v67_retune_quality.cpp)
 target_link_libraries(dsp_v67_retune_quality PRIVATE skelly_dsp)
 add_test(NAME dsp_v67_retune_quality COMMAND dsp_v67_retune_quality)
+
+# v68: extended low-bass range for all Mini engines, line-frequency hum
+# rejection, host-block invariance and META sample-exact sharp attacks.
+add_executable(dsp_v68_bass_attack tests/test_v68_bass_attack.cpp)
+target_link_libraries(dsp_v68_bass_attack PRIVATE skelly_dsp)
+add_test(NAME dsp_v68_bass_attack COMMAND dsp_v68_bass_attack)

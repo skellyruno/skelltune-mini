@@ -81,6 +81,11 @@ public:
         exitAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
         ratioAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.0025));
         baseAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.010));
+        transientMeterAlpha_=1.0-std::exp(-1.0/(double(sr_)*0.030));
+        transientRelease_=std::exp(-1.0/(double(sr_)*0.003));
+        transientEntry_=1.0-std::exp(-1.0/(double(sr_)*0.00012));
+        attackHoldSamples_=int(std::lround(double(sr_)*0.002));
+        attackAdvanceSamples_=unsigned(std::max(1l,std::lround(double(sr_)*0.00075)));
         tracker_.prepare(double(sr_));
         stereoRouter_.prepare(double(sr_));
         phaseCrossfade_.prepare(); // precompute Hann outside realtime process
@@ -89,6 +94,8 @@ public:
     void reset() {
         n_ = fresh_ = 0; f1_ = f2_ = 0.0; curveRef_ = 1.0; w_ = 0;
         wasBypassed_ = false;
+        resetAttacks();
+        attackMarks_.fill(0);
         smooth_ = log_ = std::log2(200.0);
         smoothedCorrectionLog_ = 0.0;
         raw_ = sel_ = conf_ = lastTrustedLag_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
@@ -188,7 +195,7 @@ public:
     double estimatedOutputCorrectionCents() const noexcept {
         if (!(wetBlend_ > 0.0) || !(sourceRatio_ > 0.0) ||
             !std::isfinite(sourceRatio_)) return 0.0;
-        return 1200.0 * std::log2(sourceRatio_) * wetBlend_;
+        return 1200.0 * std::log2(sourceRatio_) * wetBlend_ * (1.0-attackDryBlend_);
     }
     double lastPeriod() const { return period_; }
     double retuneMs() const noexcept { return speed_; }
@@ -228,6 +235,7 @@ public:
             unvoicedHops_=0; grainGeometryValid_=false;
             n_=fresh_=0; f1_=f2_=0.0;
             tracker_.reset(); stereoRouter_.reset();
+            resetAttacks();
         }
         wasBypassed_=bypass;
         if (!bypass && tableDirty_) buildTable();
@@ -258,11 +266,38 @@ public:
                     std::abs(value) >= 1.0e-30f) ? value : 0.0f;
             }
             if (bypass) {
+                attackMarks_[w & kRingM]=0;
                 for(int l=0;l<lanes;++l)
                     io[l][i] = ring_[l][(w - dryDelaySamples_) & kRingM];
                 w_ = w + 1;
                 continue;
             }
+
+            // Preserve isolated consonant/attack anchors using the existing
+            // dry transport history. A stricter relative derivative and energy
+            // threshold than REGULAR/TESTTUNE protects the approved META
+            // vocal tone; no extra audio lookahead.
+            double derivative=0.0, power=0.0;
+            for(int l=0;l<lanes;++l) {
+                const double sample=ring_[l][w & kRingM];
+                derivative=std::max(derivative,std::abs(sample-attackPrevious_[l]));
+                power=std::max(power,sample*sample);
+                attackPrevious_[l]=sample;
+            }
+            const double diffPower=derivative*derivative;
+            const bool attack=diffPower>std::max({0.0625,3.0*attackInputPower_,64.0*attackDiffPower_});
+            attackInputPower_+=transientMeterAlpha_*(std::min(power,4.0)-attackInputPower_);
+            attackDiffPower_+=transientMeterAlpha_*(std::min(diffPower,1.0)-attackDiffPower_);
+            if(attack)attackHold_=attackHoldSamples_;
+            attackMarks_[w & kRingM]=attackHold_>0?1:0;
+            if(attackHold_>0)--attackHold_;
+            const auto dryIndex=(w-dryDelaySamples_)&kRingM;
+            const unsigned advance=std::min(attackAdvanceSamples_,dryDelaySamples_>2?dryDelaySamples_-2:0u);
+            if(attackMarks_[dryIndex])attackDryBlend_=1.0;
+            else if(advance && attackMarks_[(dryIndex+advance)&kRingM])
+                attackDryBlend_+=(1.0-attackDryBlend_)*transientEntry_;
+            else attackDryBlend_*=transientRelease_;
+            if(attackDryBlend_<1.0e-9)attackDryBlend_=0.0;
 
             // The old META detector listened only to the left
             // channel. Right-heavy or polarity-inverted stereo vocals
@@ -317,6 +352,7 @@ public:
             // drift in an otherwise realtime-safe gain accumulator.
             if (wetBlend_ < 1.0e-9) wetBlend_ = 0.0;
 
+            const double audibleWet=wetBlend_*(1.0-attackDryBlend_);
             for (int l = 0; l < lanes; ++l) {
                 if (flen_[l] == 0) {
                     pos_[l] = out_[l] = double(w) - base - cycle;
@@ -389,8 +425,8 @@ public:
                     tap(ring_[l].data(), out_[l], highQualityInterpolation_);
                 const double wet = a + (b - a) * k;
                 const float dry = ring_[l][(w - dryDelaySamples_) & kRingM];
-                io[l][i] = static_cast<float>(dry * (1.0 - wetBlend_) +
-                                              wet * wetBlend_);
+                io[l][i] = static_cast<float>(dry * (1.0 - audibleWet) +
+                                              wet * audibleWet);
                 out_[l] += srat;
                 pos_[l] += srat;
             }
@@ -399,6 +435,9 @@ public:
     }
 
 private:
+    void resetAttacks() noexcept {
+        attackPrevious_.fill(0.0);attackInputPower_=attackDiffPower_=attackDryBlend_=0.0;attackHold_=0;
+    }
     // --- pre-filter (as written in the reconstruction) -------------------------------------
     void setFilter() {
         const double sr = double(sr_);
@@ -671,6 +710,12 @@ private:
             c * r[(i + 1u) & kRingM] + d * r[(i + 2u) & kRingM]);
     }
 
+    std::array<uint8_t,kRing> attackMarks_{};
+    std::array<double,2> attackPrevious_{};
+    double attackInputPower_=0.0,attackDiffPower_=0.0,attackDryBlend_=0.0;
+    double transientMeterAlpha_=0.0006942,transientRelease_=0.9930796,transientEntry_=0.1593763;
+    unsigned attackAdvanceSamples_=36;
+    int attackHoldSamples_=96,attackHold_=0;
     uint32_t sr_ = 48000, hop_ = 129, n_ = 0, fresh_ = 0;
     uint64_t w_ = 0;
     uint16_t mask_ = 0x0fff; double reference_ = 440.0, amount_ = 1.0,

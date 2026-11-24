@@ -134,7 +134,11 @@ public:
                     attackPrevious_[size_t(c)]=x;
                 }
                 const double diff=derivative*derivative;
-                const bool sharp=diff>std::max({.0625,3.*attackPower_,64.*attackDiffPower_});
+                // Relative contrast detects quiet as well as loud attacks. The
+                // absolute floor is 0.005 amplitude (~-46 dBFS), not 0.25.
+                // Keep both energy gates to avoid treating sustained signal
+                // or ordinary noise as an attack.
+                const bool sharp=diff>std::max({.000025,3.*attackPower_,64.*attackDiffPower_});
                 attackPower_+=attackMeter_*(std::min(power,4.)-attackPower_);
                 attackDiffPower_+=attackMeter_*(std::min(diff,1.)-attackDiffPower_);
                 if(sharp)attackHold_=attackHoldSamples_;

@@ -1,0 +1,220 @@
+name: Verify Mini META Lab (test only)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - CMakeLists.txt
+      - Source/**
+      - dsp/**
+      - tests/**
+      - cmake/**
+      - .github/workflows/mini-meta-lab.yml
+
+# Supersede only PR builds, not protected branches or manual runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  meta-dsp:
+    name: Experimental META portable DSP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure opt-in META tests, without JUCE
+        run: cmake -S . -B build-meta-dsp -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DSKELLY_META_TEST=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build tests
+        run: cmake --build build-meta-dsp --parallel 4
+      - name: Run META and regular DSP regressions
+        run: ctest --test-dir build-meta-dsp -C Release --output-on-failure
+      - name: Render all three modes at matched retune settings
+        run: |
+          mkdir -p three-mode-ab
+          ./build-meta-dsp/three_mode_ab --output three-mode-ab
+      - name: Upload synthetic three-way A/B WAVs, report and listening page
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-Mini-3-Mode-Synthetic-A-B-Listening
+          path: three-mode-ab/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Render real repository singer through all three modes (G major)
+        shell: bash
+        run: |
+          mkdir -p three-mode-real
+          cp benchmark/v33/raw_levelmatched_20-28.wav three-mode-real/DRY_real_voice.wav
+          cp benchmark/v33/autotune_pro_levelmatched_20-28.wav three-mode-real/REFERENCE_AutoTunePro.wav
+          export SKELLY_MINI_PDC=1 SKELLY_BLOCK=128
+          for speed in 0 10 25; do
+            ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/REGULAR_"$speed"ms.wav" "$speed" 100 100 0 0 2773
+            SKELLY_TESTTUNE=1 ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/TESTTUNE_"$speed"ms.wav" "$speed" 100 100 0 0 2773
+            SKELLY_META=1 ./build-meta-dsp/skelly_render benchmark/v33/raw_levelmatched_20-28.wav "three-mode-real/META_"$speed"ms.wav" "$speed" 100 100 0 0 2773
+          done
+          for output in three-mode-real/REGULAR_*ms.wav three-mode-real/TESTTUNE_*ms.wav three-mode-real/META_*ms.wav; do
+            python3 tests/validate_real_vocal.py benchmark/v33/raw_levelmatched_20-28.wav "$output"
+          done
+          python3 tools/generate_ab_index.py three-mode-real
+      - name: Upload three-mode real-singer A/B WAVs and reference
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-Mini-3-Mode-Real-Vocal-A-B
+          path: three-mode-real/
+          retention-days: 7
+          if-no-files-found: error
+
+  windows-meta-lab:
+    name: Windows META Lab VST3 + real JUCE smoke (no binary upload)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure separately identified experimental VST3
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-meta -A x64
+          -DSKELLY_META_TEST=ON
+          -DSKELLY_BUILD_PLUGIN=ON
+          -DSKELLY_BUILD_DSP_TESTS=OFF
+          -DSKELLY_BUILD_GUI_SMOKE=ON
+          -DSKELLY_BUILD_STUDIO=OFF
+          -DSKELLY_BUILD_STUDIO_FAST=OFF
+      - name: Compile actual META Lab VST3 and editor smoke
+        run: cmake --build build-meta --config Release --target SkellyTuneMetaLab_VST3 SkellyTuneGuiSmoke --parallel 2
+      - name: Check lab name, isolated VST3 identity and no release-name bundle
+        shell: pwsh
+        run: |
+          $lab = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3')
+          $release = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune Realtime.vst3')
+          if ($lab.Count -ne 1 -or $release.Count -ne 0) {
+            throw "META Lab build must have exactly one lab bundle and zero release bundles (lab=$($lab.Count), release=$($release.Count))"
+          }
+          $binary = Join-Path $lab[0].FullName 'Contents/x86_64-win/SkellyTune META Lab.vst3'
+          if (!(Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw 'Compiled META Lab x64 module missing'
+          }
+      - name: Normalize and strictly validate META Lab VST3 moduleinfo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m unittest discover -s tests -p "test_vst3_moduleinfo.py" -v
+          if ($LASTEXITCODE -ne 0) { throw 'VST3 metadata normalizer regression failed' }
+          $lab = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3')
+          if ($lab.Count -ne 1) { throw "Expected one META Lab VST3 to normalize; got $($lab.Count)" }
+          $moduleInfo = Join-Path $lab[0].FullName 'Contents/Resources/moduleinfo.json'
+          if (!(Test-Path -LiteralPath $moduleInfo -PathType Leaf)) {
+            throw 'META Lab moduleinfo.json is missing'
+          }
+          python tools/normalize_vst3_moduleinfo.py --path "$moduleInfo" --cmake-file CMakeLists.txt --expected-name "SkellyTune META Lab"
+          if ($LASTEXITCODE -ne 0) { throw 'META Lab strict metadata normalization failed' }
+      - name: Exercise real editor, algorithm parameter, knob endpoints, audio and IPC
+        shell: pwsh
+        run: |
+          $smoke = Get-ChildItem -LiteralPath build-meta -Recurse -File -Filter 'SkellyTuneGuiSmoke.exe' | Select-Object -First 1
+          if (!$smoke) { throw 'SkellyTuneGuiSmoke.exe missing' }
+          $env:SKELL_LOCAL_IPC_TEST = '1'
+          try {
+            & $smoke.FullName
+            if ($LASTEXITCODE -ne 0) { throw "META Lab editor/IPC smoke failed: $LASTEXITCODE" }
+          } finally {
+            Remove-Item Env:SKELL_LOCAL_IPC_TEST -ErrorAction SilentlyContinue
+          }
+      # One 3-in-1 research VST3, same pinned Windows validator as the
+      # normal plugin. Do not build or upload a second two-mode preview.
+      - name: Download pinned pluginval 2.0.0-beta3 for three-mode Lab
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip'
+          Invoke-WebRequest -Uri 'https://github.com/Tracktion/pluginval/releases/download/v2.0.0-beta3/pluginval_Windows.zip' -OutFile $archive
+          $expectedSha256 = 'da158e918b60430c6a5223cd99cc2e746bda604e583258c400898caf4e95c523'
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) { throw "Pinned pluginval hash mismatch: $actualSha256" }
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'skelly-meta-pluginval'
+          Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot -Force
+          $validator = Get-ChildItem -LiteralPath $toolRoot -Recurse -File -Filter 'pluginval.exe' | Select-Object -First 1
+          if (!$validator) { throw 'Verified pluginval executable missing' }
+          "PLUGINVAL_EXE=$($validator.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Validate actual 3-mode META Lab VST3 with pluginval strictness 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundles = @(Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3')
+          if ($bundles.Count -ne 1) { throw "Expected one Lab VST3; got $($bundles.Count)" }
+          $stdout = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stdout'
+          $stderr = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stderr'
+          $argumentLine = '--strictness-level 5 "' + $bundles[0].FullName + '"'
+          $process = Start-Process -FilePath $env:PLUGINVAL_EXE -ArgumentList $argumentLine `
+            -WorkingDirectory $PWD.Path -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+          if ($null -eq $process.ExitCode -or $process.ExitCode -ne 0) {
+            throw "META Lab pluginval strictness 5 failed: exit=$($process.ExitCode)"
+          }
+      - name: Upload genuine META Lab editor screenshots
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-META-Lab-real-editor-screenshots
+          path: |
+            SkellyTuneMini_UI_432.png
+            SkellyTuneMini_META_Lab_UI_432.png
+            SkellyTuneMini_Knob_0ms_UI_432.png
+            SkellyTuneMini_Knob_100ms_UI_432.png
+            SkellyTuneMini_REGULAR_LiveNotes_UI_432.png
+            SkellyTuneMini_TESTTUNE_LiveNotes_UI_432.png
+            SkellyTuneMini_META_LiveNotes_UI_432.png
+            SkellyTuneMini_Analyzer_UI_432.png
+            SkellyTuneMini_Analyzer_Active_UI_432.png
+            SkellyTuneMini_UI_720.png
+            SkellyTuneMini_UI_1008.png
+            SkellyTuneMini_Analyzer_UI_720.png
+            SkellyTuneMini_Analyzer_UI_1008.png
+          if-no-files-found: error
+          retention-days: 7
+
+      # The owner explicitly requested a META test build. This is a narrowly
+      # scoped, short-lived research artifact, never a release or installer.
+      # Do not leak experimental META to the normal Mini Windows package.
+      - name: Stage explicitly marked META research-only test bundle
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/mini-pr16-vst3-program-name-20261121'
+        shell: pwsh
+        run: |
+          $lab = Get-ChildItem -LiteralPath build-meta -Recurse -Directory -Filter 'SkellyTune META Lab.vst3' | Select-Object -First 1
+          if (!$lab) { throw 'META Lab x64 test bundle missing' }
+          New-Item -ItemType Directory -Force -Path META-LAB-TEST-ONLY | Out-Null
+          Copy-Item -LiteralPath $lab.FullName -Destination 'META-LAB-TEST-ONLY' -Recurse
+          $moduleInfo = Join-Path 'META-LAB-TEST-ONLY' 'SkellyTune META Lab.vst3/Contents/Resources/moduleinfo.json'
+          if (!(Test-Path -LiteralPath $moduleInfo -PathType Leaf)) {
+            throw 'Staged META Lab metadata missing'
+          }
+          python -c "import json,sys; doc=json.load(open(sys.argv[1],encoding='utf-8')); assert doc['Name']=='SkellyTune META Lab'; assert len(doc['Classes'])==2" "$moduleInfo"
+          if ($LASTEXITCODE -ne 0) { throw 'Staged META Lab metadata failed strict JSON' }
+          @'
+          SKELLYTUNE META LAB — OWNER RESEARCH TEST ONLY
+          NOT A RELEASE. NOT FOR REDISTRIBUTION OR PRODUCTION.
+          This is a separate VST3 ID from regular Mini, designed for temporary
+          real-vocal A/B testing. Run only in a backup FL Studio project.
+          META's output delay/PDC and consonant processing are not fully verified.
+          '100' dial = 100ms. '0' dial = 0ms (fast hard correction).
+          '@ | Set-Content -Path 'META-LAB-TEST-ONLY/README-TEST-ONLY.txt'
+          $packageRoot = Join-Path $PWD 'META-LAB-TEST-ONLY'
+          $manifest = foreach ($relative in @(
+            'SkellyTune META Lab.vst3/Contents/x86_64-win/SkellyTune META Lab.vst3',
+            'SkellyTune META Lab.vst3/Contents/Resources/moduleinfo.json'
+          )) {
+            $file = Join-Path $packageRoot $relative
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            "$hash *$relative"
+          }
+          $manifest | Set-Content -LiteralPath (Join-Path $packageRoot 'SHA256SUMS.txt') -Encoding utf8
+      - name: Upload owner's temporary META Lab TEST-ONLY binary
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/mini-pr16-vst3-program-name-20261121'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-META-LAB-TEST-ONLY-NOT-FOR-RELEASE
+          path: META-LAB-TEST-ONLY/
+          if-no-files-found: error
+          retention-days: 1

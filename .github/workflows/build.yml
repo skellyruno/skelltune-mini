@@ -3,7 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
-  pull_request:
+  # Development PRs use mini-meta-lab.yml exclusively: one Windows VST3
+  # with REGULAR, TESTTUNE and META, avoiding duplicate preview builds.
+  # Retain the normal product's protected-branch/manual validation.
 
 # Cancel superseded PR runs only. Never cancel main or manual verification.
 concurrency:
@@ -60,6 +62,10 @@ jobs:
             SkellyTuneMini_UI_432.png
             SkellyTuneMini_UI_720.png
             SkellyTuneMini_UI_1008.png
+            SkellyTuneMini_Knob_0ms_UI_432.png
+            SkellyTuneMini_Knob_100ms_UI_432.png
+            SkellyTuneMini_Analyzer_UI_432.png
+            SkellyTuneMini_Analyzer_Active_UI_432.png
           if-no-files-found: error
           retention-days: 7
 

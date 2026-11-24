@@ -4,6 +4,7 @@
 #include "../dsp/SafePresetValue.hpp"
 #include <array>
 #include <algorithm>
+#include <limits>
 
 SkellyTuneRealtimeProcessor::SkellyTuneRealtimeProcessor()
     : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
@@ -142,16 +143,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
 }
 
 void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockSize) {
+    preparedAudioRate_ = (std::isfinite(sampleRate) && sampleRate > 0.0) ?
+        sampleRate : 0.0;
     doubleScratch_.setSize(2, juce::jlimit(1, 16384, maxBlockSize), false, true, false);
 #if defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
     engine_.prepare(sampleRate, getTotalNumInputChannels(), true, true);
 #elif defined(SKELLY_STUDIO_PROFILE) && SKELLY_STUDIO_PROFILE
     engine_.prepare(sampleRate, getTotalNumInputChannels(), true);
 #else
-    engine_.prepare(sampleRate, getTotalNumInputChannels());
+    // 1.5ms fixed PDC in this Mini VST3, set before processing starts.
+    // Existing 40/50ms Studio products and legacy portable DSP defaults
+    // retain their own contracts; no realtime latency automation.
+    engine_.prepare(sampleRate, getTotalNumInputChannels(),
+                    false, false, 1.5);
 #endif
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
-    meta_.prepare(sampleRate);
+    // META retains its own grain-source history, but the dry/transient
+    // transport must match this same host PDC in every selected algorithm.
+    meta_.prepare(sampleRate, 1.5);
     metaWasActive_ = false;
 #endif
     // Both modes share the same sample-accurate dry/transient transport delay.
@@ -161,8 +170,12 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     const auto cycle = engine_.outputDelayContract(true);
     jassert(realtime.reportedSamples == cycle.reportedSamples);
     setLatencySamples(realtime.reportedSamples);
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    jassert(meta_.latencySamples() == realtime.reportedSamples);
+#endif
 }
 void SkellyTuneRealtimeProcessor::releaseResources() {
+    preparedAudioRate_ = 0.0;
     engine_.reset();
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     meta_.reset();
@@ -222,23 +235,91 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
     if (state_.getRawParameterValue("bypass")->load() > 0.5f) p.mix = 0.0f;
     return p;
 }
+void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
+    int64_t positionMs=-1;
+    const double rate=preparedAudioRate_;
+    if(rate>0.0) {
+        if(auto* playhead=getPlayHead()) {
+            const auto pos=playhead->getPosition();
+            if(pos) {
+                if(const auto samples=pos->getTimeInSamples()) {
+                    // Ignore negative preroll and out-of-range host samples
+                    // before llround, avoiding undefined signed overflow.
+                    if(*samples>=0) {
+                        const double ms=double(*samples)*1000.0/rate;
+                        if(std::isfinite(ms) && ms>=0.0 && ms<=2147483647.0)
+                            positionMs=int64_t(std::llround(ms));
+                    }
+                }
+                else if(const auto seconds=pos->getTimeInSeconds()) {
+                    // FL Studio/other VST3 hosts may supply seconds but
+                    // omit sample position. Never fabricate a clock.
+                    if(std::isfinite(*seconds) && *seconds>=0.0 &&
+                       *seconds<=2147483.647)
+                        positionMs=int64_t(std::llround(*seconds*1000.0));
+                }
+            }
+        }
+    }
+    displayedHostMs_.store(positionMs,std::memory_order_relaxed);
+}
+void SkellyTuneRealtimeProcessor::processEditedAudio(
+    float* const* io,int channels,int frames,int blockOffset,bool useMeta) {
+    // JUCE standalone smoke calls prepareToPlay directly without a host
+    // rate. Never discard the whole audio callback because
+    // AudioProcessor::getSampleRate() still reports zero.
+    if(frames<=0 || !(preparedAudioRate_>0.0))return;
+    const double rate=preparedAudioRate_;
+    const auto blockMs=displayedHostMs_.load(std::memory_order_relaxed);
+    for(int offset=0;offset<frames;) {
+        const int absolute=blockOffset+offset;
+        const auto atMs=skelly::PitchEditTimeline::frameMs(blockMs,absolute,rate);
+        const int target=pitchEdits_.targetAt(atMs);
+        const int count=pitchEdits_.framesUntilBoundary(blockMs,absolute,
+                                                        frames-offset,rate);
+        float* segment[2]={io[0]+offset,
+                           channels==2?io[1]+offset:nullptr};
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        if(useMeta) {
+            meta_.setManualTargetMidi(target);
+            runMeta(segment,channels,count);
+        } else
+#endif
+        {
+            (void)useMeta;
+            engine_.setManualTargetMidi(target);
+            const float* in[2]={segment[0],segment[1]};
+            engine_.process(in,segment,count,channels);
+        }
+        offset+=count;
+    }
+}
 void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce::MidiBuffer&) {
     juce::ScopedNoDenormals guard;
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() <= 0) return;
-    engine_.setParameters(currentParameters());
+    const auto params = currentParameters();
+    displayedReferenceA_.store(params.referenceA,std::memory_order_relaxed);
+    updateTimelinePosition();
+    engine_.setParameters(params);
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     if (state_.getRawParameterValue("meta")->load() > 0.5f) {
         if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
         float* io[2] = { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
-        runMeta(io, ch, b.getNumSamples());
+        processEditedAudio(io,ch,b.getNumSamples(),0,true);
         return;
     }
-    if (metaWasActive_) { engine_.reset(); metaWasActive_ = false; }
+    if (metaWasActive_) {
+        // reset() intentionally clears cached engine Parameters. The old
+        // order applied APVTS values BEFORE the reset and processed the
+        // first switched block with factory defaults: audible A/B glitch.
+        engine_.reset();
+        engine_.setParameters(params);
+        metaWasActive_ = false;
+    }
 #endif
-    std::array<const float*, 2> in { b.getReadPointer(0), ch == 2 ? b.getReadPointer(1) : nullptr };
-    std::array<float*, 2> out { b.getWritePointer(0), ch == 2 ? b.getWritePointer(1) : nullptr };
-    engine_.process(in.data(), out.data(), b.getNumSamples(), ch);
+    float* io[2]={b.getWritePointer(0),ch==2?b.getWritePointer(1):nullptr};
+    processEditedAudio(io,ch,b.getNumSamples(),0,false);
     const auto pitch = engine_.lastPitch();
     displayedPitchHz_.store(pitch.valid ? pitch.hertz : 0.0f, std::memory_order_relaxed);
     displayedConfidence_.store(pitch.valid ? pitch.confidence : 0.0f, std::memory_order_relaxed);
@@ -252,7 +333,10 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     juce::ScopedNoDenormals guard;
     const int ch = std::min(2, b.getNumChannels());
     if (ch == 0 || b.getNumSamples() == 0) return;
-    engine_.setParameters(currentParameters());
+    const auto params = currentParameters();
+    displayedReferenceA_.store(params.referenceA,std::memory_order_relaxed);
+    updateTimelinePosition();
+    engine_.setParameters(params);
     const int capacity = doubleScratch_.getNumSamples();
     // Some hosts can probe a processor before prepareToPlay; never enter a
     // zero-stride loop or allocate on the realtime thread. Match the float
@@ -263,22 +347,31 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
         for (int c = 0; c < ch; ++c) {
             const double* src = b.getReadPointer(c, offset);
             float* dst = doubleScratch_.getWritePointer(c);
-            for (int i = 0; i < n; ++i) dst[i] = std::isfinite(src[i]) ? float(src[i]) : 0.0f;
+            for (int i = 0; i < n; ++i) {
+                const double sample=src[i];
+                // Extremely large but finite double audio must not
+                // become an infinity inside float scratch.
+                dst[i]=(std::isfinite(sample) &&
+                        std::abs(sample)<=double(std::numeric_limits<float>::max()))
+                    ?float(sample):0.0f;
+            }
         }
-        const float* src[2] = {doubleScratch_.getReadPointer(0),
-                                ch == 2 ? doubleScratch_.getReadPointer(1) : nullptr};
         float* dst[2] = {doubleScratch_.getWritePointer(0),
                          ch == 2 ? doubleScratch_.getWritePointer(1) : nullptr};
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
         if (state_.getRawParameterValue("meta")->load() > 0.5f) {
             if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
-            runMeta(dst, ch, n);
+            processEditedAudio(dst,ch,n,offset,true);
         } else {
-            if (metaWasActive_) { engine_.reset(); metaWasActive_ = false; }
-            engine_.process(src, dst, n, ch);
+            if (metaWasActive_) {
+                engine_.reset();
+                engine_.setParameters(params); // persist host state in first returned 64-bit block
+                metaWasActive_ = false;
+            }
+            processEditedAudio(dst,ch,n,offset,false);
         }
 #else
-        engine_.process(src, dst, n, ch);
+        processEditedAudio(dst,ch,n,offset,false);
 #endif
         for (int c = 0; c < ch; ++c) {
             double* dest = b.getWritePointer(c, offset);
@@ -299,10 +392,16 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
 void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int frames) {
     const auto p = currentParameters();
-    // The reconstruction's smoother speed has its own unit; speedMs / 8 is an arbitrary test mapping.
-    meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA), double(p.amount),
-                        double(p.speedMs) / 8.0);
+    // True 0-200ms retune time constant, consistent with REGULAR/TESTTUNE.
+    // Match the other engines: Amount controls pitch correction in cents;
+    // Mix independently controls the blend of the processed and dry voices.
+    // Zero Amount or Mix retains the declared fixed dry transport delay.
+    meta_.setParameters(uint16_t(p.pitchClasses), double(p.referenceA),
+                        double(p.amount), double(p.speedMs), 0.0, double(p.mix));
     const bool bypass = state_.getRawParameterValue("bypass")->load() > 0.5f;
+    // processEditedAudio() already supplies the note for THIS sub-block.
+    // Resetting it to the host block's first-note target here silently
+    // discarded manual pitch edits starting or ending mid-buffer.
     meta_.process(io, channels, frames, bypass);
     const double hz = meta_.detectedHz(), targetHz = meta_.targetHz();
     const bool voiced = hz > 0.0 && targetHz > 0.0;
@@ -311,7 +410,9 @@ void SkellyTuneRealtimeProcessor::runMeta(float* const* io, int channels, int fr
     displayedTargetNote_.store(voiced ? int(std::lround(69.0 + 12.0 * std::log2(targetHz / double(p.referenceA)))) : -1,
                                std::memory_order_relaxed);
     displayedTargetPending_.store(false, std::memory_order_relaxed);
-    displayedCorrectionCents_.store(voiced ? float(meta_.shiftCents()) : 0.0f, std::memory_order_relaxed);
+    displayedCorrectionCents_.store(voiced ?
+        float(meta_.estimatedOutputCorrectionCents()) : 0.0f,
+        std::memory_order_relaxed);
 }
 #endif
 juce::AudioProcessorEditor* SkellyTuneRealtimeProcessor::createEditor() {
@@ -333,10 +434,23 @@ std::optional<double> decodeSavedNumber(const juce::var& raw) {
 } // namespace
 
 void SkellyTuneRealtimeProcessor::getStateInformation(juce::MemoryBlock& block) {
-    if (const auto xml = state_.copyState().createXml())
-        copyXmlToBinary(*xml, block);
-    else
-        block.reset();
+    // Saved XML extends the old APVTS state rather than changing any
+    // published parameter IDs, numeric ranges, or plugin identities.
+    auto safe=state_.copyState();
+    juce::ValueTree edits("PITCH_EDITS");
+    for(int i=0;i<skelly::PitchEditTimeline::kCapacity;++i) {
+        const auto r=pitchEdits_.get(i);
+        if(!r.valid())continue;
+        juce::ValueTree e("EDIT");
+        e.setProperty("slot",i,nullptr);
+        e.setProperty("startMs",static_cast<juce::int64>(r.startMs),nullptr);
+        e.setProperty("endMs",static_cast<juce::int64>(r.endMs),nullptr);
+        e.setProperty("midi",r.targetMidi,nullptr);
+        edits.addChild(e,-1,nullptr);
+    }
+    if(edits.getNumChildren()>0)safe.addChild(edits,-1,nullptr);
+    if(const auto xml=safe.createXml())copyXmlToBinary(*xml,block);
+    else block.reset();
 }
 
 void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int bytes) {
@@ -378,7 +492,37 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
             restoredSkin=true;
         }
     }
+    const auto edits=incoming.getChildWithName("PITCH_EDITS");
+    // An XML chunk with no known fields is not a valid user project;
+    // it must not silently wipe existing manual pitch corrections.
+    if(restored==0 && !restoredSkin && !edits.isValid())return;
     if (restored > 0 || restoredSkin) state_.replaceState(safeState);
+    // Valid legacy presets have no manual edits, so clear them on recall.
+    pitchEdits_.clear();
+    if(edits.isValid()) {
+        std::array<bool,skelly::PitchEditTimeline::kCapacity> seen{};
+        const int count=std::min(edits.getNumChildren(),
+                                 skelly::PitchEditTimeline::kCapacity);
+        for(int i=0;i<count;++i) {
+            const auto e=edits.getChild(i);
+            if(!e.hasType("EDIT"))continue;
+            const auto slot=decodeSavedNumber(e.getProperty("slot"));
+            const auto first=decodeSavedNumber(e.getProperty("startMs"));
+            const auto last=decodeSavedNumber(e.getProperty("endMs"));
+            const auto midi=decodeSavedNumber(e.getProperty("midi"));
+            if(!slot||!first||!last||!midi)continue;
+            if(!std::isfinite(*slot)||!std::isfinite(*first)||
+               !std::isfinite(*last)||!std::isfinite(*midi))continue;
+            if(*slot<0||*slot>=skelly::PitchEditTimeline::kCapacity||
+               *first<0||*last>2147483647.0||*midi<0||*midi>127||
+               std::floor(*slot)!=*slot||std::floor(*first)!=*first||
+               std::floor(*last)!=*last||std::floor(*midi)!=*midi)continue;
+            const int index=int(*slot);
+            if(seen[std::size_t(index)])continue; // first valid slot wins
+            seen[std::size_t(index)]=true;
+            pitchEdits_.set(index,{int64_t(*first),int64_t(*last),int(*midi)});
+        }
+    }
     // Invalid/unknown chunks do not damage the current valid state.
 }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {

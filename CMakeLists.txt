@@ -132,8 +132,16 @@ if(SKELLY_BUILD_PLUGIN)
 
     # Keep the v3.3 VST3 IDs unchanged so projects and presets can continue
     # recognizing the same plugin rather than the template gain plugin.
-    skelly_add_plugin(SkellyTuneRealtime
-        "com.skelly.realtimetune" SkRT "SkellyTune Realtime")
+    # A separately identified, TEST-ONLY companion. Never overwrite a user's
+    # installed SkellyTune Realtime VST3 with an experimental META binary.
+    # Normal builds retain the existing manufacturer/product codes and automation.
+    if(SKELLY_META_TEST)
+        skelly_add_plugin(SkellyTuneMetaLab
+            "com.skelly.realtimetune.metalab" SkML "SkellyTune META Lab")
+    else()
+        skelly_add_plugin(SkellyTuneRealtime
+            "com.skelly.realtimetune" SkRT "SkellyTune Realtime")
+    endif()
 
     if(SKELLY_BUILD_STUDIO)
         skelly_add_plugin(SkellyTuneStudio

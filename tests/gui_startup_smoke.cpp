@@ -1,4 +1,5 @@
 #include "../Source/PluginProcessor.h"
+#include "../dsp/ScaleMask.hpp" // real effectiveMask() under mode-switch smoke
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <iostream>
 #include <memory>
@@ -18,6 +19,18 @@ int main() {
             return 28;
         }
         std::cerr << "STEP: VST3 default program name ok\n" << std::flush;
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        if (processor.getName() != "SkellyTune META Lab" ||
+            processor.parameters().getParameter("meta") == nullptr) {
+            std::cerr << "FAIL: META Lab identity or algorithm parameter missing\n";
+            return 29;
+        }
+#else
+        if (processor.parameters().getParameter("meta") != nullptr) {
+            std::cerr << "FAIL: release build unexpectedly exposes META\n";
+            return 30;
+        }
+#endif
         // Receiver must not assume any SkellKey value until an authenticated
         // packet is received. Joining the local hub needs no Mini control.
         if (processor.linkedMusicalKey().valid()) {
@@ -61,7 +74,16 @@ int main() {
             earlyAudio.getSample(1, 46) != 0.125) return 3;
         std::cerr << "STEP: unprepared 64-bit probe passthrough ok\n" << std::flush;
         processor.prepareToPlay(48000.0, 256);
-        std::cerr << "STEP: prepare ok\n" << std::flush;
+#if !defined(SKELLY_STUDIO_PROFILE) && !defined(SKELLY_STUDIO_FAST_PROFILE)
+        // Host-visible PDC must REALLY be reduced to 72 samples at 48k,
+        // not merely an updated plugin label.
+        if (processor.getLatencySamples() != 72) {
+            std::cerr << "FAIL: 1.5ms VST3 PDC expected 72 frames, got "
+                      << processor.getLatencySamples() << "\n";
+            return 69;
+        }
+#endif
+        std::cerr << "STEP: prepare + sample-exact host PDC ok\n" << std::flush;
         std::cerr << "STEP: before editor construction\n" << std::flush;
         std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
         if (!processor.worldLink.requested() || !processor.followingSkellKey()) {
@@ -111,6 +133,23 @@ int main() {
                    juce::PNGImageFormat().writeImageToStream(snapshot, *stream);
         };
         if (!childrenInside() || !validVisual()) return 4;
+        // Assert measured actual JUCE bounds, not only paint geometry.
+        auto* firstNote=editor->findChildWithID("skelly.note.0");
+        auto* lastNote=editor->findChildWithID("skelly.note.11");
+        auto* keyBox=editor->findChildWithID("skelly.key");
+        auto* scaleBox=editor->findChildWithID("skelly.scale");
+        auto* a4Box=editor->findChildWithID("skelly.a4");
+        if (!firstNote || !lastNote || !keyBox || !scaleBox || !a4Box) return 73;
+        const int leftMargin=firstNote->getX();
+        const int rightMargin=editor->getWidth()-lastNote->getRight();
+        const int keyScaleGap=scaleBox->getX()-keyBox->getRight();
+        const int scaleA4Gap=a4Box->getX()-scaleBox->getRight();
+        if (std::abs(leftMargin-rightMargin)>2 ||
+            std::abs(keyScaleGap-scaleA4Gap)>1 ||
+            firstNote->getWidth()!=lastNote->getWidth()) {
+            std::cerr << "FAIL: asymmetric note bank or tuning gutters\n";
+            return 74;
+        }
         if (!savePreview("SkellyTuneMini_UI_432.png")) return 14;
         std::cerr << "STEP: default 432x414 layout + neon rendering ok\n" << std::flush;
         editor->setSize(720, 690);
@@ -127,6 +166,94 @@ int main() {
         editor->resized();
         if (!childrenInside() || !validVisual()) return 7;
         std::cerr << "STEP: compact return layout ok\n" << std::flush;
+        if (!editor->findChildWithID("skelly.algorithm")) {
+            std::cerr << "FAIL: algorithm selector missing\n";
+            return 31;
+        }
+        // The optional analyzer must expand the real editor, preserve
+        // original child hit targets and collapse back to the exact old
+        // 432x414 window with no APVTS or plugin identity changes.
+        auto* analyzer = dynamic_cast<juce::TextButton*>(
+            editor->findChildWithID("skelly.analyzerToggle"));
+        if (!analyzer) return 46;
+        analyzer->onClick();
+        // JUCE's Button::triggerClick() may queue an asynchronous
+        // command when no message loop is running in this smoke process.
+        // Call the installed actual button callback synchronously, then
+        // verify the real editor size, layout and captured pixels.
+        if (editor->getWidth()!=432 || editor->getHeight()!=700 ||
+            !childrenInside() || !validVisual() ||
+            !savePreview("SkellyTuneMini_Analyzer_UI_432.png")) {
+            std::cerr << "FAIL: analyzer expand expected 432x700, got "
+                      << editor->getWidth() << "x" << editor->getHeight() << "\n";
+            return 47;
+        }
+        // Inspect the real, expanded 720px and 1008px layouts too.
+        editor->setSize(720, 1167);
+        editor->resized();
+        if (!childrenInside() || !validVisual() ||
+            !savePreview("SkellyTuneMini_Analyzer_UI_720.png")) return 75;
+        editor->setSize(1008, 1633);
+        editor->resized();
+        if (!childrenInside() || !validVisual() ||
+            !savePreview("SkellyTuneMini_Analyzer_UI_1008.png")) return 76;
+        editor->setSize(432, 700);
+        editor->resized();
+        if (!childrenInside() || !validVisual()) return 77;
+        // The note editor is real state, not merely painted handles:
+        // save, restore and clear it in the actual JUCE host processor.
+        auto* clearEdits=dynamic_cast<juce::TextButton*>(
+            editor->findChildWithID("skelly.clearPitchEdits"));
+        auto* undoEdits=dynamic_cast<juce::TextButton*>(
+            editor->findChildWithID("skelly.undoPitchEdits"));
+        if(!clearEdits || !clearEdits->isVisible() ||
+           !undoEdits || !undoEdits->isVisible())return 60;
+        if(clearEdits->isEnabled() || undoEdits->isEnabled()) {
+            std::cerr<<"FAIL: empty pitch editor has active erase buttons\n";
+            return 70;
+        }
+        if(processor.pitchEdits().add({150,500,66})<0)return 61;
+        juce::Thread::sleep(55);
+        juce::Timer::callPendingTimersSynchronously();
+        if(!clearEdits->isEnabled() || !undoEdits->isEnabled()) {
+            std::cerr<<"FAIL: pitch-editor buttons stayed disabled after recording a note\n";
+            return 71;
+        }
+        juce::MemoryBlock editedState;
+        processor.getStateInformation(editedState);
+        processor.pitchEdits().clear();
+        processor.setStateInformation(editedState.getData(),
+                                     static_cast<int>(editedState.getSize()));
+        if(processor.pitchEdits().targetAt(200)!=66)return 62;
+        if(processor.pitchEdits().add({550,700,68})<0)return 64;
+        undoEdits->onClick();
+        if(processor.pitchEdits().targetAt(600)!=-1 ||
+           processor.pitchEdits().targetAt(200)!=66)return 65;
+        clearEdits->onClick();
+        if(processor.pitchEdits().targetAt(200)!=-1)return 63;
+        if(clearEdits->isEnabled() || undoEdits->isEnabled())return 72;
+        analyzer->onClick();
+        if (editor->getWidth()!=432 || editor->getHeight()!=414 ||
+            !childrenInside() || !validVisual()) return 48;
+        std::cerr << "STEP: collapsible live pitch analyzer geometry verified\n"
+                  << std::flush;
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        // Exercise the actual opt-in processor path and save a true JUCE META
+        // editor frame. This is for visual inspection, not a release artifact.
+        if (auto* meta = processor.parameters().getParameter("meta")) {
+            meta->beginChangeGesture();
+            meta->setValueNotifyingHost(1.0f);
+            meta->endChangeGesture();
+        }
+        juce::Thread::sleep(80);
+        juce::Timer::callPendingTimersSynchronously();
+        if (processor.parameters().getRawParameterValue("meta")->load() < 0.5f ||
+            !savePreview("SkellyTuneMini_META_Lab_UI_432.png")) {
+            std::cerr << "FAIL: META test selector activation or UI capture\n";
+            return 32;
+        }
+        std::cerr << "STEP: META Lab selected and actual editor captured\n" << std::flush;
+#endif
         juce::Image frame(juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
         juce::Graphics graphics(frame);
         editor->paint(graphics);
@@ -144,10 +271,42 @@ int main() {
             std::cerr << "FAIL: mini editor controls missing or extra controls remain\n";
             return 8;
         }
-        speed->setValue(7.0, juce::sendNotificationSync);
-        if (std::abs(processor.parameters().getRawParameterValue("speed")->load() - 7.0f) > 0.02f)
-            return 9;
-        speed->setValue(25.0, juce::sendNotificationSync);
+        // Host "speed" remains 0..200ms for old projects. The new Mini
+        // dial provides a TRUE 0..100ms range (100 slow to 0 hard) while
+        // rotating clockwise/upwards increases correction speed.
+        const auto readSpeed = [&] {
+            return processor.parameters().getRawParameterValue("speed")->load();
+        };
+        if (std::abs(speed->getValue() - 75.0) > 0.02 ||
+            std::abs(readSpeed() - 25.0f) > 0.02f) {
+            std::cerr << "FAIL: old 25ms state did not map to inverse 0..100 dial\n";
+            return 36;
+        }
+        speed->setValue(0.0, juce::sendNotificationSync); // 100 shown = 100ms
+        if (std::abs(readSpeed() - 100.0f) > 0.02f ||
+            !savePreview("SkellyTuneMini_Knob_100ms_UI_432.png")) return 34;
+        speed->setValue(100.0, juce::sendNotificationSync); // 0 shown = fastest
+        if (std::abs(readSpeed()) > 0.02f ||
+            !savePreview("SkellyTuneMini_Knob_0ms_UI_432.png")) return 35;
+        speed->setValue(50.0, juce::sendNotificationSync); // midpoint 50 shown
+        if (std::abs(readSpeed() - 50.0f) > 0.02f) return 37;
+        speed->setValue(93.0, juce::sendNotificationSync); // 7ms engine
+        if (std::abs(readSpeed() - 7.0f) > 0.02f) return 9;
+        // Host automation updates the *existing* APVTS parameter and feeds
+        // back to the reversed dial without recursively writing the host.
+        if (auto* parameter = processor.parameters().getParameter("speed"))
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(60.0f));
+        if (std::abs(readSpeed() - 60.0f) > 0.02f ||
+            std::abs(speed->getValue() - 40.0) > 0.02) return 38;
+        // Old host-saved values in the previous 0..200ms range are preserved
+        // when recalled, rather than being silently rewritten by the UI.
+        if (auto* parameter = processor.parameters().getParameter("speed"))
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(175.0f));
+        if (std::abs(readSpeed() - 175.0f) > 0.02f ||
+            std::abs(speed->getValue()) > 0.02) return 39;
+        speed->setValue(50.0, juce::sendNotificationSync); // user opts into the new 100ms range
+        if (std::abs(readSpeed() - 50.0f) > 0.02f) return 40;
+        speed->setValue(75.0, juce::sendNotificationSync); // restore 25ms
         key->setSelectedId(8, juce::sendNotificationSync); // G (zero-based 7)
         if (std::abs(processor.parameters().getRawParameterValue("key")->load() - 7.0f) > 0.01f)
             return 10;
@@ -172,6 +331,236 @@ int main() {
         juce::MidiBuffer midi;
         processor.processBlock(audio, midi);
         std::cerr << "STEP: processBlock ok\n" << std::flush;
+
+        // Feed real harmonic samples through the *actual processor* with the
+        // editor open. A# input in C-major should light A# as INPUT and a
+        // distinct enabled target note green, not invent an animation.
+        auto* maskParam = processor.parameters().getParameter("noteMask");
+        auto* scaleParam = processor.parameters().getParameter("scale");
+        if (!maskParam || !scaleParam) return 41;
+        maskParam->setValueNotifyingHost(maskParam->convertTo0to1(0.0f));
+        scaleParam->setValueNotifyingHost(scaleParam->convertTo0to1(1.0f));
+        auto* testParam = processor.parameters().getParameter("testTune");
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        auto* metaParam = processor.parameters().getParameter("meta");
+        if (metaParam) metaParam->setValueNotifyingHost(0.0f);
+#endif
+        auto renderNoteFeedback = [&] (const juce::String& filename) {
+            double phase = 0.0;
+            for (int block = 0; block < 480; ++block) {
+                for (int n=0;n<128;++n) {
+                    phase += juce::MathConstants<double>::twoPi * 235.8 / 48000.0;
+                    float v = 0.0f;
+                    for (int h=1;h<=6;++h)
+                        v += float(0.18 * std::sin(h*phase + h*0.31) / double(h));
+                    audio.setSample(0,n,v);
+                    audio.setSample(1,n,v);
+                }
+                // 256 sample buffer is prepared; use the complete capacity
+                // with a second half carrying the same voiced signal.
+                for (int n=128;n<256;++n) {
+                    phase += juce::MathConstants<double>::twoPi * 235.8 / 48000.0;
+                    float v = 0.0f;
+                    for (int h=1;h<=6;++h)
+                        v += float(0.18 * std::sin(h*phase + h*0.31) / double(h));
+                    audio.setSample(0,n,v);
+                    audio.setSample(1,n,v);
+                }
+                processor.processBlock(audio, midi);
+            }
+            // Timer callbacks are intentionally asynchronous; a single
+            // synchronous flush after sleeping may deliver just one trace
+            // point. Advance at least three genuine message-thread ticks.
+            for (int tick = 0; tick < 3; ++tick) {
+                juce::Thread::sleep(40);
+                juce::Timer::callPendingTimersSynchronously();
+            }
+            if (processor.displayedPitchHz() < 175.0f ||
+                processor.displayedTargetNote() < 0) {
+                std::cerr << "FAIL: real live pitch/target: pitch="
+                          << processor.displayedPitchHz()
+                          << " confidence=" << processor.displayedConfidence()
+                          << " target=" << processor.displayedTargetNote()
+                          << " hostMs=" << processor.displayedHostMs() << "\n";
+                return false;
+            }
+            const int inputPc = juce::roundToInt(
+                69.0 + 12.0 * std::log2(double(processor.displayedPitchHz()) / 440.0)) % 12;
+            const int targetPc = processor.displayedTargetNote() % 12;
+            auto* inputKey = editor->findChildWithID("skelly.note." + juce::String(inputPc));
+            auto* targetKey = editor->findChildWithID("skelly.note." + juce::String(targetPc));
+            if (!inputKey || !targetKey) {
+                std::cerr << "FAIL: key readouts missing: input_pc=" << inputPc
+                          << " target_pc=" << targetPc << "\n";
+                return false;
+            }
+            const double inputLamp = double(inputKey->getProperties()["liveInput"]);
+            const double targetLamp = double(targetKey->getProperties()["liveTarget"]);
+            if (inputLamp < 0.10 || targetLamp < 0.10) {
+                std::cerr << "FAIL: piano light activity: in=" << inputLamp
+                          << " target=" << targetLamp << "\n";
+                return false;
+            }
+            auto* inputMeter = editor->findChildWithID("skelly.inputReadout");
+            auto* targetMeter = editor->findChildWithID("skelly.targetReadout");
+            if (!inputMeter || !targetMeter ||
+                double(inputMeter->getProperties()["pitchConfidence"]) < 0.55 ||
+                double(targetMeter->getProperties()["pitchConfidence"]) < 0.55) {
+                std::cerr << "FAIL: live readout confidence: input="
+                          << (inputMeter ? double(inputMeter->getProperties()["pitchConfidence"]) : -1.0)
+                          << " target="
+                          << (targetMeter ? double(targetMeter->getProperties()["pitchConfidence"]) : -1.0)
+                          << "\n";
+                return false;
+            }
+            auto* speedControl = editor->findChildWithID("skelly.speed");
+            if (!speedControl ||
+                int(speedControl->getProperties()["traceSamples"]) < 2 ||
+                speedControl->getProperties()["liveStatus"].toString() == "LISTENING") {
+                std::cerr << "FAIL: live speed feedback: trace="
+                          << (speedControl ? int(speedControl->getProperties()["traceSamples"]) : -1)
+                          << " status="
+                          << (speedControl ? speedControl->getProperties()["liveStatus"].toString() : juce::String("missing"))
+                          << "\n";
+                return false;
+            }
+            if (!savePreview(filename)) {
+                std::cerr << "FAIL: live view could not save PNG: " << filename << "\n";
+                return false;
+            }
+            return true;
+        };
+        if (!renderNoteFeedback("SkellyTuneMini_REGULAR_LiveNotes_UI_432.png")) return 41;
+        analyzer->onClick();
+        if (editor->getHeight()!=700 ||
+            int(analyzer->getProperties()["analyzerSamples"]) < 3 ||
+            !savePreview("SkellyTuneMini_Analyzer_Active_UI_432.png")) return 49;
+        analyzer->onClick();
+        if (testParam) testParam->setValueNotifyingHost(1.0f);
+        if (!renderNoteFeedback("SkellyTuneMini_TESTTUNE_LiveNotes_UI_432.png")) return 42;
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
+        if (metaParam) metaParam->setValueNotifyingHost(1.0f);
+        if (!renderNoteFeedback("SkellyTuneMini_META_LiveNotes_UI_432.png")) return 43;
+
+        // Real JUCE host-processor regression: the edit begins one millisecond
+        // inside the callback. runMeta must NOT overwrite the sub-block
+        // target with the (unedited) note at the buffer's first sample.
+        struct EditPlayHead final : juce::AudioPlayHead {
+            juce::int64 samplePosition=48000; // 1000 ms at 48 kHz
+            juce::Optional<PositionInfo> getPosition() const override {
+                PositionInfo position;
+                position.setTimeInSamples(samplePosition);
+                position.setIsPlaying(true);
+                return position;
+            }
+        } editPlayHead;
+        processor.setPlayHead(&editPlayHead);
+        if(processor.pitchEdits().add({1001,1010,60})<0)return 66;
+        double editPhase=0.0;
+        const auto fillVoicedBlock=[&] {
+            for(int n=0;n<256;++n) {
+                editPhase+=juce::MathConstants<double>::twoPi*235.8/48000.0;
+                const float voice=float(.18*std::sin(editPhase)
+                                         +.07*std::sin(2.0*editPhase));
+                audio.setSample(0,n,voice);
+                audio.setSample(1,n,voice);
+            }
+        };
+        // The plugin processes 64-bit via a preallocated float scratch buffer,
+        // so both paths must receive the same timed manual target changes.
+        for(int precision=0;precision<2;++precision) {
+            const auto processVoiced=[&] {
+                fillVoicedBlock();
+                if(precision==0) {
+                    processor.processBlock(audio,midi);
+                } else {
+                    juce::AudioBuffer<double> doubleAudio(2,256);
+                    for(int n=0;n<256;++n)
+                        for(int c=0;c<2;++c)
+                            doubleAudio.setSample(c,n,double(audio.getSample(c,n)));
+                    processor.processBlock(doubleAudio,midi);
+                }
+            };
+            editPlayHead.samplePosition=48000;
+            processVoiced();
+            if(processor.displayedHostMs()!=1000 ||
+               processor.displayedTargetNote()!=60) {
+                std::cerr<<"FAIL: META missed sub-block C4 edit in "
+                         <<(precision==0?"32":"64")<<"-bit host mode, target="
+                         <<processor.displayedTargetNote()<<"\n";
+                return 67;
+            }
+            editPlayHead.samplePosition=48800; // >1010 ms, release edit
+            processVoiced();
+            if(processor.displayedTargetNote()==60) {
+                std::cerr<<"FAIL: META held released edit in "
+                         <<(precision==0?"32":"64")<<"-bit mode\n";
+                return 68;
+            }
+        }
+        processor.pitchEdits().clear();
+        processor.setPlayHead(nullptr);
+        std::cerr<<"STEP: META 32/64-bit mid-buffer edits/release pass\n"
+                 <<std::flush;
+        if (metaParam) metaParam->setValueNotifyingHost(0.0f);
+
+        // META -> REGULAR / TESTTUNE previously processed one whole block
+        // with factory defaults because engine_.reset() ran AFTER the
+        // APVTS values were applied. Exercise both 32-bit and 64-bit
+        // host switching with non-default speed and G-major note mask.
+        auto* speedForSwitch = processor.parameters().getParameter("speed");
+        if (!speedForSwitch || !metaParam) return 44;
+        speedForSwitch->setValueNotifyingHost(
+            speedForSwitch->convertTo0to1(7.0f));
+        maskParam->setValueNotifyingHost(
+            maskParam->convertTo0to1(0.0f));
+        key->setSelectedId(8, juce::sendNotificationSync); // G
+        scaleParam->setValueNotifyingHost(
+            scaleParam->convertTo0to1(1.0f)); // major
+        const int expectedMask = skelly::effectiveMask(7, 1, 0);
+        metaParam->setValueNotifyingHost(1.0f);
+        processor.processBlock(audio, midi);
+        metaParam->setValueNotifyingHost(0.0f);
+        processor.processBlock(audio, midi);
+        auto snapshot = processor.regularEngineParametersForLabTests();
+        if (std::abs(snapshot.speedMs - 7.0f) > 0.02f ||
+            snapshot.pitchClasses != expectedMask) {
+            std::cerr << "FAIL: META -> REGULAR reset lost host tuning (32-bit)\n";
+            return 44;
+        }
+        // Exercise the third leg of the 3-way selector as well:
+        // META -> TESTTUNE must reapply both the algorithm and saved
+        // retune/key settings on the FIRST 64-bit callback.
+        if (testParam) testParam->setValueNotifyingHost(1.0f);
+        juce::AudioBuffer<double> doubleAudio(2, 256);
+        doubleAudio.clear();
+        metaParam->setValueNotifyingHost(1.0f);
+        processor.processBlock(doubleAudio, midi);
+        metaParam->setValueNotifyingHost(0.0f);
+        processor.processBlock(doubleAudio, midi);
+        snapshot = processor.regularEngineParametersForLabTests();
+        if (std::abs(snapshot.speedMs - 7.0f) > 0.02f ||
+            snapshot.pitchClasses != expectedMask ||
+            !snapshot.testTune) {
+            std::cerr << "FAIL: META -> TESTTUNE reset lost host tuning (64-bit)\n";
+            return 45;
+        }
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
+        speedForSwitch->setValueNotifyingHost(
+            speedForSwitch->convertTo0to1(25.0f));
+        key->setSelectedId(1, juce::sendNotificationSync);
+#endif
+        // Restore the original C Chromatic/A4 440 fixture before the
+        // independent SkellKey IPC test: our live-light scene explicitly
+        // selected C Major, but connecting to the bus must NOT change the
+        // original tuning before the sender deliberately publishes it.
+        scaleParam->setValueNotifyingHost(scaleParam->convertTo0to1(0.0f));
+        maskParam->setValueNotifyingHost(maskParam->convertTo0to1(0.0f));
+        if (testParam) testParam->setValueNotifyingHost(0.0f);
+        std::cerr << "STEP: live sung-note and target-note feedback captured for each algorithm\n"
+                  << std::flush;
 
         if (juce::SystemStats::getEnvironmentVariable("SKELL_LOCAL_IPC_TEST", {}) == "1") {
             // End-to-end link: local shared-memory bus + WorldLink receiver + deliberately

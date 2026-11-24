@@ -51,3 +51,342 @@ CPU: 0.7% of one core (about half the standard engine).
   (delete or invert them if you fix the reconstruction).
 - Provenance: your reconstruction is the source for the logic; nothing here was taken from the original binary. Keep this build out of
   anything you distribute.
+
+## Knob correction and META Lab side-by-side test (November 22, 2026)
+
+The retune dial now shows the **actual** \`speed\` parameter in milliseconds.
+\`0 ms\` is the fastest / hardest correction and \`200 ms\` is the slowest;
+the progress arc and marker follow JUCE's skewed parameter mapping.
+It no longer displays an invented 0–100 strength value (e.g. 56 when the
+saved value was 25 ms). This does **not** change the automated \`speed\`
+parameter ID, range, default, stored values, or the underlying engine.
+
+**Normal Mini VST3 remains unchanged in identity and has no META option.**
+With \`SKELLY_META_TEST=ON\`, the experimental build becomes a separately
+identified **SkellyTune META Lab** VST3 (\`SkML\`,
+\`com.skelly.realtimetune.metalab\`) rather than replacing Mini's normal
+\`SkRT\` VST3. The Lab editor offers REGULAR / TESTTUNE / META; all three use
+the same visible speed, key, scale, A4 and note controls.
+
+From an x64 Visual Studio development shell with CMake and JUCE dependencies:
+
+\`\`\`powershell
+cmake -S . -B build-meta -A x64 -DSKELLY_META_TEST=ON -DSKELLY_BUILD_GUI_SMOKE=ON
+cmake --build build-meta --config Release --target SkellyTuneMetaLab_VST3 SkellyTuneGuiSmoke --parallel 2
+# The testing-only VST3 lives under:
+# build-meta/SkellyTuneMetaLab_artefacts/Release/VST3/SkellyTune META Lab.vst3
+\`\`\`
+
+For the portable META characterization suite (no plugin dependencies):
+
+\`\`\`bash
+cmake -S . -B build-meta-dsp -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DSKELLY_META_TEST=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-meta-dsp --parallel 4
+ctest --test-dir build-meta-dsp --output-on-failure
+\`\`\`
+
+**TEST ONLY, never distribute the Lab binary.** Its META resynthesis latency
+is not fully PDC-compensated, unvoiced consonants may be shifted, and the
+reconstruction has known weaker measured pitch scores than REGULAR.
+Avoid using Lab instances in production FL Studio projects: their plugin ID is
+deliberately different, and switching back to normal Mini will not replace a Lab
+instance automatically. Back up test projects. The META state is not intended
+to transfer to release Mini. Real-vocal A/B listening and host round-trip testing
+remain required. GitHub CI may verify Lab compilation and screenshots, but
+it intentionally does not upload the installable experimental VST3.
+
+
+## Reverse Auto-Tune-style 100 → 0 dial correction (November 22, 2026)
+
+The **large dial number is now 100 at slowest, 0 at fastest hard tune**.
+The rotary control itself is physically reversed relative to the engine's
+millisecond parameter: drag up / clockwise increases tuning intensity and
+decreases the displayed speed number toward 0. The ring fills clockwise as
+correction becomes harder. The small readout underneath shows real retune
+milliseconds, to avoid confusing the 0..100 user-facing scale with time.
+
+The saved and automatable JUCE `speed` parameter is unchanged at 0..200 ms
+(default 25 ms, same ID and version). The GUI mapping is:
+`clockwise_position = 100 - host_speed_ms/2`; large display is
+`100 - clockwise_position`; only the editor changes orientation.
+Consequently 0 on the dial = 0 ms (hardest), 50 = 100 ms, and
+100 = 200 ms (slowest). Old FL Studio projects and automation lanes still
+use their actual stored milliseconds, not the visible 0..100 markings.
+The thumb position and host automation stay linked through JUCE
+`ParameterAttachment`, with correct drag gestures and no audio-thread UI.
+
+The sound engine and META Lab's separate test-only identity remain unchanged.
+Verification includes a real Windows JUCE editor smoke that checks 0 / 50 / 100
+dial positions, the old 25ms default, 7ms adjustment, and host automation
+feeding back to the dial. A/B listening/FL Studio project round-trip and a
+separate real UI review are still release gates.
+
+## November 22 retune correction / owner META testing
+
+The previous 100-to-0 dial incorrectly mapped 100 to **200ms**. Corrected:
+100 on the dial **is 100ms**; 50 is 50ms; 0 is 0ms (fastest hard tune).
+Clockwise/upward is faster; the face number decreases. Real plugin APVTS
+`speed` ID, version, default and 0..200ms storage remain unchanged for
+older DAW projects. If a project restores 175ms, Mini displays `100+`
+with `175ms / LEGACY` beneath until the user touches the knob. No old
+automation or preset value is rewritten on load.
+
+The actual META selector (REGULAR/TESTTUNE/META) lives in the opt-in
+`SkellyTune META Lab.vst3`, **not** normal Mini. This uses a separate
+plugin identity and cannot overwrite a normal Mini installation.
+The owner explicitly requested to test META. For the owned PR #17 branch
+only, the experimental Windows CI exposes an explicitly watermarked,
+one-day-retention, test-only artifact (no release, no installer); the user
+should extract it to their personal VST3 test directory, rescan in FL Studio,
+then select META in the upper-right algorithm selector. Do not commit test
+projects or ship this as a product. META latency/PDC and audio quality
+still require separate verification.
+
+## November 22 — Three-algorithm real-code comparison + responsive piano
+
+A new deterministic `three_mode_ab` *offline* test renders identical eight-second
+synthetic harmonic-voice, vibrato, glide, silence, and unvoiced-noise patterns
+through REGULAR, TESTTUNE, and experimental META at **0/10/25ms**. Windows
+META DSP CI uploads nine actual render WAVs, dry input, measured pitch/peak/
+RMS/step/CPU metrics and a small HTML listening index. These do **not** replace
+an A/B with a real recorded human vocal. CPU timing on GitHub Actions is
+machine-specific, and these metrics are not a perceptual score.
+
+REGULAR and TESTTUNE now reset *only* their fixed-size note-selection history
+when the selected algorithm changes, avoiding pending stale note decisions
+from the previous algorithm. TESTTUNE snaps only on sufficiently reliable
+periodic estimates (confidence >= .72); it retains its no-hysteresis
+musical-boundary behavior.
+
+META is still research-only. It now seeds its smoother with the **first
+detected fundamental** instead of a fixed arbitrary startup pitch, rearms
+after a genuine 90ms unvoiced interval and sanitizes nonfinite/invalid
+test parameters. It still has unverified variable source age/latency/PDC.
+
+The 12 authentic JUCE note pads now give independently smoothed **white
+INPUT pitch** and **green TARGET** feedback from processor atomic meters,
+on the editor message thread. Active-note frames are captured in the
+Windows GUI smoke for all three modes, with programmatic proof both
+live-note feedback channels are nonzero. Click/edit/double-click behavior,
+key masks, original UI identity and saved parameter IDs remain unchanged.
+
+### Existing real-singer recording A/B
+
+The opt-in META DSP workflow now runs the repository's tracked real-singer
+benchmark `benchmark/v33/raw_levelmatched_20-28.wav` at G major, A4=440
+and 100% correction/wet. It renders REGULAR, TESTTUNE and META separately
+at **0, 10 and 25ms**, all in 64-sample offline blocks, with identical
+source audio, and bundles the existing Auto-Tune Pro benchmark reference.
+`validate_real_vocal.py` asserts finite samples, same duration/channels,
+bounded level and waveform steps. The result is a real-singer A/B, but not
+a verified perceptual ranking or an FL Studio latency/PDC test.
+
+### META grain-click root-cause fix
+
+The real-vocal three-way comparison at 10ms found a large instantaneous
+same-channel step near 7.515s. The reconstruction only set its grain fade
+once on initial startup: subsequent one-period read-head jumps switched
+directly to the new head at full gain. META now starts a bounded 16–512
+sample raised-cosine crossfade at **every** such jump. No allocations,
+locks or host latency changes were introduced. A test-only A/B switch
+and `dsp_v44_meta_grain` verify jump/fade accounting and safe output.
+Real-vocal float32 renders must be compared again after this change;
+reduced audible clicks and corrected META PDC are not assumed.
+
+## New real-singer bug fix: anticipatory transient dry/wet handoff
+
+A/B analysis of the tracked singer recording found sudden ~0.50–0.58
+full-scale single-sample steps in REGULAR and TESTTUNE within the first
+80ms, vs ~0.234 in dry/reference and ~0.226 in crossfaded META.
+At the jump samples, the output **exactly equaled the 3ms delayed dry**:
+this pinpointed the instantaneous `protectedNow ? 1.0` transient guard.
+Its existing 3ms latency ring already knows which input sample becomes a
+protected dry attack ~132 samples later. Regular and TESTTUNE now pre-fade
+wet into dry for ~0.75ms *within that existing delay*, then preserve the
+protected attack EXACTLY at the original host-reported PDC sample. No
+additional DAW latency, heap allocation, lock, new parameter, project-state
+change, or separate plugin identity.
+
+A fixed-size engine-only A/B flag `setAnticipatoryTransientFadeEnabled(false)`
+and offline `SKELLY_TRANSIENT_PREFADE_OFF=1` reproduce the old sound;
+these are not exposed to host automation. New `dsp_v45_transient_prefade`
+checks exact sample timing at 44.1/48/96kHz, finite output and block-size
+invariance. New recorded-singer regression in `verify-dsp.yml` measures
+the known first-phrase jump against an unfixed render, failing if the real
+waveform discontinuity does not decrease by at least 20%.
+
+## Owner's live FL Studio feedback — Nov 22: all three glitch, META worst
+
+The user has auditioned all three, reports META most glitch-prone and
+TESTTUNE least. Do not confuse earlier objective pitch-error metrics with
+a passing subjective audio result.
+
+- META research: unvoiced noise formerly passed through stale pitched
+  source-head grains. A 3ms dry tap reuses the existing fixed-size ring,
+  with 8ms wet entry and 4ms unvoiced wet exit. Amount=0 returns
+  sample-exact host-aligned dry, bypass remains bit-identical. **Fixed
+  wet waveform PDC remains unverified** and the META Lab is TEST-ONLY.
+- REGULAR: bound the zero-ms per-sample pitch-ratio slew to prevent large
+  one-sample resampler jumps, without changing actual note targets.
+- TESTTUNE: retain its fast period-domain snap but require a second hop
+  for uncertain low-confidence adjacent-note chatter; use a faster
+  ratio-slew limit than REGULAR.
+- Two new portable DSP regressions: META consonant/noise continuity,
+  bypass, Amount=0, and both algorithms' per-sample cents bound.
+
+No existing preset state/automation ID, default retune time, plugin
+identifier, or released UI layout is changed.
+
+### Additional META voiced-path fix: cubic fractional grains + Mix
+
+The lab still sounded grainy during *voiced* parts, beyond the unvoiced
+noise/dry transition. Every fractional source-head read used only two
+linear samples, which blurs high-frequency harmonic detail when the grain
+speed differs from unity. The default in **META Lab only** now uses
+four-point cubic Lagrange interpolation. Old two-tap mode remains
+selectable by a test-only engine method for objective A/B. New
+`dsp_v48_meta_interpolation` measures analytic 0.31-sample fractional
+sine interpolation error on 700/2500/5600/8000Hz and rejects any change
+that fails to cut error substantially or causes obvious overshoot.
+
+The processor's META route also inadvertently ignored the existing
+host `mix` parameter. It now passes `amount * mix` to META, so
+Mix=0 uses its tested sample-exact delayed-dry path. Old host IDs,
+preset schema and explicit plugin bypass are unchanged.
+
+Do not interpret reduced fractional sample error as verified subjective
+better vocal tone. META's variable wet source age and DAW PDC remain
+research gaps; keep it in the isolated, test-only Lab VST3.
+
+### META robustness: nonfinite/denormal sample containment
+
+In the lab resampler a single NaN/Inf host input previously entered
+the per-channel ring and could poison future grain interpolations.
+Unlike production REGULAR, it lacked sample sanitization. Now internal
+history and detection input are constrained to finite, normal floats,
+without changing bit-exact *bypass output*. Grain wet level snaps
+below 1e-9 to exactly zero to prevent silence-related denormals.
+The expanded `dsp_v46_meta_dry_guard` injects NaN, Inf and subnormal
+samples and asserts finite, bounded output after processing.
+
+## Next major stability pass — phase-continuous META grains
+
+META still used the original constant **120-sample minimum grain delay**,
+which is *younger* than the published 3ms transport PDC at 48/96kHz and
+could read too close to current input at high notes. The new grain base
+is bounded below by the sample-rate-specific 3ms PDC plus cubic-tap safety
+margin. For unsupported very-low-F0/high-rate periods which exceed the
+fixed 8192-sample ring, it remains on the delayed-dry path rather than
+wrapping into uninitialized source history.
+
+At voiced note changes, META now slews the playback ratio across ~2.5ms
+and the grain geometry across ~10ms. A grain reset cannot interrupt a
+still-active crossfade. At each valid reset, a bounded +/-12-sample
+phase search finds a correlated read-head position using twelve previous
+waveform comparisons. The left channel determines the same offset for both
+stereo channels so the stereo image is not decorrelated. Before/after
+normalized phase mismatch counters are testable. Short tracker confidence
+dropouts are bridged for up to three hops to avoid repeated wet/dry
+flutter; new phrases explicitly reset stale grain geometry.
+
+REGULAR and TESTTUNE now both use the bounded per-sample resampler ratio
+slew at **all retune speeds**, rather than only the ultra-hard path;
+default 25ms normally remains under the cap. TESTTUNE additionally confirms
+one more detector hop for unreliable *large octave jumps*, but not for
+strong confident vocal note switches. Host transport delay, old
+parameter IDs, project state and normal plugin identity remain unchanged.
+
+A new META-only `dsp_v49_meta_phase` regression covers measurable
+phase search improvement for detuned rich harmonic grains, stereo
+amplitude/phase preservation, and 96kHz high-pitch finite output.
+User hearing remains the final sound criterion. META is test-only.
+
+## Mini UI visual instrumentation (message thread only)
+
+The retune dial gains a **real 32-point incoming pitch history** (about
+1.1s at 30Hz), with a live status label (LISTENING / ACQUIRING /
+ON NOTE / CORRECTING) below the existing numeric millisecond readout.
+A header signal indicator and gentle confidence-responsive panel rim
+make it easier to tell when the detector has acquired a singer. All
+information comes from the processor's atomic detector meters; there
+is no audio-thread drawing, heap allocation, GUI polling of raw
+waveforms, change to the host state schema or automation IDs.
+
+The dial now supports double-click to its existing 25ms factory default.
+The editor smoke asserts live detector light feedback, non-empty trace
+history and a non-idle dial status after real harmonic samples have
+passed through the plugin in REGULAR, TESTTUNE and META Lab.
+JUCE/Quick4 real screenshot visual inspection remains mandatory before
+accepting sizing, typography or interactions.
+
+## Mode-switch crash/click root fix — initial block reset lost APVTS
+
+The META Lab processor previously called `engine_.setParameters(currentParameters())`
+BEFORE checking whether it should switch out of the META engine. On
+META -> REGULAR/TESTTUNE, `engine_.reset()` then cleared all `Parameters`
+to factory defaults; the first audio buffer therefore used the WRONG
+speed, key, scale and amount, followed by a jump back to the host
+settings on the next callback. This is an actual one-block DSP defect,
+not a subjective pitch quality guess. Both float and double host
+processBlock paths now immediately reapply the same captured user
+parameters *after* reset. A new real Windows JUCE editor smoke uses
+non-default 7ms / G-major state to verify exact parameters on the
+FIRST returned callback in both 32-bit and 64-bit host formats.
+
+META Lab reset also recalculated the tracker FIR (sin/cos) in the
+audio-thread mode-switch path. The detector is now prepared exactly
+once in prepareToPlay, and mode reset calls the existing allocation-free
+tracker.reset(). This removes expensive coefficient design during
+live algorithm A/B. The normal Mini VST3 path is not changed.
+
+## November 22 — expandable live pitch analyzer
+
+The compact 432x414 plugin remains the default, maintaining the approved
+UI and all historical host state IDs. A real **ANALYZE** button in the
+header expands the genuine JUCE editor to 432x540, with a 90-sample
+(~3 second) chronological pitch deviation and output correction chart,
+a true ±100-cent zero line, voice/target note names and actual tuner
+correction. The **COMPACT** button restores the original view and
+does not write host automation or presets. Editor scaling retains the
+same core Mini hit targets, and a window constrainer changes aspect
+ratio when toggled. All data is sampled from actual detector atomic
+meters in the JUCE message thread; graph storage is a fixed-size
+array, with no audio-thread heap, UI repaint or audio buffer capture.
+CI must capture true Windows JUCE compact and expanded UI, static and
+active signal; the GUI smoke asserts expanded and collapsed dimensions,
+valid component hit targets and nonempty live history.
+
+## META physical retune speed (major Lab-only sound improvement)
+
+META Lab's old `speedMs/8` mapping was arbitrary and coupled the
+retune dial to a dimensionless reconstruction smoother. With 0ms it
+STILL retained pitch from the old window; 10/25/100ms response varied
+unpredictably by detector hop. The real saved APVTS speed (0..200ms)
+now passes unchanged to META and drives a physical 1/e smoothing
+time constant `exp(-hopSamples/(sampleRate*seconds))`, independent
+of callback block size or sample rate. 0ms follows the freshly
+detected period immediately; 10ms, 25ms and 100ms have the specified
+trajectory. Wet Amount no longer re-scales the smooth pitch period
+a second time. Existing META ratio-zipper and phase-alignment
+protections remain. Normal production Mini parameters/presets are
+identical. New META-only `dsp_v50_meta_speed` verifies coefficients
+at 44.1/48/96/192kHz, nonfinite and max-speed automation,
+and actual audio step-response differences.
+
+## TESTTUNE confidence fallback and REGULAR/TESTTUNE phase matching
+
+The TESTTUNE algorithm chooses its own period-domain note, but regular
+`NoteDecision` continues tracking a distinct hysteresis target. On
+a weak 0.58–0.72 confidence **still-voiced** frame, the previous
+implementation reused that unrelated REGULAR note and audibly snapped.
+New fixed-state `testTuneHeldMidi_` bridges only its own last reliable
+allowed period note, never a forbidden pitch. Silence >40ms clears
+the hold; switching algorithms also clears it. Strong evidence still
+snaps on the first reliable hop. The shift is unchanged on ordinary
+confident notes. The measured phase-cycle search in BOTH main engines
+now only runs on confidently periodic samples, avoiding arbitrary
+read-head offsets on fricatives and noise while keeping normal
+phase-synchronous resampling and the 3ms PDC.
+
+The new `dsp_v51_testtune_hold` tests the exact fallback eligibility
+and a noisy vocal at 44.1/48/96kHz and 1/127/256-sample buffers.

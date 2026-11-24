@@ -137,13 +137,23 @@ class CausalPitchTracker {
 public:
     void setFastVocalAcquisitionEnabled(bool enabled) noexcept { fastVocalAcquisitionEnabled_ = enabled; }
     void setMinimumConfidence(float confidence) noexcept {
-        minimumConfidence_ = std::clamp(confidence, 0.48f, 0.75f);
+        // std::clamp(NaN, ...) returns NaN and bypasses the confidence
+        // rejection comparison. Invalid research/host values must not
+        // silently make every pitch candidate look trustworthy.
+        minimumConfidence_ = std::isfinite(confidence) ?
+            std::clamp(confidence, 0.48f, 0.75f) : 0.62f;
     }
+    float minimumConfidence() const noexcept { return minimumConfidence_; }
     void prepare(double rate) noexcept {
+        // This tracker is also used directly in offline research. Reject
+        // invalid rates before lround, division and FIR coefficient setup.
+        rate = std::clamp(std::isfinite(rate) ? rate : 48000.0,
+                          8000.0, 384000.0);
         factor_ = std::clamp(int(std::lround(rate / 12000.0)), 1, 16);
         reducedRate_ = rate / double(factor_);
         lowLag_ = std::clamp(int(reducedRate_ / 850.0), 2, 250);
-        highLag_ = std::clamp(int(std::ceil(reducedRate_ / 65.0)), lowLag_ + 1, 500);
+        normalHighLag_ = std::clamp(int(std::ceil(reducedRate_ / 65.0)) + 2, lowLag_ + 1, 500);
+        highLag_ = std::clamp(int(std::ceil(reducedRate_ / 50.0)) + 2, normalHighLag_, 500);
         fastWindow_ = std::clamp(int(std::round(reducedRate_ * 0.012)), 112, 384);
         steadyWindow_ = std::clamp(int(std::round(reducedRate_ * 0.014)), fastWindow_, 384);
         stableHops_ = 0; stableLastF0_ = 0.0f;
@@ -186,8 +196,12 @@ public:
         samples_.fill(0.0f); fir_.fill(0.0f);
         firIndex_ = 0; write_ = 0; downCount_ = 0; decimated_ = 0;
         sinceUpdate_ = 0; estimate_ = {}; useSlowWindow_ = false; window_ = fastWindow_;
-        initializedDifference_ = false; differenceAge_ = 0;
+        initializedDifference_ = false; differenceAge_ = 0; extendedDifferenceReady_=false;
         stableHops_ = 0; stableLastF0_ = 0.0f;
+        // Continuity evidence belongs to the current phrase/session.
+        // Retaining it across prepare/reset can reject the first real low
+        // note after a seek, bypass or META/REGULAR mode switch.
+        goodLag_ = 0; goodAgeHops_ = 1000000;
     }
 
     // Returns true only when a new estimate is available; the estimate may be unvoiced.
@@ -290,10 +304,18 @@ private:
         return std::min(b, b - 0.25 * (a - c) * offset);
     }
     PitchEstimate analyze() noexcept {
-        if (decimated_ < uint64_t(window_ + highLag_ + 3)) return {};
+        if (decimated_ < uint64_t(window_ + normalHighLag_ + 3)) return {};
+        const bool extendedReady=decimated_ >= uint64_t(window_+highLag_+3);
+        // The longest analysis reads window+highLag+hop samples. Unwrap
+        // this bounded history once per detector hop instead of masking
+        // both ring indices for every lag pair (including full refreshes).
+        // The original pair order and double accumulation are unchanged.
+        std::array<float,1024> recent;
+        const int needed=window_+(extendedReady?highLag_:normalHighLag_)+hop_;
+        for(int i=0;i<needed;++i) recent[size_t(i)]=past(i);
         double energy = 0.0;
         for (int i = 0; i < window_; ++i) {
-            const double s = past(i);
+            const double s = recent[size_t(i)];
             energy += s * s;
         }
         if (energy / window_ < 0.000004) {
@@ -315,17 +337,17 @@ private:
         // A full recomputation is also required on the first valid analysis.
         const bool full = !initializedDifference_ || ++differenceAge_ >= 256;
         difference_[0] = 0.0;
-        for (int lag = 1; lag <= highLag_; ++lag) {
+        for (int lag = 1; lag <= normalHighLag_; ++lag) {
             double diff = full ? 0.0 : difference_[lag];
             if (full) {
                 for (int j = 0; j < window_; ++j) {
-                    const double e = double(past(j)) - double(past(j + lag));
+                    const double e = double(recent[size_t(j)]) - double(recent[size_t(j + lag)]);
                     diff += e*e;
                 }
             } else {
                 for (int j = 0; j < hop_; ++j) {
-                    const double entered = double(past(j)) - double(past(j+lag));
-                    const double departed = double(past(window_+j)) - double(past(window_+j+lag));
+                    const double entered = double(recent[size_t(j)]) - double(recent[size_t(j+lag)]);
+                    const double departed = double(recent[size_t(window_+j)]) - double(recent[size_t(window_+j+lag)]);
                     diff += entered*entered - departed*departed;
                 }
             }
@@ -334,12 +356,12 @@ private:
         if (full) { initializedDifference_ = true; differenceAge_ = 0; }
         double running = 0.0;
         cmnd_[0] = 1.0f;
-        for (int lag = 1; lag <= highLag_; ++lag) {
+        for (int lag = 1; lag <= normalHighLag_; ++lag) {
             running += difference_[lag];
             cmnd_[lag] = float(difference_[lag] * lag / std::max(1e-20, running));
         }
         int best = -1;
-        for (int lag = lowLag_; lag < highLag_ - 1; ++lag) {
+        for (int lag = lowLag_; lag < normalHighLag_ - 1; ++lag) {
             if (cmnd_[lag] < 0.16f && cmnd_[lag] <= cmnd_[lag+1]) {
                 best = lag;
                 break;
@@ -347,7 +369,7 @@ private:
         }
         if (best < 0) {
             best = lowLag_;
-            for (int lag = lowLag_+1; lag < highLag_-1; ++lag)
+            for (int lag = lowLag_+1; lag < normalHighLag_-1; ++lag)
                 if (cmnd_[lag] < cmnd_[best]) best = lag;
         }
         // v1.7: YIN's first-below-threshold strategy can select an octave-high
@@ -358,10 +380,10 @@ private:
         // signals: a 220 Hz sinusoid and a 110 Hz signal containing only
         // even harmonics are mathematically indistinguishable.
         const int twice = best * 2;
-        if (twice + 2 < highLag_ && cmnd_[best] < 0.16f) {
+        if (twice + 2 < normalHighLag_ && cmnd_[best] < 0.16f) {
             int slower = twice;
             for (int candidate = twice - 2; candidate <= twice + 2; ++candidate) {
-                if (candidate > best + 2 && candidate < highLag_ - 1 &&
+                if (candidate > best + 2 && candidate < normalHighLag_ - 1 &&
                     cmnd_[candidate] < cmnd_[slower]) slower = candidate;
             }
             // v3.3.2: compare INTERPOLATED valley depths. Lags are integers at the 12 kHz
@@ -384,6 +406,46 @@ private:
                 best = slower;
             }
         }
+        // Keep the established 65..850 Hz estimator identical. Extend only
+        // when it cannot find a reliable in-range period, or a clearly
+        // better low fundamental explains a near-octave upper candidate.
+        const bool ordinaryReliable=cmnd_[best]<1.0f-minimumConfidence_ &&
+            reducedRate_/double(best)>=65.0 && best<normalHighLag_-2;
+        const bool possibleLowOctave=2*best>=normalHighLag_-5 && 2*best<=highLag_+3;
+        // Calculate longer lags only when the original range actually needs
+        // them. A skipped hop invalidates the extended rolling accumulator.
+        const bool searchDeep=extendedReady && (!ordinaryReliable || possibleLowOctave);
+        if (searchDeep) {
+            const bool recalc=full || !extendedDifferenceReady_;
+            for(int lag=normalHighLag_+1;lag<=highLag_;++lag) {
+                double diff=recalc?0.0:difference_[lag];
+                if(recalc) {
+                    for(int j=0;j<window_;++j) {
+                        const double e=double(recent[size_t(j)])-double(recent[size_t(j+lag)]); diff+=e*e;
+                    }
+                } else {
+                    for(int j=0;j<hop_;++j) {
+                        const double entered=double(recent[size_t(j)])-double(recent[size_t(j+lag)]);
+                        const double departed=double(recent[size_t(window_+j)])-double(recent[size_t(window_+j+lag)]);
+                        diff+=entered*entered-departed*departed;
+                    }
+                }
+                difference_[lag]=std::max(0.0,diff);
+                running+=difference_[lag];
+                cmnd_[lag]=float(difference_[lag]*lag/std::max(1e-20,running));
+            }
+            int deep=-1;
+            for(int lag=normalHighLag_-2;lag<highLag_-1;++lag) {
+                if(cmnd_[lag]<=cmnd_[lag-1] && cmnd_[lag]<=cmnd_[lag+1] &&
+                   cmnd_[lag]<0.13f && (deep<0 || cmnd_[lag]<cmnd_[deep])) deep=lag;
+            }
+            if(deep>=0) {
+                const bool octaveEvidence=std::abs(deep-2*best)<=3 &&
+                    valleyDepth(best)-valleyDepth(deep)>0.15;
+                if(!ordinaryReliable || octaveEvidence) best=deep;
+            }
+        }
+        extendedDifferenceReady_=searchDeep;
         const float confidence = std::clamp(1.0f - cmnd_[best], 0.0f, 1.0f);
         if (goodAgeHops_ < 1000000) ++goodAgeHops_;
         if (confidence >= 0.85f) { goodLag_ = best; goodAgeHops_ = 0; }
@@ -397,12 +459,12 @@ private:
             if (std::abs(denom) > 1e-9) lag += std::clamp(0.5 * (a-c)/denom, -0.5, 0.5);
         }
         const float f0 = float(reducedRate_ / lag);
-        return {f0, confidence, std::isfinite(f0) && f0 >= 65.0f && f0 <= 850.0f};
+        return {f0, confidence, std::isfinite(f0) && f0 >= 50.0f && f0 <= 850.0f};
     }
     float minimumConfidence_ = 0.62f;
     static constexpr int kGoodLagMaxAgeHops = 45; // ~60 ms at 12 kHz / 16-sample hops
     int goodLag_ = 0, goodAgeHops_ = 1000000;
-    int factor_ = 4, lowLag_ = 14, highLag_ = 200, window_ = 288, hop_ = 16;
+    int factor_ = 4, lowLag_ = 14, normalHighLag_=200, highLag_ = 244, window_ = 288, hop_ = 16;
     int fastWindow_ = 168, steadyWindow_ = 168, slowWindow_ = 288;
     int stableHops_ = 0;
     float stableLastF0_ = 0.0f;
@@ -423,44 +485,75 @@ private:
     std::array<float,33> fir_{};
     std::array<float,4096> samples_{};
     std::array<double,512> difference_{};
-    bool initializedDifference_ = false;
+    bool initializedDifference_ = false, extendedDifferenceReady_=false;
     int differenceAge_ = 0;
     std::array<float,512> cmnd_{};
     PitchEstimate estimate_{};
 };
 
-// Selects a coherent pitch-analysis signal without changing audio output.
-// Mid-channel cancellation is a common failure mode for opposite-polarity stereo
-// recordings; the original average(L,R) silently discarded the fundamental.
-// Uses exponentially smoothed energy/covariance, no allocations or locks.
+// Causal detector-only stereo routing. The program stereo channels never change.
+// Smooth crossovers prevent the pitch tracker hearing a one-sample discontinuity
+// when a mix moves toward opposite polarity or becomes single-channel.
 class StereoPitchRouter {
 public:
     void prepare(double rate) noexcept {
-        const double tau = 0.012;
-        alpha_ = std::exp(-1.0 / (rate * tau));
+        const double fs = std::clamp(std::isfinite(rate) ? rate : 48000.0, 8000.0, 192000.0);
+        alpha_ = std::exp(-1.0 / (fs * 0.012));
+        // Four-millisecond one-pole transition; audio output is unaffected.
+        transitionStep_ = 1.0 - std::exp(-1.0 / (fs * 0.004));
         reset();
     }
-    void reset() noexcept { leftPower_ = rightPower_ = covariance_ = 0.0; }
+    void reset() noexcept {
+        leftPower_ = rightPower_ = covariance_ = 0.0;
+        leftWeight_ = rightWeight_ = 0.0;
+        source_ = 0;
+        antiPhase_ = false;
+    }
     float push(float left, float right) noexcept {
         const double k = 1.0 - alpha_;
-        leftPower_ = alpha_ * leftPower_ + k * double(left)*left;
-        rightPower_ = alpha_ * rightPower_ + k * double(right)*right;
-        covariance_ = alpha_ * covariance_ + k * double(left)*right;
-        // Near-inverted stereo will cancel in the mid signal. Use a single
-        // channel for analysis, but preserve original stereo in the output.
-        // Squared test avoids a square root on every audio sample while
-        // retaining the 0.60 anti-correlation threshold.
+        leftPower_ = alpha_ * leftPower_ + k * double(left) * left;
+        rightPower_ = alpha_ * rightPower_ + k * double(right) * right;
+        covariance_ = alpha_ * covariance_ + k * double(left) * right;
         const double powerProduct = leftPower_ * rightPower_;
-        if (powerProduct > 1.0e-24 && covariance_ < 0.0 &&
-            covariance_ * covariance_ > 0.36 * powerProduct)
-            return (leftPower_ >= rightPower_) ? left : right;
-        // If almost all of the program exists on one channel, prefer it.
-        if (leftPower_ > rightPower_ * 16.0) return left;
-        if (rightPower_ > leftPower_ * 16.0) return right;
-        return 0.5f * (left + right);
+        const double squaredCovariance = covariance_ * covariance_;
+        // Enter anti-phase rescue at |rho| > 0.60; exit only below 0.40.
+        // Previously a single threshold abruptly flipped mid to one side.
+        const bool stronglyInverted = powerProduct > 1.0e-24 && covariance_ < 0.0;
+        antiPhase_ = stronglyInverted && squaredCovariance >
+            (antiPhase_ ? 0.16 : 0.36) * powerProduct;
+
+        int desired = 0; // ordinary stereo uses mid
+        if (antiPhase_) {
+            // Once rescued, keep the same side through modest level drift.
+            // Switching L->R across inverted channels would cancel analysis.
+            if (source_ == 1 && leftPower_ >= 0.72 * rightPower_) desired = 1;
+            else if (source_ == 2 && rightPower_ >= 0.72 * leftPower_) desired = 2;
+            else desired = leftPower_ >= rightPower_ ? 1 : 2;
+        } else if (leftPower_ > rightPower_ * (source_ == 1 ? 9.0 : 16.0)) {
+            desired = 1;
+        } else if (rightPower_ > leftPower_ * (source_ == 2 ? 9.0 : 16.0)) {
+            desired = 2;
+        }
+        source_ = desired;
+        leftWeight_ += transitionStep_ * ((desired == 1 ? 1.0 : 0.0) - leftWeight_);
+        rightWeight_ += transitionStep_ * ((desired == 2 ? 1.0 : 0.0) - rightWeight_);
+        // Fully settle after the crossfade: an exponential only approaches
+        // 0/1 asymptotically, which breaks exact inverted-stereo tracking.
+        // The residual (<5e-5) is below one audio detector LSB of interest.
+        const double goalLeft = desired == 1 ? 1.0 : 0.0;
+        const double goalRight = desired == 2 ? 1.0 : 0.0;
+        if (std::abs(leftWeight_ - goalLeft) < 5.0e-5) leftWeight_ = goalLeft;
+        if (std::abs(rightWeight_ - goalRight) < 5.0e-5) rightWeight_ = goalRight;
+        const double mid = 0.5 * (double(left) + right);
+        return float(mid + leftWeight_ * (double(left) - mid) +
+                     rightWeight_ * (double(right) - mid));
     }
 private:
-    double alpha_ = 0.998, leftPower_ = 0.0, rightPower_ = 0.0, covariance_ = 0.0;
+    double alpha_ = 0.998, transitionStep_ = 0.005;
+    double leftPower_ = 0.0, rightPower_ = 0.0, covariance_ = 0.0;
+    double leftWeight_ = 0.0, rightWeight_ = 0.0;
+    int source_ = 0;
+    bool antiPhase_ = false;
 };
 
 // Original causal attack cue: combines fast/slow energy envelopes, a refractory
@@ -531,15 +624,18 @@ public:
     // Never change host PDC from the realtime process callback.
     // Existing calls preserve the original realtime/50ms profiles. Fast Studio
     // must be chosen before preparing; it is never an automatable mode.
-    void prepare(double sampleRate, int maxChannels = 2, bool studioClock = false, bool fastStudio = false) {
-        rate_ = std::clamp(sampleRate, 8000.0, 192000.0);
+    void prepare(double sampleRate, int maxChannels = 2, bool studioClock = false,
+                 bool fastStudio = false, double realtimeLatencyMs = 3.0) {
+        rate_ = std::clamp(std::isfinite(sampleRate) ? sampleRate : 48000.0,
+                           8000.0, 192000.0);
         channels_ = std::clamp(maxChannels, 1, 2);
-        // Fixed, nominal audio delay ~= 3 ms, rounded to integer samples.
+        // Host compensated realtime delay is selected only in prepareToPlay.
+        // Its dry/transient path remains sample-exact, even at 1.5ms.
         studioClock_ = studioClock;
         fastStudio_ = studioClock && fastStudio;
         latency_ = studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_).reportedSamples
                                               : studioDelayContract(rate_).reportedSamples)
-                                 : delayContract(rate_, false).reportedSamples;
+                                 : delayContract(rate_, false, realtimeLatencyMs).reportedSamples;
         int capacity = 1;
         while (capacity < int(rate_ * 0.20) + 8192) capacity <<= 1;
         mask_ = capacity - 1;
@@ -602,9 +698,13 @@ public:
         noiseCue_.reset();
         notes_.reset();
         targetPending_ = false;
+        testCandidateMidi_ = -1; testCandidateHops_ = 0;
+        testTuneHeldMidi_ = -1; testTuneUntrustedSamples_ = 0;
+        manualTargetMidi_ = -1;
         params_ = {};
         cycleSynth_.reset();
         mixGuard_.reset();
+        mixGuardActivation_ = 0.0;
         formantGuard_.reset();
         formantActive_ = false;
         nearZeroSamples_ = 0;
@@ -613,11 +713,24 @@ public:
         cycleBlend_ = 0.0;
     }
     int latencySamples() const noexcept { return latency_; }
-    DelayContract outputDelayContract(bool experimentalMode) const noexcept {
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    // Meta Lab editor smoke uses this strictly internal test-only probe
+    // to catch a one-block factory-state regression after META -> REGULAR.
+    Parameters parameterSnapshotForLabTests() const noexcept { return params_; }
+#endif
+    // Host PDC is the same for all realtime synthesis engines; only the
+    // variable grain source age differs, and it must not be host-compensated.
+    DelayContract outputDelayContract(bool /*experimentalMode*/) const noexcept {
         return studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_) : studioDelayContract(rate_))
-                            : delayContract(rate_, experimentalMode);
+                            : DelayContract{latency_,true,true,false};
     }
     uint64_t preservedTransientSamples() const noexcept { return preservedTransientSamples_; }
+    // Offline A/B switch: old instantaneous dry re-entry is reproducible
+    // for audio quality regression. Default keeps the click-safe prefade.
+    // UI/host never change this on the audio thread.
+    void setAnticipatoryTransientFadeEnabled(bool enabled) noexcept {
+        anticipatoryTransientFadeEnabled_ = enabled;
+    }
     PitchEstimate lastPitch() const noexcept { return tracker_.last(); }
     CausalCycleSynth::Status cycleSynthStatus() const noexcept { return cycleSynth_.status(); }
     // v3.1 controlled research switch: preserve a trusted voiced correction
@@ -630,7 +743,13 @@ public:
     }
     uint64_t bridgedHops() const noexcept { return bridgedHops_; }
     void setShortVoicedBridgeDurationMs(float ms) noexcept {
-        maxShortVoicedBridgeMs_ = std::clamp(double(ms), 0.0, 35.0);
+        // A NaN bridge duration previously reached an audio-thread
+        // floating-point-to-int conversion in the voiced gate.
+        maxShortVoicedBridgeMs_ = std::isfinite(ms) ?
+            std::clamp(double(ms), 0.0, 35.0) : 12.0;
+    }
+    double shortVoicedBridgeDurationMs() const noexcept {
+        return maxShortVoicedBridgeMs_;
     }
     // Offline A/B guard used to verify v2.9, not a user-facing automation ID.
     void setHarmonicAwareWetGateEnabled(bool enabled) noexcept { harmonicWetGateEnabled_ = enabled; }
@@ -651,6 +770,19 @@ public:
     double maximumFormantGain() const noexcept { return formantGuard_.maximumObservedGain(); }
     double highBandPeriodicity() const noexcept { return airGuard_.periodicity(); }
     int currentTargetNote() const noexcept { return targetNote_; }
+    // Host-timeline edited target; -1 keeps original algorithm behavior.
+    void setManualTargetMidi(int midi) noexcept {
+        manualTargetMidi_ = midi>=0 && midi<=127 ? midi : -1;
+    }
+    int testTuneHeldNote() const noexcept { return testTuneHeldMidi_; }
+    static bool canBridgeTestTuneTarget(int held, uint16_t mask,
+                                        bool voiced, bool valid,
+                                        float confidence) noexcept {
+        return held >= 0 && held < 128 && voiced && valid &&
+               std::isfinite(confidence) && confidence >= 0.58f &&
+               confidence < 0.72f &&
+               (mask & (1u << (held % 12))) != 0;
+    }
     bool targetPending() const noexcept { return targetPending_; }
     double currentOnsetScore() const noexcept { return onsetCue_.score(); }
     void setHardTuneOnsetMemoryEnabled(bool enabled) noexcept {
@@ -703,6 +835,17 @@ public:
         if (!std::isfinite(params.vibratoPreservation)) params.vibratoPreservation = 0.0f;
         if (!std::isfinite(params.flexCents)) params.flexCents = 0.0f;
         if (!std::isfinite(params.cycleLevelStabilization)) params.cycleLevelStabilization = 0.8f;
+        // Switching REGULAR <-> TESTTUNE must not reuse the other
+        // algorithm's internal NoteDecision history. That stale pending
+        // target could otherwise last 65-95ms after an A/B switch.
+        // NoteDecision::reset is fixed-size/no-alloc and runs on the audio
+        // thread without locks, preserving all saved parameter IDs.
+        if (params_.testTune != params.testTune) {
+            notes_.reset();
+            targetPending_ = false;
+            testCandidateMidi_ = -1; testCandidateHops_ = 0;
+            testTuneHeldMidi_ = -1; testTuneUntrustedSamples_ = 0;
+        }
         params_ = params;
         // The shorter 12ms acquisition window is for explicitly requested
         // maximum-speed hard tuning only. Ordinary presets preserve the
@@ -715,8 +858,13 @@ public:
     // in/out may alias: each sample is captured before writing any output channels.
     // Planar buffers; sample-count and channel count may vary per audio callback.
     void process(const float* const* input, float* const* output, int frames, int numChannels) noexcept {
-        if (!input || !output || frames <= 0 || history_.empty()) return;
-        numChannels = std::clamp(numChannels, 1, channels_);
+        if (!input || !output || frames <= 0 || history_.empty() ||
+            numChannels <= 0) return;
+        numChannels = std::min(numChannels, channels_);
+        // A malformed standalone/host probe may contain null planar
+        // lanes. Never dereference one or partially write earlier lanes.
+        for (int c=0;c<numChannels;++c)
+            if (input[c]==nullptr || output[c]==nullptr) return;
         const int capacity = mask_ + 1;
         const double smooth = params_.speedMs <= 0.0001f ? 0.0 :
             std::exp(-1.0 / (rate_ * double(params_.speedMs) * .001));
@@ -732,6 +880,17 @@ public:
         const double cycleReleaseSmooth = std::exp(-1.0 / (rate_ * 0.00025));
         const double transientMeterStep = 1.0 - std::exp(-1.0 / (rate_ * 0.030));
         const double transientReleaseStep = std::exp(-1.0 / (rate_ * 0.003));
+        const double mixGuardGateStep = 1.0 - std::exp(-1.0 / (rate_ * 0.0015));
+        // The declared 3-ms host delay means the next transient's tag is
+        // ALREADY in our fixed-size ring before the same input reaches output.
+        // Fade the wet path toward aligned dry ~0.75ms BEFORE a protected
+        // attack; the marked sample itself remains exactly dry at the
+        // published latency. No extra lookahead, allocations or host PDC.
+        const int attackLookahead = std::min(
+            std::max(1, int(std::lround(rate_ * 0.00075))),
+            std::max(0, latency_ - 2));
+        const double attackEntryStep = 1.0 - std::exp(
+            -1.0 / (rate_ * 0.00012));
         for (int i = 0; i < frames; ++i) {
             float in[2] = {0.0f, 0.0f};
             for (int c = 0; c < numChannels; ++c) {
@@ -799,7 +958,37 @@ public:
                     params_.speedMs <= 1.5f && params_.amount >= 0.995f &&
                     params_.mix >= 0.995f && params_.flexCents <= 0.01f &&
                     params_.vibratoPreservation <= 0.01f);
-                if (params_.testTune && e.valid && result.voiced && e.hertz > 0.0f) {
+                // TESTTUNE still reacts on every reliable voiced hop (no
+                // musical hysteresis), but do not snap to a weak/noisy single
+                // detector estimate. Fall back to the regular confidence-
+                // gated note decision until reliable periodicity returns.
+                if (params_.testTune) {
+                    // An apparently valid YIN period below TESTTUNE's
+                    // 0.72 trust threshold must not refresh the stale-note
+                    // timer indefinitely. Such noisy detector frames do
+                    // not qualify to acquire a NEW target either.
+                    if (result.voiced && e.valid && e.confidence >= 0.72f &&
+                        e.hertz > 0.0f) testTuneUntrustedSamples_ = 0;
+                    else testTuneUntrustedSamples_ = std::min(
+                        uint32_t(rate_), testTuneUntrustedSamples_ +
+                        uint32_t(tracker_.hopHostSamples()));
+                    if (testTuneUntrustedSamples_ > uint32_t(rate_*0.040)) {
+                        testTuneHeldMidi_ = -1;
+                        // A later syllable must not inherit a near-
+                        // completed transition candidate from this one.
+                        testCandidateMidi_ = -1;
+                        testCandidateHops_ = 0;
+                    }
+                    if (testTuneHeldMidi_ >= 0 &&
+                        (params_.pitchClasses & (1u<<(testTuneHeldMidi_%12))) == 0) {
+                        testTuneHeldMidi_ = -1;
+                        testCandidateMidi_ = -1;
+                        testCandidateHops_ = 0;
+                    }
+                }
+                bool testTuneHeldIncompatiblePeriod = false;
+                if (params_.testTune && e.valid && result.voiced &&
+                    e.confidence >= 0.72f && e.hertz > 0.0f) {
                     // testtune: nearest in-scale note in the PERIOD domain (samples per cycle).
                     // Falls back to the default decision when the table is empty (invalid sample
                     // rate / reference, or no enabled notes).
@@ -807,16 +996,71 @@ public:
                     const int index = periodTable_.nearest(rate_ / double(e.hertz));
                     if (index >= 0) {
                         const int note = periodTable_.note(index);
-                        result.changed = note != priorTarget;
-                        result.targetMidi = note;
+                        // Ignore one-hop low-confidence note flutter. Strong
+                        // estimates still snap immediately (TESTTUNE feel).
+                        // A previous manual edit or a live scale change may leave
+                        // priorTarget outside the current allowed scale. Never
+                        // retain that pitch as the uncertainty fallback.
+                        const bool uncertain = priorTarget >= 0 &&
+                            (params_.pitchClasses & (1u << (priorTarget % 12))) != 0 &&
+                            note != priorTarget &&
+                            ((e.confidence < 0.87f &&
+                              std::abs(note - priorTarget) <= 2) ||
+                             // A weak single octave error is often a
+                             // tracker overtone, not a real new vocal.
+                             // Strong octave transitions remain immediate.
+                             (e.confidence < 0.94f &&
+                              std::abs(note - priorTarget) >= 10));
+                        if (note == testCandidateMidi_)
+                            testCandidateHops_ = std::min(4, testCandidateHops_ + 1);
+                        else { testCandidateMidi_ = note; testCandidateHops_ = 1; }
+                        const bool octaveCandidate = priorTarget >= 0 &&
+                            std::abs(note-priorTarget) >= 10;
+                        const bool hold = uncertain &&
+                            testCandidateHops_ < (octaveCandidate ? 4 : 2);
+                        // Holding the old MIDI target is NOT permission to
+                        // calculate a new ratio from an incompatible period.
+                        // A weak octave-down detector frame previously steered
+                        // the audio +1200 cents for a few milliseconds.
+                        testTuneHeldIncompatiblePeriod = hold && octaveCandidate;
+                        result.changed = !hold && note != priorTarget;
+                        result.targetMidi = hold ? priorTarget : note;
                         result.pending = false;
                         result.provisionalMidi = -1;
+                        testTuneHeldMidi_ = result.targetMidi;
                     }
+                } else if (params_.testTune) {
+                    // TESTTUNE owns its note decision even while YIN is
+                    // uncertain. The old fallback leaked REGULAR's separate
+                    // pending/target history at syllable attacks and detector
+                    // dropouts, causing an unrelated pitch step mid-phrase.
+                    // Hold its last reliable in-scale note for at most 40ms;
+                    // after that use -1 (dry), NEVER REGULAR's stale target.
+                    result.targetMidi = testTuneHeldMidi_;
+                    result.changed = false;
+                    result.pending = false;
+                    result.provisionalMidi = -1;
                 }
                 if (rememberedOnset) {
                     ++onsetMemoryAppliedHops_;
                     if (result.changed && priorTarget >= 0 && result.targetMidi != priorTarget)
                         ++onsetAssistedTransitions_;
+                }
+                // An explicit recorded pitch edit overrides the selected
+                // scale note on voiced frames, without touching host params.
+                // A manual edit supplies its own target even with no
+                // enabled scale notes. Still require reliable vocal evidence.
+                if(manualTargetMidi_>=0 && e.valid && e.hertz>0.0f &&
+                   e.confidence>=(params_.testTune?0.72f:0.58f)) {
+                    result.voiced=true;
+                    result.changed=manualTargetMidi_!=priorTarget;
+                    result.targetMidi=manualTargetMidi_;
+                    result.pending=false;
+                    result.provisionalMidi=-1;
+                }
+                if (params_.pitchClasses==0 && manualTargetMidi_<0) {
+                    result.targetMidi=-1;result.voiced=false;result.pending=false;
+                    result.provisionalMidi=-1;
                 }
                 targetNote_ = result.targetMidi;
                 targetPending_ = result.pending;
@@ -840,13 +1084,25 @@ public:
                 // Both detector and musical controller must accept this frame.
                 // A low-confidence provisional F0 must not be pitched toward a
                 // stale target that NoteDecision is explicitly holding.
-                if (e.valid && result.voiced && workingTarget >= 0 && usableTarget) {
+                // TESTTUNE's held note is a continuity fallback, not
+                // permission to retune a fresh low-confidence F0 estimate.
+                // Brief uncertain voiced hops use the existing safe bridge.
+                const bool trustedEstimate = !params_.testTune ||
+                    (e.confidence >= 0.72f && !testTuneHeldIncompatiblePeriod);
+                if (e.valid && result.voiced && trustedEstimate &&
+                    workingTarget >= 0 && usableTarget) {
                     f0_ = e.hertz;
                     if (!hasF0_ || std::abs(std::log2(f0_/smoothF0_)) > 0.65) {
                         smoothF0_ = f0_;
                     } else {
                         // Track pitch period smoothly, but still follow vibrato.
-                        const double blend = 1.0 - std::exp(-double(tracker_.hopHostSamples())/(rate_*0.012));
+                        // Large, confident pitch changes must also update the
+                        // source-cycle length. A stale 12ms period is a bad
+                        // phase-wrap distance during a fast note transition.
+                        const double excursion=std::abs(std::log2(f0_/smoothF0_));
+                        const double periodSeconds=(hard && e.confidence>=0.88f &&
+                            excursion>1.0/12.0) ? 0.003 : 0.012;
+                        const double blend = 1.0 - std::exp(-double(tracker_.hopHostSamples())/(rate_*periodSeconds));
                         smoothF0_ += blend*(f0_-smoothF0_);
                     }
                     hasF0_ = true;
@@ -893,6 +1149,8 @@ public:
                     // This is causal and adds zero samples of transport delay.
                     const bool bridge = shortVoicedBridgeEnabled_ && !result.pending &&
                         targetNote_ >= 0 && voiced_ &&
+                        (manualTargetMidi_>=0 ||
+                         (params_.pitchClasses & (1u<<(targetNote_%12))) != 0) &&
                         trustedVoiceSamples_ < int(rate_ * 0.001 * maxShortVoicedBridgeMs_) &&
                         voicedEnvelope_ > 0.014 && noiseScore < 0.22 &&
                         onsetCue_.score() < 0.5;
@@ -915,7 +1173,20 @@ public:
                     }
                 }
             }
-            cents_ = cents_ * smooth + (desiredCents_ * params_.amount) * (1.0 - smooth);
+            const double nextCents =
+                cents_ * smooth + (desiredCents_ * params_.amount) * (1.0 - smooth);
+            // Protect every speed, including abrupt host automation at
+            // 2-4ms where the ordinary exponential still permits large
+            // one-sample pitch-ratio jumps. At default 25ms the physical
+            // smoother is usually below this cap and remains unchanged.
+            // TESTTUNE's old 520000-cent/s slew could jump more than
+            // 10 cents between adjacent samples at 48k on abrupt target
+            // changes. Keep its immediate period-domain note selection,
+            // but cap the *audio* ratio trajectory at 300000 cents/s:
+            // even a 600-cent leap settles in 2ms, without a zipper edge.
+            const double maxStep =
+                (params_.testTune ? 300000.0 : 390000.0) / rate_;
+            cents_ += std::clamp(nextCents - cents_, -maxStep, maxStep);
             // A broadband attack (especially /s/ and /sh/) should not inherit
             // a stale tonal pitch ratio. Keep the dry stream time-aligned.
             // v2.9: the high-frequency energy discriminator alone mistakes
@@ -975,7 +1246,7 @@ public:
             // exp2 is equivalent to pow(2,x) at double precision but avoids
             // the general-purpose exponent path in the audio callback.
             const double ratio = std::clamp(std::exp2(cents_ / 1200.0), 0.5, 2.0);
-            const double period = rate_ / std::clamp(smoothF0_, 65.0, 850.0);
+            const double period = rate_ / std::clamp(smoothF0_, 50.0, 850.0);
             const double slope = 1.0 - ratio;
             // Pitch-synchronous variable-delay shifter: a continuous read head moves at
             // ratio * sampleRate; when it must wrap, switch by one input pitch period.
@@ -996,7 +1267,12 @@ public:
                 if (slope < -1e-6 && readDelay_ < lowDelay + margin) {
                     jumpFrom_ = readDelay_;
                     jumpTo_ = readDelay_ + period;
-                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005)
+                    // Aperiodic sibilants cannot supply a trustworthy
+                    // waveform phase. Avoid searching noise for random offsets.
+                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005 &&
+                        tracker_.last().valid &&
+                        tracker_.last().confidence >= 0.75f &&
+                        adjustedNoise < 0.45)
                         jumpTo_ = choosePhaseAlignedDestination(jumpFrom_,jumpTo_,period,lowDelay);
                     jumpCorrelation_ = estimateCycleCorrelation(jumpFrom_,jumpTo_,period);
                     ++cycleWrapCount_; if (effectiveMix_ > 0.1) ++activeWrapCount_;
@@ -1005,7 +1281,12 @@ public:
                 } else if (slope > 1e-6 && readDelay_ > highDelay + margin) {
                     jumpFrom_ = readDelay_;
                     jumpTo_ = readDelay_ - period;
-                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005)
+                    // Aperiodic sibilants cannot supply a trustworthy
+                    // waveform phase. Avoid searching noise for random offsets.
+                    if (params_.phaseAlignedJumps && effectiveMix_ > 0.0005 &&
+                        tracker_.last().valid &&
+                        tracker_.last().confidence >= 0.75f &&
+                        adjustedNoise < 0.45)
                         jumpTo_ = choosePhaseAlignedDestination(jumpFrom_,jumpTo_,period,lowDelay);
                     jumpCorrelation_ = estimateCycleCorrelation(jumpFrom_,jumpTo_,period);
                     ++cycleWrapCount_; if (effectiveMix_ > 0.1) ++activeWrapCount_;
@@ -1075,8 +1356,23 @@ public:
             // after the protected segment; only the first attack is forced
             // immediately, preserving its exact timing and amplitude.
             const bool protectedNow = transientMark_[size_t(dryIdx)] != 0;
-            transientRelease_ = protectedNow ? 1.0 :
-                transientRelease_ * transientReleaseStep;
+            // Previously every new tagged consonant/attack jumped directly
+            // from an unrelated wet read-head phase to delayed dry, causing
+            // ~0.5 sample-step glitches in the real singer opening 80ms.
+            // We can see this FUTURE tag in the existing latency buffer.
+            // Only pre-fade when the wet voice is already audible; the first
+            // attack from silence still follows its original exact path.
+            const bool upcomingProtected = anticipatoryTransientFadeEnabled_ &&
+                attackLookahead > 0 && effectiveMix_ > 0.08 &&
+                transientMark_[size_t((dryIdx + attackLookahead) & mask_)] != 0;
+            if (protectedNow) {
+                transientRelease_ = 1.0; // sample-exact transient at host PDC
+            } else if (upcomingProtected) {
+                transientRelease_ +=
+                    (1.0 - transientRelease_) * attackEntryStep;
+            } else {
+                transientRelease_ *= transientReleaseStep;
+            }
             if (protectedNow) ++preservedTransientSamples_;
             float dryForGuard[2]{};
             float wetForGuard[2]{};
@@ -1162,12 +1458,24 @@ public:
             // contract, fully wet tuning, or sample-exact protected attacks.
             const bool guardEligible = voiced_ && !targetPending_ &&
                 transientRelease_ < 0.01 && noiseScore < 0.3;
-            const double mixGain = mixGuard_.process(dryForGuard, wetForGuard,
+            // A detector/pending flag can change in one sample. The old
+            // eligibility switch could remove up to 3 dB instantly, even
+            // though CoherentMixGuard's internal gain was smoothed. Fade
+            // the eligibility separately; the dry and fully wet endpoints
+            // and sample-exact transient path remain unchanged.
+            mixGuard_.process(dryForGuard, wetForGuard,
                 numChannels, effectiveMix_, guardEligible);
+            mixGuardActivation_ += mixGuardGateStep *
+                ((guardEligible ? 1.0 : 0.0) - mixGuardActivation_);
+            if (mixGuardActivation_ < 1.0e-9) mixGuardActivation_ = 0.0;
+            const double towardWet = std::clamp((effectiveMix_-0.075)/0.15,0.0,1.0);
+            const double towardDry = std::clamp((0.925-effectiveMix_)/0.15,0.0,1.0);
+            const double mixGain = 1.0 + (mixGuard_.gain()-1.0) *
+                towardWet*towardDry*mixGuardActivation_;
             for (int c = 0; c < numChannels; ++c) {
                 output[c][i] = float(dryForGuard[c] * transientRelease_ +
                     synthesizedForGuard[c] * (1.0 - transientRelease_) *
-                    (guardEligible ? mixGain : 1.0));
+                    mixGain);
                 // The host normally enables FTZ/DAZ, but this guarantee
                 // also holds when rendering offline without JUCE.
                 if (!std::isfinite(output[c][i]) ||
@@ -1190,6 +1498,14 @@ private:
         const int length = std::clamp(int(std::lround(period * 0.12)), 12, 42);
         const int capacity = mask_ + 1;
         double bestScore = 1e40, best = nominal, baseline = -1.0, chosenMismatch = 0.0;
+        // Every candidate compares against the same outgoing waveform.
+        // Cache it once at the grain boundary (fixed 168-byte stack array)
+        // instead of recomputing cubic interpolation for every offset.
+        std::array<std::array<float, 2>, 21> outgoing{};
+        for (int k=0; k<length; k+=2)
+            for (int ch=0; ch<channels_; ++ch)
+                outgoing[size_t(k/2)][size_t(ch)] = interpolate(
+                    history_.data()+size_t(ch)*capacity,from+k+3.0);
         for (int offset = -maxAdjust; offset <= maxAdjust; ++offset) {
             const double to = nominal + offset;
             if (to < minDelay || to > capacity - 8.0) continue;
@@ -1199,7 +1515,7 @@ private:
                 // not the future overlap region, to choose the next read cycle.
                 for (int ch=0; ch<channels_; ++ch) {
                     const float* ring=history_.data()+size_t(ch)*capacity;
-                    const double a=interpolate(ring,from+k+3.0);
+                    const double a=outgoing[size_t(k/2)][size_t(ch)];
                     const double b=interpolate(ring,to+k+3.0);
                     const double d=a-b;
                     mismatch+=d*d;
@@ -1259,6 +1575,7 @@ private:
     double transientDiffPower_ = 0.0, transientInputPower_ = 0.0, transientRelease_ = 0.0;
     int transientHold_ = 0;
     uint64_t preservedTransientSamples_ = 0;
+    bool anticipatoryTransientFadeEnabled_ = true;
     bool studioClock_ = false, fastStudio_ = false;
     int channels_ = 2, latency_ = 144, mask_ = 0, write_ = 0;
     double readDelay_ = 144.0, jumpFrom_ = 0, jumpTo_ = 0;
@@ -1279,6 +1596,7 @@ private:
     int nearZeroSamples_ = 0;
     CausalCycleSynth cycleSynth_;
     CoherentMixGuard mixGuard_;
+    double mixGuardActivation_ = 0.0;
     FormantEnvelopeGuard formantGuard_;
     bool formantActive_=false;
     HarmonicAirGuard airGuard_;
@@ -1298,7 +1616,11 @@ private:
     double voicedEnvelope_ = 0.0;
     double voicedEnvelopeStep_ = 0.01;
     bool targetPending_ = false;
+    int testCandidateMidi_ = -1, testCandidateHops_ = 0;
+    int testTuneHeldMidi_ = -1;
+    uint32_t testTuneUntrustedSamples_ = 0;
     int targetNote_ = -1;
+    int manualTargetMidi_ = -1;
     std::vector<float> history_;
     Parameters params_{};
     CausalPitchTracker tracker_;

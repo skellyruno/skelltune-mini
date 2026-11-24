@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../dsp/RealtimeTuner.hpp"
+#include "../dsp/PitchEditTimeline.hpp"
 #include <SkellCore/WorldLink.h>
 #include <SkellCore/SkullTheme.h>
 #include <juce_events/juce_events.h>
@@ -22,7 +23,9 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override {
-#if defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+        return "SkellyTune META Lab";
+#elif defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
         return "SkellyTune Studio Fast";
 #elif defined(SKELLY_STUDIO_PROFILE) && SKELLY_STUDIO_PROFILE
         return "SkellyTune Studio";
@@ -37,7 +40,7 @@ public:
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return {}; }
+    const juce::String getProgramName(int index) override { return index == 0 ? "Default" : juce::String{}; }
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
@@ -78,8 +81,29 @@ public:
     int displayedTargetNote() const noexcept { return displayedTargetNote_.load(std::memory_order_relaxed); }
     bool displayedTargetPending() const noexcept { return displayedTargetPending_.load(std::memory_order_relaxed); }
     float displayedCorrectionCents() const noexcept { return displayedCorrectionCents_.load(std::memory_order_relaxed); }
+    // Displays follow the SAME transient A4 as DSP, including SkellKey linked
+    // concert-pitch overrides (without mutating the saved APVTS A4 value).
+    float displayedReferenceA() const noexcept { return displayedReferenceA_.load(std::memory_order_relaxed); }
+    int64_t displayedHostMs() const noexcept {
+        return displayedHostMs_.load(std::memory_order_relaxed);
+    }
+    skelly::PitchEditTimeline& pitchEdits() noexcept { return pitchEdits_; }
+    const skelly::PitchEditTimeline& pitchEdits() const noexcept { return pitchEdits_; }
+    void pitchEditStateChanged() {
+        updateHostDisplay(juce::AudioProcessor::ChangeDetails{}.withNonParameterStateChanged(true));
+    }
+#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+    skelly::Parameters regularEngineParametersForLabTests() const noexcept {
+        return engine_.parameterSnapshotForLabTests();
+    }
+#endif
 private:
     void timerCallback() override;
+    void updateTimelinePosition() noexcept;
+    // Each call is a prepared, planar float audio segment. Splits only at
+    // edited note boundaries; ordinary sessions remain a single DSP call.
+    void processEditedAudio(float* const* io,int channels,int frames,
+                            int blockOffset,bool useMeta);
     // Shared UI/theme and optional key-link state. Audio processing reads only
     // atomics and never touches a socket, mutex, GUI component or host params.
     std::atomic<int> skinIndex_{1};
@@ -87,6 +111,10 @@ private:
     std::atomic<std::uint64_t> linkedTuning_{0}; // all of scale + A4 + key in one atomic
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     skelly::Parameters currentParameters() const noexcept;
+    // JUCE standalone GUI smoke invokes prepareToPlay directly; JUCE's
+    // host-managed getSampleRate() may still be zero. Always use the
+    // actual rate passed to prepareToPlay for DSP and edit boundaries.
+    double preparedAudioRate_ = 0.0;
     juce::AudioBuffer<float> doubleScratch_;  // allocated ONLY in prepareToPlay
     juce::AudioProcessorValueTreeState state_;
     skelly::RealtimeTuner engine_;
@@ -95,10 +123,13 @@ private:
     bool metaWasActive_ = false;   // audio thread only
     void runMeta(float* const* io, int channels, int frames);
 #endif
+    skelly::PitchEditTimeline pitchEdits_;
+    std::atomic<int64_t> displayedHostMs_{-1};
     std::atomic<float> displayedPitchHz_{0.0f};
     std::atomic<float> displayedConfidence_{0.0f};
     std::atomic<int> displayedTargetNote_{-1};
     std::atomic<bool> displayedTargetPending_{false};
     std::atomic<float> displayedCorrectionCents_{0.0f};
+    std::atomic<float> displayedReferenceA_{440.0f};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SkellyTuneRealtimeProcessor)
 };

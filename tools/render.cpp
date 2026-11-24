@@ -87,13 +87,16 @@ static Wav demo() {
 }
 static Wav process(const Wav& w, const skelly::Parameters& p) {
     Wav output;output.rate=w.rate;output.channels=w.channels;output.samples.resize(w.samples.size());
-    skelly::RealtimeTuner dsp;dsp.prepare(w.rate,w.channels);dsp.setParameters(p);
+    const double latencyMs = std::getenv("SKELLY_MINI_PDC") ? 1.5 : 3.0;
+    skelly::RealtimeTuner dsp;dsp.prepare(w.rate,w.channels,false,false,latencyMs);dsp.setParameters(p);
     if(const char* confidence=std::getenv("SKELLY_V31_TRACKER_CONF"))
         dsp.setMinimumTrackerConfidence(float(std::atof(confidence)));
     if(const char* duration=std::getenv("SKELLY_V31_BRIDGE_MS"))
         dsp.setShortVoicedBridgeDurationMs(float(std::atof(duration)));
     if(const char* disable=std::getenv("SKELLY_V31_BRIDGE_OFF"))
         dsp.setShortVoicedBridgeEnabled(std::atoi(disable)==0);
+    if (std::getenv("SKELLY_TRANSIENT_PREFADE_OFF"))
+        dsp.setAnticipatoryTransientFadeEnabled(false);
     if (std::getenv("SKELLY_V33_ONSET_MEMORY_OFF"))
         dsp.setHardTuneOnsetMemoryEnabled(false);
     if (std::getenv("SKELLY_V30_PROVISIONAL")) dsp.setProvisionalTransitionEnabled(true);
@@ -102,15 +105,15 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
     // SKELLY_META=1 routes audio through the test-only Meta engine instead of the standard one.
     // SKELLY_META_FILE_DETECTOR=1 : use the reconstruction's own detector (as written; finds no pitch)
     // SKELLY_META_AS_WRITTEN=1    : smoother fed the snapped target (as written; makes no correction)
-    // SKELLY_META_SPEED=<x>       : override the smoother speed (default speedMs / 8)
+    // SKELLY_META_SPEED=<ms>      : override real META retune milliseconds
     skelly::MetaTest meta; const bool useMeta = std::getenv("SKELLY_META") != nullptr;
     if (useMeta) {
-        meta.prepare(double(w.rate));
+        meta.prepare(double(w.rate),latencyMs);
         meta.setFileDetector(std::getenv("SKELLY_META_FILE_DETECTOR") != nullptr);
         meta.setSmoothDetected(std::getenv("SKELLY_META_AS_WRITTEN") == nullptr);
         const double speed = std::getenv("SKELLY_META_SPEED") ? std::atof(std::getenv("SKELLY_META_SPEED"))
-                                                               : double(p.speedMs) / 8.0;
-        meta.setParameters(p.pitchClasses, double(p.referenceA), double(p.amount), speed);
+                                                               : double(p.speedMs);
+        meta.setParameters(p.pitchClasses, double(p.referenceA), double(p.amount), speed, 0.0, double(p.mix));
     }
 #endif
     const size_t total=w.samples.size()/size_t(w.channels);

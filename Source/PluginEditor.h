@@ -1,10 +1,12 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "../dsp/GraphViewport.hpp"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <algorithm>
 #include <array>
 #include <functional>
 #include <memory>
+#include <limits>
 
 class SkellyTuneEditor final : public juce::AudioProcessorEditor, private juce::Timer {
 public:
@@ -12,16 +14,42 @@ public:
     ~SkellyTuneEditor() override;
     void paint(juce::Graphics&) override;
     void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
+    void mouseWheelMove(const juce::MouseEvent&,
+                        const juce::MouseWheelDetails&) override;
 private:
     struct SimpleTheme final : juce::LookAndFeel_V4 {
         skellcore::ui::SkullPalette palette =
             skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
-        float activity = 0.0f;   // 0..1, how hard the tuner is correcting right now (drives the dial glow)
+        float activity = 0.0f;   // 0..1, pitch correction strength
+        float confidence = 0.0f, voiceAlpha = 0.0f, deviationCents = 0.0f;
+        std::array<float, 32> pitchTrail{};
+        int trailHead = 0, trailCount = 0;
+        float hostSpeedMs = 25.0f; // true saved ms, including legacy values above the new 100ms dial max
+        // A4 +/- stepper buttons share the dark Key/Scale palette.
+        juce::Button* createSliderButton(juce::Slider&, bool increment) override {
+            auto* b = new juce::TextButton(increment ? "+" : "-");
+            b->setColour(juce::TextButton::buttonColourId, palette.panel.brighter(0.09f));
+            b->setColour(juce::TextButton::buttonOnColourId, palette.panel.brighter(0.13f));
+            b->setColour(juce::TextButton::textColourOffId, palette.bone);
+            b->setColour(juce::TextButton::textColourOnId, palette.accent);
+            return b;
+        }
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
-        juce::Font getTextButtonFont(juce::TextButton&, int height) override {
+        juce::Font getTextButtonFont(juce::TextButton& button, int height) override {
+            // At 1008px the stacked A4 steppers grow with the editor but
+            // JUCE's ordinary label font leaves tiny +/- glyphs. Scale
+            // only these two glyphs; ANALYZE/UNDO/CLEAR keep normal type.
+            const auto label = button.getButtonText();
+            const bool stepper = label == "+" || label == "-";
             return juce::Font(juce::FontOptions(
-                juce::jlimit(12.0f, 26.0f, float(height) * 0.43f),
+                juce::jlimit(stepper ? 13.0f : 12.0f,
+                             stepper ? 32.0f : 26.0f,
+                             float(height) * (stepper ? 0.67f : 0.43f)),
                 juce::Font::bold));
         }
         juce::Font getComboBoxFont(juce::ComboBox& b) override {
@@ -41,8 +69,17 @@ private:
         void mouseDoubleClick(const juce::MouseEvent&) override;
         std::function<void()> onReset;
         const skellcore::ui::SkullPalette* palette_;
-        float glow = 0.0f;   // 0..1, lit while this note is the live target
-        void setGlow(float value) { glow = value; repaint(); }
+        float glow = 0.0f;       // 0..1, target pitch (neon green)
+        float inputGlow = 0.0f;  // 0..1, detected sung pitch (white/soft mint)
+        void setLiveFeedback(float input, float target) {
+            inputGlow = input;
+            glow = target;
+            // Expose factual message-thread state for real editor smoke
+            // tests. These are UI properties, not host parameters.
+            getProperties().set("liveInput", double(input));
+            getProperties().set("liveTarget", double(target));
+            repaint();
+        }
     };
 
     // INPUT / TARGET readout shown on either side of the dial. Draws only; never takes mouse input.
@@ -53,15 +90,17 @@ private:
         }
         // alpha: 0 = nothing sung, 1 = voiced. meter: -1..1. active: 0..1 correction strength.
         void setState(float alpha, const juce::String& note, const juce::String& detail,
-                      float meter, float active) {
-            alpha_ = alpha; note_ = note; detail_ = detail; meter_ = meter; active_ = active;
+                      float meter, float active, float confidence) {
+            alpha_ = alpha; note_ = note; detail_ = detail; meter_ = meter;
+            active_ = active; confidence_ = confidence;
+            getProperties().set("pitchConfidence", double(confidence));
             repaint();
         }
         void paint(juce::Graphics&) override;
     private:
         const skellcore::ui::SkullPalette* palette_;
         bool input_;
-        float alpha_ = 0.0f, meter_ = 0.0f, active_ = 0.0f;
+        float alpha_ = 0.0f, meter_ = 0.0f, active_ = 0.0f, confidence_ = 0.0f;
         juce::String note_ = "--", detail_;
     };
 
@@ -99,6 +138,10 @@ private:
     void refreshNotes();
     void togglePitchClass(int index);
     void resetManualNotes();
+    void toggleAnalyzer();
+    bool startGraphNoteEdit(juce::Point<float> position);
+    bool graphHit(juce::Point<float> position) const noexcept;
+    int graphPickHistoryIndex(float x) const noexcept;
 
     SkellyTuneRealtimeProcessor& processor_;
     juce::AudioProcessorValueTreeState& parameters_;
@@ -106,18 +149,39 @@ private:
         skellcore::ui::skullPalette(skellcore::ui::SkullSkin::Neon);
     juce::ComboBox key_, scale_;
     juce::Slider speed_, a4_;
+    juce::TextButton analyzerToggle_{"ANALYZE"};
+    juce::TextButton clearPitchEdits_{"CLEAR"};
+    juce::TextButton undoPitchEdits_{"UNDO"};
+    bool analyzerExpanded_ = false;
+    static constexpr int kAnalyzerHistory = 90;
+    // Real pitch and estimated corrected output in absolute MIDI-note
+    // coordinates. -1 marks an unvoiced frame (never draw fake zero spikes).
+    std::array<float, kAnalyzerHistory> analyzerInputMidi_{}, analyzerOutputMidi_{};
+    std::array<int64_t, kAnalyzerHistory> analyzerHostMs_{};
+    std::array<int, kAnalyzerHistory> analyzerTargetMidi_{};
+    int analyzerHead_ = 0, analyzerSamples_ = 0;
+    skelly::PitchGraphGestureSnapshot<kAnalyzerHistory> graphGesture_;
+    float graphCenterMidi_ = 60.0f, graphDragStartMidi_ = 60.0f, graphDragStartY_ = 0.0f;
+    bool graphFollow_ = true, graphDragging_ = false, graphEditing_ = false;
+    int graphEditMidi_ = -1, graphEditInitialMidi_ = -1;
+    int64_t graphEditStartMs_ = -1, graphEditEndMs_ = -1;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
         keyAttachment_, scaleAttachment_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
-        speedAttachment_, a4Attachment_;
+    // UI is a clockwise fastness controller (0..100), while the existing
+    // saved/automated APVTS "speed" parameter stays 0..200 milliseconds.
+    std::unique_ptr<juce::ParameterAttachment> speedAttachment_;
+    bool speedDragging_ = false;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> a4Attachment_;
     // Algorithm switch (REGULAR / TESTTUNE / META). Drives the APVTS ids "testTune" and (test builds) "meta".
     AlgorithmSelector algorithm_{palette_};
     LiveReadout inputReadout_{palette_, true}, targetReadout_{palette_, false};
     // Smoothed live-feedback state (message thread only).
     float voicedFade_ = 0.0f, activity_ = 0.0f, dispDeviation_ = 0.0f, dispCorrection_ = 0.0f;
-    int lastTarget_ = -1;
+    float liveConfidence_ = 0.0f;
+    juce::String liveStatus_ = "LISTENING";
+    int lastTarget_ = -1, lastInput_ = -1;
     juce::String lastInputName_ = "--", lastTargetName_ = "--";
-    std::array<float, 12> keyGlow_{};
+    std::array<float, 12> keyGlow_{}, inputKeyGlow_{};
     std::array<std::unique_ptr<PitchButton>, 12> notes_;
     int lastMask_ = -1;
     bool lastCustomMask_ = false;

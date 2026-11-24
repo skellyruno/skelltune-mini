@@ -21,7 +21,8 @@ constexpr std::uint16_t effectiveMask(int root, int scale, int manualMask) noexc
 }
 constexpr std::uint16_t toggleNote(std::uint16_t currentMask, int pitchClass) noexcept {
     if (pitchClass < 0 || pitchClass >= 12) return currentMask;
-    const auto next = std::uint16_t(currentMask ^ (1u << unsigned(pitchClass)));
+    const auto next = std::uint16_t((currentMask & kChromaticMask) ^
+                                    (1u << unsigned(pitchClass)));
     // There must always be at least one permitted target note.
     return next == 0 ? currentMask : next;
 }

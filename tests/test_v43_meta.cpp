@@ -2,7 +2,7 @@
 //  1. With the working detector and the detected-period smoother (the plugin's META defaults) a
 //     steady detuned voice is tuned to the nearest enabled note.
 //  2. The scale mask is respected (nearest ENABLED note, not nearest chromatic note).
-//  3. Bypass is bit-exact; silence and full-scale input stay finite.
+//  3. Bypass is sample-exact with the SAME fixed host PDC; extreme input stays finite.
 //  4. CHARACTERIZATION of the reconstruction AS WRITTEN: its detector finds (almost) no pitch and
 //     its smoother wiring makes no correction. These two checks document the file's current
 //     behaviour; delete or invert them if you fix the reconstruction.
@@ -46,7 +46,13 @@ static double cents(double a, double b) { return 1200.0 * std::log2(a / b); }
 // Runs x through the engine in 128-frame blocks, advancing through the buffer.
 static std::vector<float> run(skelly::MetaTest& m, std::vector<float> x, bool bypass = false) {
     std::vector<float> r = x;
-    for (size_t i = 0; i + 128 <= x.size(); i += 128) { float* io[2] = {x.data() + i, r.data() + i}; m.process(io, 2, 128, bypass); }
+    // Hosts can end an audio stream with a short block; process that tail,
+    // rather than silently leaving the last 64 samples unprocessed.
+    for (size_t i = 0; i < x.size(); i += 128) {
+        const int count=int(std::min<size_t>(128,x.size()-i));
+        float* io[2] = {x.data() + i, r.data() + i};
+        m.process(io, 2, count, bypass);
+    }
     return x;
 }
 
@@ -69,11 +75,16 @@ int main() {
         std::cout << "C major: A3+120ct -> " << fo << " Hz (B3 = " << b3 << ")\n";
         check(std::abs(cents(fo, b3)) < 4.0, "META respects the scale mask");
     }
-    // 3. Bypass is bit-exact; silence and full-scale input stay finite.
+    // 3. Bypass retains the declared host dry delay; zero input stays finite.
     {
         skelly::MetaTest m; m.prepare(kRate); m.setParameters(0x0fff, 440.0, 1.0, 0.5);
         const auto in = voice(223.8, 24000); auto out = run(m, in, true);
-        check(out == in, "bypass leaves the audio bit-exact");
+        const int delay=m.latencySamples();
+        for(std::size_t i=0;i<in.size();++i) {
+            const float expected=i>=std::size_t(delay)?in[i-std::size_t(delay)]:0.0f;
+            check(out[i]==expected,
+                  "bypass must remain sample-exact after fixed host PDC");
+        }
         skelly::MetaTest n; n.prepare(kRate); n.setParameters(0x0fff, 440.0, 1.0, 0.5);
         std::vector<float> loud(48000); for (size_t i = 0; i < loud.size(); ++i) loud[i] = (i / 100) % 2 ? 1.0f : -1.0f;
         for (const auto& sig : {std::vector<float>(48000, 0.0f), loud}) {

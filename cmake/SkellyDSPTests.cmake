@@ -235,9 +235,161 @@ add_executable(dsp_v42_tests tests/test_v42_testtune.cpp)
 target_link_libraries(dsp_v42_tests PRIVATE skelly_dsp)
 add_test(NAME dsp_v42_testtune COMMAND dsp_v42_tests)
 
+# v3.3.3: causal prefade before protected input transients at exact
+# original host PDC, including different callback sizes/sample rates.
+add_executable(dsp_v45_transient_prefade tests/test_v45_transient_prefade.cpp)
+target_link_libraries(dsp_v45_transient_prefade PRIVATE skelly_dsp)
+add_test(NAME dsp_v45_transient_prefade COMMAND dsp_v45_transient_prefade)
+
+# v3.3.4: note-switch anti-zipper protection in both regular and
+# TESTTUNE hard-retune synthesis paths.
+add_executable(dsp_v47_hard_ratio_guard tests/test_v47_hard_ratio_guard.cpp)
+target_link_libraries(dsp_v47_hard_ratio_guard PRIVATE skelly_dsp)
+add_test(NAME dsp_v47_hard_ratio_guard COMMAND dsp_v47_hard_ratio_guard)
+
+# TESTTUNE's held period-domain note must not fall back to unrelated
+# REGULAR musical hysteresis during brief low-confidence voiced frames.
+add_executable(dsp_v51_testtune_hold tests/test_v51_testtune_hold.cpp)
+target_link_libraries(dsp_v51_testtune_hold PRIVATE skelly_dsp)
+add_test(NAME dsp_v51_testtune_hold COMMAND dsp_v51_testtune_hold)
+
+# Stabilize detector-only stereo routing when channels approach opposite
+# polarity: no one-sample mid/side jumps, preserved anti-phase F0 signal.
+add_executable(dsp_v52_stereo_route tests/test_v52_stereo_router.cpp)
+target_link_libraries(dsp_v52_stereo_route PRIVATE skelly_dsp)
+add_test(NAME dsp_v52_stereo_route COMMAND dsp_v52_stereo_route)
+
 # TEST ONLY: Meta engine tests (built only when -DSKELLY_META_TEST=ON).
 if(SKELLY_META_TEST)
     add_executable(dsp_v43_meta tests/test_v43_meta.cpp)
     target_link_libraries(dsp_v43_meta PRIVATE skelly_dsp)
     add_test(NAME dsp_v43_meta COMMAND dsp_v43_meta)
+
+    # Regress the actual Meta read-head jump bug; research engine only.
+    add_executable(dsp_v44_meta_grain tests/test_v44_meta_grain.cpp)
+    target_link_libraries(dsp_v44_meta_grain PRIVATE skelly_dsp)
+    add_test(NAME dsp_v44_meta_grain COMMAND dsp_v44_meta_grain)
+
+    # Do not grain-resample unvoiced consonants/air or break dry PDC in META.
+    add_executable(dsp_v46_meta_dry_guard tests/test_v46_meta_dry_guard.cpp)
+    target_link_libraries(dsp_v46_meta_dry_guard PRIVATE skelly_dsp)
+    add_test(NAME dsp_v46_meta_dry_guard COMMAND dsp_v46_meta_dry_guard)
+
+    # META only: prove cubic fractional resampling is materially more
+    # accurate than the original grain's two-tap linear interpolation.
+    add_executable(dsp_v48_meta_interpolation tests/test_v48_meta_interpolation.cpp)
+    target_link_libraries(dsp_v48_meta_interpolation PRIVATE skelly_dsp)
+    add_test(NAME dsp_v48_meta_interpolation COMMAND dsp_v48_meta_interpolation)
+
+    # META Lab only: bounded phase-aligned grain resets, stereo and high
+    # frequency/high-sample-rate causal read-head safety.
+    add_executable(dsp_v49_meta_phase tests/test_v49_meta_phase.cpp)
+    target_link_libraries(dsp_v49_meta_phase PRIVATE skelly_dsp)
+    add_test(NAME dsp_v49_meta_phase COMMAND dsp_v49_meta_phase)
+
+    # META only: physical millisecond speed response, four sample rates
+    # and a real processed harmonic note-transition fixture.
+    add_executable(dsp_v50_meta_speed tests/test_v50_meta_speed.cpp)
+    target_link_libraries(dsp_v50_meta_speed PRIVATE skelly_dsp)
+    add_test(NAME dsp_v50_meta_speed COMMAND dsp_v50_meta_speed)
+
+    # Full three-way deterministic synthetic vocal rendering and metrics.
+    # Never runs inside the host audio thread and never distributes Meta DSP.
+    add_executable(three_mode_ab tools/three_mode_ab.cpp)
+    target_link_libraries(three_mode_ab PRIVATE skelly_dsp)
 endif()
+
+# TESTTUNE transient note-owner and bounded 0ms sample-to-sample correction.
+add_executable(dsp_v53_testtune_continuity tests/test_v53_testtune_continuity.cpp)
+target_link_libraries(dsp_v53_testtune_continuity PRIVATE skelly_dsp)
+add_test(NAME dsp_v53_testtune_continuity COMMAND dsp_v53_testtune_continuity)
+
+# Causal note-editor host transport, lock-free edits, and audible target route.
+find_package(Threads REQUIRED)
+add_executable(dsp_v54_pitch_edit_timeline tests/test_v54_pitch_edit_timeline.cpp)
+target_link_libraries(dsp_v54_pitch_edit_timeline PRIVATE skelly_dsp Threads::Threads)
+add_test(NAME dsp_v54_pitch_edit_timeline COMMAND dsp_v54_pitch_edit_timeline)
+add_executable(dsp_v55_manual_pitch_modes tests/test_v55_manual_pitch_modes.cpp)
+target_link_libraries(dsp_v55_manual_pitch_modes PRIVATE skelly_dsp)
+add_test(NAME dsp_v55_manual_pitch_modes COMMAND dsp_v55_manual_pitch_modes)
+
+if(SKELLY_META_TEST)
+    add_executable(dsp_v56_meta_stereo tests/test_v56_meta_stereo.cpp)
+    target_link_libraries(dsp_v56_meta_stereo PRIVATE skelly_dsp)
+    add_test(NAME dsp_v56_meta_stereo COMMAND dsp_v56_meta_stereo)
+endif()
+
+# Fast path for the vast majority of audio with no recorded manual edits.
+add_executable(dsp_v58_edit_fastpath tests/test_v58_edit_fastpath.cpp)
+target_link_libraries(dsp_v58_edit_fastpath PRIVATE skelly_dsp)
+add_test(NAME dsp_v58_edit_fastpath COMMAND dsp_v58_edit_fastpath)
+if(SKELLY_META_TEST)
+    # Research-only: original Hann grain fade vs prepared lookup curve.
+    add_executable(dsp_v57_meta_fade_lut tests/test_v57_meta_fade_lut.cpp)
+    target_link_libraries(dsp_v57_meta_fade_lut PRIVATE skelly_dsp)
+    add_test(NAME dsp_v57_meta_fade_lut COMMAND dsp_v57_meta_fade_lut)
+endif()
+
+# Real 1.5ms transport contract, sample-exact dry at three sample rates,
+# full-wet finite/peak guard, META dry parity and reset robustness.
+# Historical portable callers retain the previous 3ms prepare default.
+add_executable(dsp_v59_low_pdc tests/test_v59_low_pdc.cpp)
+target_link_libraries(dsp_v59_low_pdc PRIVATE skelly_dsp)
+add_test(NAME dsp_v59_low_pdc COMMAND dsp_v59_low_pdc)
+
+if(SKELLY_META_TEST)
+    # Invalid host input, timeline, bypass and zero-allocation edit guards.
+    add_executable(dsp_v60_meta_host_guard tests/test_v60_meta_host_guard.cpp)
+    target_link_libraries(dsp_v60_meta_host_guard PRIVATE skelly_dsp)
+    add_test(NAME dsp_v60_meta_host_guard COMMAND dsp_v60_meta_host_guard)
+endif()
+
+if(SKELLY_META_TEST)
+    add_executable(dsp_v62_meta_tuning_cache tests/test_v62_meta_tuning_cache.cpp)
+    target_link_libraries(dsp_v62_meta_tuning_cache PRIVATE skelly_dsp)
+    add_test(NAME dsp_v62_meta_tuning_cache COMMAND dsp_v62_meta_tuning_cache)
+endif()
+
+# This graph/clock test is NOT an experimental META-only feature. Run it
+# in the normal Mini suite as well as in the three-mode META suite.
+add_executable(dsp_v61_graph_viewport tests/test_v61_graph_viewport.cpp)
+target_link_libraries(dsp_v61_graph_viewport PRIVATE skelly_dsp)
+add_test(NAME dsp_v61_graph_viewport COMMAND dsp_v61_graph_viewport)
+
+# The three-mode Lab's bypass must preserve the same fixed dry/PDC timeline
+# as REGULAR and TESTTUNE, even in small and irregular host callback blocks.
+if(SKELLY_META_TEST)
+    add_executable(dsp_v63_meta_bypass_pdc tests/test_v63_meta_bypass_pdc.cpp)
+    target_link_libraries(dsp_v63_meta_bypass_pdc PRIVATE skelly_dsp)
+    add_test(NAME dsp_v63_meta_bypass_pdc COMMAND dsp_v63_meta_bypass_pdc)
+endif()
+
+# v64: fail-safe direct DSP API probes for invalid tracker rates, NaN
+# confidence/bridge controls and missing planar host audio lanes.
+add_executable(dsp_v64_host_safety tests/test_v64_host_safety.cpp)
+target_link_libraries(dsp_v64_host_safety PRIVATE skelly_dsp)
+add_test(NAME dsp_v64_host_safety COMMAND dsp_v64_host_safety)
+
+# Listening round 2: test all available engines, including near-floor tracker
+# interpolation, false octave transitions, and META causal phase continuity.
+add_executable(dsp_v66_listening_round tests/test_v66_listening_round.cpp)
+target_link_libraries(dsp_v66_listening_round PRIVATE skelly_dsp)
+add_test(NAME dsp_v66_listening_round COMMAND dsp_v66_listening_round)
+
+# v67: detector reset equivalence, high-rate low-note wet output and
+# physically calibrated META correction (rather than stale source pitch).
+add_executable(dsp_v67_retune_quality tests/test_v67_retune_quality.cpp)
+target_link_libraries(dsp_v67_retune_quality PRIVATE skelly_dsp)
+add_test(NAME dsp_v67_retune_quality COMMAND dsp_v67_retune_quality)
+
+# v68: extended low-bass range for all Mini engines, line-frequency hum
+# rejection, host-block invariance and META sample-exact sharp attacks.
+add_executable(dsp_v68_bass_attack tests/test_v68_bass_attack.cpp)
+target_link_libraries(dsp_v68_bass_attack PRIVATE skelly_dsp)
+add_test(NAME dsp_v68_bass_attack COMMAND dsp_v68_bass_attack)
+
+# v69: independent Amount and Mix, disabled-scale transparency and explicit
+# pitch edits across all Mini engines, with irregular host blocks.
+add_executable(dsp_v69_amount_mix tests/test_v69_amount_mix.cpp)
+target_link_libraries(dsp_v69_amount_mix PRIVATE skelly_dsp)
+add_test(NAME dsp_v69_amount_mix COMMAND dsp_v69_amount_mix)

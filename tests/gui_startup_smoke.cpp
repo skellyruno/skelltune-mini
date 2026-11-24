@@ -133,6 +133,23 @@ int main() {
                    juce::PNGImageFormat().writeImageToStream(snapshot, *stream);
         };
         if (!childrenInside() || !validVisual()) return 4;
+        // Assert measured actual JUCE bounds, not only paint geometry.
+        auto* firstNote=editor->findChildWithID("skelly.note.0");
+        auto* lastNote=editor->findChildWithID("skelly.note.11");
+        auto* keyBox=editor->findChildWithID("skelly.key");
+        auto* scaleBox=editor->findChildWithID("skelly.scale");
+        auto* a4Box=editor->findChildWithID("skelly.a4");
+        if (!firstNote || !lastNote || !keyBox || !scaleBox || !a4Box) return 73;
+        const int leftMargin=firstNote->getX();
+        const int rightMargin=editor->getWidth()-lastNote->getRight();
+        const int keyScaleGap=scaleBox->getX()-keyBox->getRight();
+        const int scaleA4Gap=a4Box->getX()-scaleBox->getRight();
+        if (std::abs(leftMargin-rightMargin)>2 ||
+            std::abs(keyScaleGap-scaleA4Gap)>1 ||
+            firstNote->getWidth()!=lastNote->getWidth()) {
+            std::cerr << "FAIL: asymmetric note bank or tuning gutters\n";
+            return 74;
+        }
         if (!savePreview("SkellyTuneMini_UI_432.png")) return 14;
         std::cerr << "STEP: default 432x414 layout + neon rendering ok\n" << std::flush;
         editor->setSize(720, 690);
@@ -171,6 +188,18 @@ int main() {
                       << editor->getWidth() << "x" << editor->getHeight() << "\n";
             return 47;
         }
+        // Inspect the real, expanded 720px and 1008px layouts too.
+        editor->setSize(720, 1167);
+        editor->resized();
+        if (!childrenInside() || !validVisual() ||
+            !savePreview("SkellyTuneMini_Analyzer_UI_720.png")) return 75;
+        editor->setSize(1008, 1633);
+        editor->resized();
+        if (!childrenInside() || !validVisual() ||
+            !savePreview("SkellyTuneMini_Analyzer_UI_1008.png")) return 76;
+        editor->setSize(432, 700);
+        editor->resized();
+        if (!childrenInside() || !validVisual()) return 77;
         // The note editor is real state, not merely painted handles:
         // save, restore and clear it in the actual JUCE host processor.
         auto* clearEdits=dynamic_cast<juce::TextButton*>(

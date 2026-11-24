@@ -180,9 +180,9 @@ void SkellyTuneEditor::SimpleTheme::drawRotarySlider(
         conf < 0.68f ? "ACQUIRING" :
         std::abs(deviationCents) <= 8.0f ? "ON NOTE" : "CORRECTING";
     g.setColour((alpha > 0.18f ? palette.accent : palette.boneDim)
-                .withAlpha(alpha > 0.18f ? 0.90f : 0.60f));
+                .withAlpha(alpha > 0.18f ? 0.92f : 0.84f));
     g.setFont(juce::Font(juce::FontOptions(
-        juce::jlimit(8.5f, 24.0f, 9.0f * uiScale), juce::Font::bold)));
+        juce::jlimit(9.8f, 24.0f, 10.5f * uiScale), juce::Font::bold)));
     g.drawText(signal, juce::Rectangle<int>(
         int(cx-radius)+innerMargin, int(cy)+juce::roundToInt(35.5f * uiScale),
         textWidth, juce::roundToInt(12.0f * uiScale)),
@@ -320,14 +320,14 @@ void SkellyTuneEditor::LiveReadout::paint(juce::Graphics& g) {
     const float w = float(getWidth()), sc = w / 100.0f;
     const float a = juce::jlimit(0.0f, 1.0f, alpha_);
     g.setColour(p.boneDim);
-    g.setFont(juce::Font(juce::FontOptions(10.5f * sc, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(11.2f * sc, juce::Font::bold)));
     g.drawText(input_ ? "INPUT" : "TARGET", 0, 0, int(w), int(15.0f * sc), juce::Justification::centred);
 
-    g.setColour((active_ > 0.15f ? p.accent : p.bone).withAlpha(0.22f + 0.78f * a));
+    g.setColour((active_ > 0.15f ? p.accent : p.bone).withAlpha(0.40f + 0.60f * a));
     g.setFont(juce::Font(juce::FontOptions(32.0f * sc, juce::Font::bold)));
     g.drawText(note_, 0, int(17.0f * sc), int(w), int(40.0f * sc), juce::Justification::centred);
 
-    g.setColour(p.boneDim.withAlpha(0.30f + 0.70f * a));
+    g.setColour(p.boneDim.withAlpha(0.48f + 0.52f * a));
     g.setFont(juce::Font(juce::FontOptions(12.5f * sc, juce::Font::plain)));
     g.drawText(a > 0.05f ? detail_ : juce::String("--"), 0, int(58.0f * sc), int(w), int(18.0f * sc),
                juce::Justification::centred);
@@ -352,8 +352,8 @@ void SkellyTuneEditor::LiveReadout::paint(juce::Graphics& g) {
         g.setColour(p.accent.withAlpha(0.20f + 0.80f * a));
         g.fillRoundedRectangle(left, y - 3.0f * sc, width, 6.0f * sc, 3.0f * sc);
     }
-    g.setColour(p.boneDim.withAlpha(0.75f));
-    g.setFont(juce::Font(juce::FontOptions(9.0f * sc, juce::Font::plain)));
+    g.setColour(p.boneDim.brighter(0.13f).withAlpha(0.90f));
+    g.setFont(juce::Font(juce::FontOptions(9.5f * sc, juce::Font::plain)));
     g.drawText(input_ ? "FLAT" : "LOWER", int(x0), int(y + 9.0f * sc), int(w * 0.5f - x0), int(12.0f * sc),
                juce::Justification::centredLeft);
     g.drawText(input_ ? "SHARP" : "RAISE", int(w * 0.5f), int(y + 9.0f * sc), int(w * 0.5f - 8.0f * sc),
@@ -388,7 +388,7 @@ void SkellyTuneEditor::AlgorithmSelector::paint(juce::Graphics& g) {
     g.drawRoundedRectangle(b, 7.0f, 1.0f);
     const int n = std::max(1, labels_.size());
     const float segmentWidth = b.getWidth() / float(n);
-    g.setFont(juce::Font(juce::FontOptions(juce::jlimit(9.0f, 15.0f, b.getHeight() * 0.36f), juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(juce::jlimit(10.0f, 15.0f, b.getHeight() * 0.39f), juce::Font::bold)));
     for (int i = 0; i < labels_.size(); ++i) {
         const auto cell = juce::Rectangle<float>(b.getX() + float(i) * segmentWidth, b.getY(),
                                                  segmentWidth, b.getHeight()).reduced(2.5f);
@@ -408,7 +408,7 @@ void SkellyTuneEditor::AlgorithmSelector::paint(juce::Graphics& g) {
             g.setColour(p.line.brighter(0.2f).withAlpha(0.6f));
             g.fillRoundedRectangle(cell, 5.0f);
         }
-        g.setColour(on ? p.accent : p.boneDim);
+        g.setColour(on ? p.accent : p.boneDim.brighter(0.34f));
         g.drawText(labels_[i], cell.toNearestInt(), juce::Justification::centred, false);
     }
 }
@@ -449,7 +449,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
 
     // One editable A4 value with compact increment/decrement controls.
     a4_.setSliderStyle(juce::Slider::IncDecButtons);
-    a4_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 83, 30);
+    a4_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 92, 30);
     a4_.setIncDecButtonsMode(juce::Slider::incDecButtonsDraggable_Vertical);
     a4_.setTextValueSuffix(" Hz");
     a4_.setColour(juce::Slider::textBoxTextColourId, palette_.bone);
@@ -572,7 +572,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     clearPitchEdits_.setLookAndFeel(&theme_);
     clearPitchEdits_.setTooltip("Delete all recorded note edits in this project.");
     clearPitchEdits_.setColour(juce::TextButton::buttonColourId,palette_.panel.brighter(0.08f));
-    clearPitchEdits_.setColour(juce::TextButton::textColourOffId,palette_.boneDim);
+    clearPitchEdits_.setColour(juce::TextButton::textColourOffId,palette_.boneDim.brighter(0.25f));
     clearPitchEdits_.onClick=[this] {
         if(!processor_.pitchEdits().hasEdits())return;
         processor_.pitchEdits().clear();
@@ -590,7 +590,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     undoPitchEdits_.setLookAndFeel(&theme_);
     undoPitchEdits_.setColour(juce::TextButton::buttonColourId,
                              palette_.panel.brighter(0.08f));
-    undoPitchEdits_.setColour(juce::TextButton::textColourOffId,palette_.boneDim);
+    undoPitchEdits_.setColour(juce::TextButton::textColourOffId,palette_.boneDim.brighter(0.25f));
     undoPitchEdits_.onClick=[this] {
         if(processor_.pitchEdits().undoLast())
             processor_.pitchEditStateChanged();
@@ -666,32 +666,35 @@ void SkellyTuneEditor::resized() {
     // Proportionally grow the editable A4 readout with the rest of the
     // editor. Without this the +/- buttons filled most of the wide layout.
     a4_.setTextBoxStyle(juce::Slider::TextBoxLeft, false,
-                        std::max(83, juce::roundToInt(83.0f*sx)),
+                        std::max(92, juce::roundToInt(92.0f*sx)),
                         std::max(30, juce::roundToInt(30.0f*sy)));
     place(algorithm_, 208, 19, 208, 28);
     place(analyzerToggle_, 139, 46, 64, 16);
     // Collapsed control must not retain an off-window hit target.
     if(analyzerExpanded_) {
-        place(clearPitchEdits_,355,420,52,20);
-        place(undoPitchEdits_,303,420,47,20);
+        place(clearPitchEdits_,354,419,53,22);
+        place(undoPitchEdits_,299,419,50,22);
     } else {
         clearPitchEdits_.setBounds(0,0,1,1);
         undoPitchEdits_.setBounds(0,0,1,1);
-    }            // header row, right of the title
+    }
     place(inputReadout_, 19, 150, 100, 130);        // left of the dial
     place(targetReadout_, 313, 150, 100, 130);      // right of the dial
-    place(key_, 18, 95, 90, 33);
-    place(scale_, 119, 95, 151, 33);
-    place(a4_, 290, 95, 122, 33);
+    // 12px matched gutters for the complete tuning-control row.
+    place(key_, 18, 95, 94, 33);
+    place(scale_, 124, 95, 150, 33);
+    place(a4_, 286, 95, 126, 33);
     place(speed_, 127, 137, 178, 178);
     constexpr int naturals[] = {0,2,4,5,7,9,11};
     constexpr int accidentals[] = {1,3,6,8,10};
-    constexpr float normalX[] = {22,77,132,187,242,297,352};
-    constexpr float blackX[]  = {51,106,216,271,326};
+    // Symmetric 33px/34px outer margins: previous bank drifted 11px left.
+    // Accidentals remain centred between their natural-note neighbours.
+    constexpr float normalX[] = {33,88,143,198,253,308,363};
+    constexpr float blackX[]  = {61,116,226,281,336};
     for (int i=0; i<7; ++i)
         place(*notes_[size_t(naturals[i])], normalX[i], 369, 35, 35);
     for (int i=0; i<5; ++i)
-        place(*notes_[size_t(accidentals[i])], blackX[i], 337, 31, 31);
+        place(*notes_[size_t(accidentals[i])], blackX[i], 336, 33, 33);
 }
 void SkellyTuneEditor::paint(juce::Graphics& g) {
     const auto bg=palette_.background, panel=palette_.panel;
@@ -715,9 +718,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setColour(text);
     g.drawText("SKELLY",57,17,95,31,juce::Justification::centredLeft,true);
     g.setColour(accent);
-    g.drawText("TUNE",149,17,77,31,juce::Justification::centredLeft,true);
-    g.setColour(muted);
-    g.setFont(juce::Font(juce::FontOptions(9.5f,juce::Font::bold)));
+    // SKELLYTUNE reads as one word, while TUNE remains green.
+    g.drawText("TUNE",135,17,77,31,juce::Justification::centredLeft,true);
+    g.setColour(muted.brighter(0.24f));
+    g.setFont(juce::Font(juce::FontOptions(10.5f,juce::Font::bold)));
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     g.drawText("MINI / LAB",60,46,78,14,juce::Justification::centredLeft);
 #else
@@ -727,10 +731,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     // used to be inert; it now confirms audio tracking without taking
     // controls or keyboard hit targets away from the user.
     const bool signal = voicedFade_ > 0.25f && liveConfidence_ >= 0.55f;
-    g.setColour((signal ? accent : muted).withAlpha(signal ? 0.95f : 0.48f));
+    g.setColour((signal ? accent : muted).withAlpha(signal ? 0.95f : 0.73f));
     g.fillEllipse(336.0f,51.0f,5.5f,5.5f);
-    g.setColour(signal ? text : muted);
-    g.setFont(juce::Font(juce::FontOptions(9.5f,juce::Font::bold)));
+    g.setColour(signal ? text : muted.brighter(0.18f));
+    g.setFont(juce::Font(juce::FontOptions(10.3f,juce::Font::bold)));
     g.drawText(signal ? "SIGNAL LOCK" : "NO SIGNAL",346,45,70,15,
                juce::Justification::centredRight,true);
     g.setColour(palette_.line);
@@ -738,9 +742,9 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
 
     g.setColour(muted);
     g.setFont(juce::Font(juce::FontOptions(11.5f,juce::Font::bold)));
-    g.drawText("KEY",20,76,89,16,juce::Justification::centredLeft);
-    g.drawText("SCALE",121,76,145,16,juce::Justification::centredLeft);
-    g.drawText("A4",292,76,110,16,juce::Justification::centredLeft);
+    g.drawText("KEY",20,76,92,16,juce::Justification::centredLeft);
+    g.drawText("SCALE",126,76,148,16,juce::Justification::centredLeft);
+    g.drawText("A4",288,76,120,16,juce::Justification::centredLeft);
 
     // Keep Mini's approved dark/neon identity, but soften the instrument
     // surface with gentle gradient depth and a restrained top highlight.
@@ -760,7 +764,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                24.0f + 384.0f * juce::jlimit(0.0f,1.0f,liveConfidence_),
                138.5f, 1.4f);
     g.setColour(muted);
-    g.setFont(juce::Font(juce::FontOptions(12.0f,juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(12.3f,juce::Font::bold)));
     g.drawText("RETUNE SPEED",137,314,158,19,juce::Justification::centred);
 
     // Slightly recessed note-bank surface anchors the two chromatic rows
@@ -776,8 +780,8 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     const bool custom = parameters_.getRawParameterValue("noteMask")->load() > 0.5f;
     // Set ink again after drawing the recessed note bank: its dim border
     // colour must not leak into the ENABLED/CUSTOM NOTES heading.
-    g.setColour(muted.brighter(0.22f));
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.setColour(muted.brighter(0.34f));
+    g.setFont(juce::Font(juce::FontOptions(10.5f,juce::Font::bold)));
     g.drawText(custom ? "CUSTOM NOTES" : "ENABLED NOTES", 16,318,117,15,
                juce::Justification::centredLeft);
     // Small live-input/target legend. Accessible even when no note is
@@ -805,12 +809,12 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.setColour(palette_.line.withAlpha(0.80f));
         g.drawRoundedRectangle(panelRect,9.0f,0.85f);
         g.setColour(text);
-        g.setFont(juce::Font(juce::FontOptions(12.0f,juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(12.8f,juce::Font::bold)));
         g.drawText("LIVE PITCH GRAPH",24,421,190,19,
                    juce::Justification::centredLeft);
-        g.setColour(muted);
-        g.setFont(juce::Font(juce::FontOptions(9.2f)));
-        g.drawText(processor_.displayedHostMs()<0 ? "NO HOST SYNC" :
+        g.setColour(muted.brighter(0.23f));
+        g.setFont(juce::Font(juce::FontOptions(10.0f)));
+        g.drawText(processor_.displayedHostMs()<0 ? "NO DAW CLOCK" :
                    (graphEditing_ ? "EDIT " + noteLabel(graphEditMidi_) :
                     juce::String(double(processor_.displayedHostMs())/1000.0,2)+"s"),
                    210,422,87,17,juce::Justification::centredRight);
@@ -827,8 +831,8 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
             const float x=54.0f+(405.0f-54.0f)*float(second)/3.0f;
             g.setColour(palette_.line.withAlpha(0.26f));
             g.drawVerticalLine(juce::roundToInt(x),451.0f,649.0f);
-            g.setFont(juce::Font(juce::FontOptions(8.1f)));
-            g.setColour(muted.withAlpha(0.70f));
+            g.setFont(juce::Font(juce::FontOptions(9.3f)));
+            g.setColour(muted.brighter(0.21f).withAlpha(0.88f));
             g.drawText(juce::String(second-3)+"s",
                        juce::roundToInt(x)-16,448,32,11,
                        juce::Justification::centred);
@@ -846,10 +850,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                 g.fillRect(left,y0,right-left,std::max(0.0f,y1-y0));
             }
             g.setColour(targetRow?accent.withAlpha(0.48f):
-                        palette_.line.withAlpha(octaveRow?0.62f:0.32f));
+                        palette_.line.withAlpha(octaveRow?0.69f:0.41f));
             g.drawLine(left,y,right,y,targetRow?1.55f:(octaveRow?1.0f:0.65f));
-            g.setColour(targetRow?accent:(octaveRow?text:muted.withAlpha(0.87f)));
-            g.setFont(juce::Font(juce::FontOptions(10.0f,juce::Font::bold)));
+            g.setColour(targetRow?accent:(octaveRow?text:muted.brighter(0.26f)));
+            g.setFont(juce::Font(juce::FontOptions(10.5f,juce::Font::bold)));
             g.drawText(noteLabel(note),17,int(y-7.0f),34,14,
                        juce::Justification::centredRight);
         }
@@ -973,15 +977,18 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
             }
         }
         g.setColour(text.withAlpha(0.90f));
-        g.setFont(juce::Font(juce::FontOptions(9.4f,juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(10.0f,juce::Font::bold)));
         g.drawText("WHITE  INPUT",24,660,104,15,juce::Justification::centredLeft);
         g.setColour(accent);
         g.drawText("GREEN  EST. OUTPUT",129,660,159,15,juce::Justification::centredLeft);
         g.setColour(muted.brighter(0.27f));
         g.drawText("TARGET  LINE",301,660,103,15,juce::Justification::centredRight);
-        g.setColour(muted);
-        g.setFont(juce::Font(juce::FontOptions(9.4f)));
-        g.drawText("DRAG NOTE LIVE  |  WHEEL PANS  |  RIGHT-CLICK ERASES",
+        g.setColour(muted.brighter(0.26f));
+        g.setFont(juce::Font(juce::FontOptions(10.2f)));
+        // Without host time, this is a live monitor but cannot save edits.
+        g.drawText(processor_.displayedHostMs()<0
+                       ? "LIVE MONITOR  |  DAW CLOCK REQUIRED TO EDIT"
+                       : "DRAG NOTE  |  SCROLL PITCH  |  RIGHT-CLICK TO ERASE",
                    20,676,390,13,juce::Justification::centred);
 
     }

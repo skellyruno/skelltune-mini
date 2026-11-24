@@ -29,6 +29,15 @@ private:
         std::array<float, 32> pitchTrail{};
         int trailHead = 0, trailCount = 0;
         float hostSpeedMs = 25.0f; // true saved ms, including legacy values above the new 100ms dial max
+        // A4 +/- stepper buttons share the dark Key/Scale palette.
+        juce::Button* createSliderButton(juce::Slider&, bool increment) override {
+            auto* b = new juce::TextButton(increment ? "+" : "-");
+            b->setColour(juce::TextButton::buttonColourId, palette.panel.brighter(0.09f));
+            b->setColour(juce::TextButton::buttonOnColourId, palette.panel.brighter(0.13f));
+            b->setColour(juce::TextButton::textColourOffId, palette.bone);
+            b->setColour(juce::TextButton::textColourOnId, palette.accent);
+            return b;
+        }
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
         juce::Font getTextButtonFont(juce::TextButton&, int height) override {

@@ -1,0 +1,109 @@
+name: Verify Pitch Playground (research only)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - dsp/PlaygroundBank.hpp
+      - tests/playground_*.cpp
+      - tools/recover_snap_core.py
+      - tools/render.cpp
+      - Source/**
+      - CMakeLists.txt
+      - .github/workflows/pitch-playground.yml
+permissions:
+  contents: read
+concurrency:
+  group: pitch-playground-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  portable-five:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: skellyruno/skell-snap
+          ref: 7c5ff11b68a8e0767a6f64378a037b5adf21d50a
+          path: external/snap
+          persist-credentials: false
+      - run: python3 tools/recover_snap_core.py external/snap recovered/SnapCore.h
+      - run: cmake -S . -B build-play -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON -DSKELLY_SNAP_HEADER="$PWD/recovered/SnapCore.h" -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build-play --target playground_bank_test playground_render --parallel 2
+      - run: ctest --test-dir build-play -R '^playground_bank_test$' --output-on-failure
+      - name: Render actual five-engine singer comparisons
+        run: |
+          mkdir -p playground-audio
+          cp benchmark/v33/raw_levelmatched_20-28.wav playground-audio/DRY.wav
+          for mode in 0 1 2 3 4; do
+            for speed in 0 10 25 100; do
+              SKELLY_PLAYGROUND_MODE=$mode ./build-play/playground_render playground-audio/DRY.wav "playground-audio/engine_${mode}_${speed}ms.wav" "$speed" 100 100 0 0 2773
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pitch-Playground-five-engine-audio
+          path: playground-audio
+          retention-days: 3
+  windows-full:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: skellyruno/skell-snap
+          ref: 7c5ff11b68a8e0767a6f64378a037b5adf21d50a
+          path: external/snap
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: skellyruno/skell-autotune-vst
+          ref: 99e419a164e736e50e9cc4b1e0d751338f6f5019
+          path: external/og
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: skellyruno/MetaTuneInspiredvst
+          ref: 73d759307ce9536e522b2cf78dc1da943afc8f3d
+          path: external/meta
+          persist-credentials: false
+      - run: python tools/recover_snap_core.py external/snap recovered/SnapCore.h
+      - name: Configure seven-engine native research build
+        shell: pwsh
+        run: >
+          cmake -S . -B build-play -A x64
+          -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON
+          -DSKELLY_PLAYGROUND_FULL=ON -DSKELLY_BUILD_PLUGIN=ON -DSKELLY_BUILD_DSP_TESTS=OFF
+          "-DSKELLY_SNAP_HEADER=$PWD/recovered/SnapCore.h"
+          "-DSKELLY_OG_SOURCE=$PWD/external/og"
+          "-DSKELLY_META_SOURCE=$PWD/external/meta"
+      - name: Compile actual native VST3 and direct DSP / editor QA
+        run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
+      - name: Verify all seven algorithms and real editor
+        shell: pwsh
+        run: |
+          foreach ($target in @('SkellyPlaygroundFullBankTest.exe','SkellyPlaygroundSmoke.exe')) {
+            $exe = Get-ChildItem build-play -Recurse -File -Filter $target | Select-Object -First 1
+            if (!$exe) { throw "Missing $target" }
+            & $exe.FullName
+            if ($LASTEXITCODE -ne 0) { throw "$target failed: $LASTEXITCODE" }
+          }
+      - name: Render all seven real engines on same singer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build-play -Recurse -File -Filter 'SkellyPlaygroundFullRender.exe' | Select-Object -First 1
+          if (!$exe) { throw "Missing full renderer" }
+          New-Item -ItemType Directory -Force playground-full | Out-Null
+          foreach ($mode in 0..6) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/engine_$($mode)_$($speed)ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Engine $mode render failed" }
+            }
+          }
+      # Rendered audio only. Do not upload or distribute the linked binary
+      # until AGPL/corresponding-source review and independent pluginval.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pitch-Playground-seven-engine-audio
+          path: playground-full
+          retention-days: 3

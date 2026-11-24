@@ -10,6 +10,10 @@
 #include "../dsp/MetaTest.hpp"   // TEST-ONLY engine. Never ship a build that defines SKELLY_META_TEST.
 #endif
 
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+#include "../dsp/PlaygroundBank.hpp"
+#endif
+
 class SkellyTuneRealtimeProcessor final : public juce::AudioProcessor, private juce::Timer {
 public:
     SkellyTuneRealtimeProcessor();
@@ -23,7 +27,9 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override {
-#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+        return skelly::playground::modeCount==7?"SkellyTune Playground":"SkellyTune Playground 5";
+#elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
         return "SkellyTune META Lab";
 #elif defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
         return "SkellyTune Studio Fast";
@@ -36,7 +42,13 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.01; }
+    double getTailLengthSeconds() const override {
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+        return .1;
+#else
+        return .01;
+#endif
+    }
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
@@ -87,6 +99,23 @@ public:
     int64_t displayedHostMs() const noexcept {
         return displayedHostMs_.load(std::memory_order_relaxed);
     }
+    bool graphEditsSupported() const noexcept {
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+        return skelly::playground::graphEditsSupported(playgroundMode());
+#else
+        return true;
+#endif
+    }
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    int playgroundMode() const noexcept {
+        return juce::jlimit(0,skelly::playground::modeCount-1,
+            int(std::lround(state_.getRawParameterValue("playgroundEngine")->load())));
+    }
+    int playgroundActiveMode() const noexcept { return playgroundActive_.load(std::memory_order_relaxed); }
+    int playgroundNativeDelay(int mode) const noexcept {
+        return mode>=0&&mode<skelly::playground::modeCount?playgroundNative_[size_t(mode)].load():0;
+    }
+#endif
     skelly::PitchEditTimeline& pitchEdits() noexcept { return pitchEdits_; }
     const skelly::PitchEditTimeline& pitchEdits() const noexcept { return pitchEdits_; }
     void pitchEditStateChanged() {
@@ -122,6 +151,12 @@ private:
     skelly::MetaTest meta_;
     bool metaWasActive_ = false;   // audio thread only
     void runMeta(float* const* io, int channels, int frames);
+#endif
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    skelly::playground::Bank playground_;
+    std::atomic<int> playgroundActive_{-1};
+    std::array<std::atomic<int>,7> playgroundNative_{};
+    void processPlayground(float* const* io,int channels,int frames,int blockOffset,const skelly::Parameters& p);
 #endif
     skelly::PitchEditTimeline pitchEdits_;
     std::atomic<int64_t> displayedHostMs_{-1};

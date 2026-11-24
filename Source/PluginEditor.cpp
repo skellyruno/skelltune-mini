@@ -519,6 +519,18 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
 
     // Algorithm switch. REGULAR = the standard engine. TESTTUNE = stateless nearest-note snapping in the
     // period domain. META (test builds only) = the Meta engine.
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    playgroundSelector_.setName("Research engine");
+    playgroundSelector_.setComponentID("skelly.algorithm");
+    playgroundSelector_.setLookAndFeel(&theme_);
+    styleCombo(playgroundSelector_,palette_);
+    for(int i=0;i<skelly::playground::modeCount;++i)
+        playgroundSelector_.addItem(skelly::playground::names[size_t(i)],i+1);
+    playgroundSelector_.setSelectedId(currentAlgorithm()+1,juce::dontSendNotification);
+    playgroundSelector_.setTooltip("Select the original DSP engine. Common PDC for comparison; native delay shown below.");
+    playgroundSelector_.onChange=[this]{chooseAlgorithm(playgroundSelector_.getSelectedId()-1);};
+    addAndMakeVisible(playgroundSelector_);
+#else
     algorithm_.setName("Algorithm");
     algorithm_.setComponentID("skelly.algorithm");
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
@@ -536,6 +548,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     algorithm_.onSelect = [this](int index) { chooseAlgorithm(index); };
     algorithm_.setSelected(currentAlgorithm());
     addAndMakeVisible(algorithm_);
+#endif
     // Live feedback: what you are singing (left) and what the tuner is moving it to (right).
     inputReadout_.setComponentID("skelly.inputReadout");
     targetReadout_.setComponentID("skelly.targetReadout");
@@ -624,6 +637,10 @@ SkellyTuneEditor::~SkellyTuneEditor() {
     a4_.setLookAndFeel(nullptr);
     key_.setLookAndFeel(nullptr);
     scale_.setLookAndFeel(nullptr);
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    playgroundSelector_.onChange=nullptr;
+    playgroundSelector_.setLookAndFeel(nullptr);
+#endif
 }
 void SkellyTuneEditor::toggleAnalyzer() {
     // A collapsed graph must not leave a stale pending drag.
@@ -637,7 +654,7 @@ void SkellyTuneEditor::toggleAnalyzer() {
     analyzerToggle_.setTooltip(analyzerExpanded_ ?
         "Drag notes while playing/recording: the selected phrase holds still "
         "while new pitch keeps tracking; release to store an edit for replay." :
-        "Expand the live pitch editor; edits apply to all three algorithms.");
+        "Expand the live pitch monitor; supported engines can replay manual note edits.");
     // Change only editor dimensions. This setting isn't in saved APVTS
     // state and can never invalidate an old FL Studio project.
     const int referenceHeight = analyzerExpanded_ ? 700 : 414;
@@ -668,7 +685,11 @@ void SkellyTuneEditor::resized() {
     a4_.setTextBoxStyle(juce::Slider::TextBoxLeft, false,
                         std::max(92, juce::roundToInt(92.0f*sx)),
                         std::max(30, juce::roundToInt(30.0f*sy)));
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    place(playgroundSelector_, 208, 19, 208, 28);
+#else
     place(algorithm_, 208, 19, 208, 28);
+#endif
     place(analyzerToggle_, 139, 46, 64, 16);
     // Collapsed control must not retain an off-window hit target.
     if(analyzerExpanded_) {
@@ -722,7 +743,16 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawText("TUNE",131,17,77,31,juce::Justification::centredLeft,true);
     g.setColour(muted.brighter(0.24f));
     g.setFont(juce::Font(juce::FontOptions(10.5f,juce::Font::bold)));
-#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    g.drawText("PLAYGROUND / "+juce::String(skelly::playground::modeCount),60,46,145,14,juce::Justification::centredLeft);
+    const double sr=processor_.getSampleRate();
+    if(sr>0.0){
+        const int active=processor_.playgroundActiveMode();
+        const auto native=processor_.playgroundNativeDelay(active);
+        const juce::String delay=active!=currentAlgorithm()?"SWITCHING":juce::String(1000.*native/sr,2)+"ms NATIVE";
+        g.drawText(delay,208,46,123,14,juce::Justification::centredLeft);
+    }
+#elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
     g.drawText("MINI / LAB",60,46,78,14,juce::Justification::centredLeft);
 #else
     g.drawText("MINI",60,46,60,14,juce::Justification::centredLeft);
@@ -925,7 +955,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         }
         // Edited notes are real absolute transport-time retune targets.
         // Render their MIDI lanes only where visible in the current 3s view.
-        if(analyzerSamples_>=1 || graphGesture_.active()) {
+        if(processor_.graphEditsSupported() && (analyzerSamples_>=1 || graphGesture_.active())) {
             const int64_t lastTime=graphGesture_.active()?
                 graphGesture_.newestMs():analyzerHostMs_[size_t(
                 (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
@@ -986,7 +1016,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.setColour(muted.brighter(0.26f));
         g.setFont(juce::Font(juce::FontOptions(10.2f)));
         // Without host time, this is a live monitor but cannot save edits.
-        g.drawText(processor_.displayedHostMs()<0
+        g.drawText(!processor_.graphEditsSupported()?"MONITOR ONLY  |  NOTE EDIT ADAPTER NOT SUPPORTED":processor_.displayedHostMs()<0
                        ? "LIVE MONITOR  |  DAW CLOCK REQUIRED TO EDIT"
                        : "DRAG NOTE  |  SCROLL PITCH  |  RIGHT-CLICK TO ERASE",
                    20,676,390,13,juce::Justification::centred);
@@ -1038,7 +1068,7 @@ void SkellyTuneEditor::mouseWheelMove(
     repaint();
 }
 bool SkellyTuneEditor::startGraphNoteEdit(juce::Point<float> position) {
-    if(!graphHit(position)||analyzerSamples_<1||
+    if(!processor_.graphEditsSupported()||!graphHit(position)||analyzerSamples_<1||
        processor_.displayedHostMs()<0)return false;
     const float x=position.x*432.0f/float(getWidth());
     const float y=position.y*700.0f/float(getHeight());
@@ -1112,6 +1142,7 @@ void SkellyTuneEditor::mouseDown(const juce::MouseEvent& e) {
     if(!graphHit(e.position))return;
     const float x=e.position.x*432.0f/float(getWidth());
     if(e.mods.isRightButtonDown()) {
+        if(!processor_.graphEditsSupported())return;
         if(analyzerSamples_>=1 && processor_.displayedHostMs()>=0) {
             const int64_t newest=analyzerHostMs_[size_t(
                 (analyzerHead_+kAnalyzerHistory-1)%kAnalyzerHistory)];
@@ -1167,7 +1198,7 @@ void SkellyTuneEditor::mouseDrag(const juce::MouseEvent& e) {
 void SkellyTuneEditor::mouseUp(const juce::MouseEvent&) {
     // Just selecting an existing note must not silently overwrite it:
     // commit only if the pointer actually moved to a new MIDI note.
-    if(graphEditing_ && graphEditMidi_>=24 &&
+    if(processor_.graphEditsSupported() && graphEditing_ && graphEditMidi_>=24 &&
        graphEditMidi_!=graphEditInitialMidi_ &&
        graphEditEndMs_>graphEditStartMs_) {
         if(processor_.pitchEdits().add({
@@ -1245,12 +1276,22 @@ void SkellyTuneEditor::timerCallback() {
     updateLiveFeedback();
 }
 int SkellyTuneEditor::currentAlgorithm() const {
-#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    return processor_.playgroundMode();
+#elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
     if (parameters_.getRawParameterValue("meta")->load() > 0.5f) return 2;
 #endif
     return parameters_.getRawParameterValue("testTune")->load() > 0.5f ? 1 : 0;
 }
 void SkellyTuneEditor::chooseAlgorithm(int index) {
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    if(index>=0&&index<skelly::playground::modeCount){
+        if(auto* p=parameters_.getParameter("playgroundEngine")){
+            p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(float(index)));p->endChangeGesture();
+        }
+    }
+    return;
+#endif
     // Enter META before disabling TESTTUNE; no intermediate REGULAR block.
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     if(index==2) {
@@ -1266,8 +1307,18 @@ void SkellyTuneEditor::chooseAlgorithm(int index) {
 }
 void SkellyTuneEditor::updateLiveFeedback() {
     // Follow automation / preset recall.
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    playgroundSelector_.setSelectedId(currentAlgorithm()+1,juce::dontSendNotification);
+    styleCombo(playgroundSelector_,palette_);
+    const int actual=processor_.playgroundActiveMode();
+    if(actual!=lastPlaygroundMode_){
+        lastPlaygroundMode_=actual;analyzerSamples_=0;analyzerHead_=0;
+        graphEditing_=false;graphDragging_=false;graphGesture_.release();
+    }
+#else
     algorithm_.setSelected(currentAlgorithm());
-    const bool anyEdits=processor_.pitchEdits().hasEdits();
+#endif
+    const bool anyEdits=processor_.graphEditsSupported()&&processor_.pitchEdits().hasEdits();
     if(clearPitchEdits_.isEnabled()!=anyEdits)clearPitchEdits_.setEnabled(anyEdits);
     if(undoPitchEdits_.isEnabled()!=anyEdits)undoPitchEdits_.setEnabled(anyEdits);
 

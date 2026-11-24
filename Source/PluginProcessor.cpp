@@ -139,6 +139,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"meta", 1},
         "Meta Algorithm (test only)", false));
 #endif
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    juce::StringArray engines;
+    for(int i=0;i<skelly::playground::modeCount;++i)engines.add(skelly::playground::names[size_t(i)]);
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{"playgroundEngine",1},"Playground Engine",engines,0));
+#endif
     return layout;
 }
 
@@ -146,6 +152,13 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     preparedAudioRate_ = (std::isfinite(sampleRate) && sampleRate > 0.0) ?
         sampleRate : 0.0;
     doubleScratch_.setSize(2, juce::jlimit(1, 16384, maxBlockSize), false, true, false);
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    playground_.prepare(sampleRate,std::max(1,getTotalNumInputChannels()),maxBlockSize);
+    for(int i=0;i<skelly::playground::modeCount;++i)playgroundNative_[size_t(i)].store(playground_.nativeLatency(i));
+    playgroundActive_.store(-1);
+    setLatencySamples(playground_.latencySamples());
+    return;
+#endif
 #if defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
     engine_.prepare(sampleRate, getTotalNumInputChannels(), true, true);
 #elif defined(SKELLY_STUDIO_PROFILE) && SKELLY_STUDIO_PROFILE
@@ -176,6 +189,10 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
 }
 void SkellyTuneRealtimeProcessor::releaseResources() {
     preparedAudioRate_ = 0.0;
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    playgroundActive_.store(-1);
+    return;
+#endif
     engine_.reset();
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     meta_.reset();
@@ -294,6 +311,30 @@ void SkellyTuneRealtimeProcessor::processEditedAudio(
         offset+=count;
     }
 }
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+void SkellyTuneRealtimeProcessor::processPlayground(float* const* io,int channels,int frames,int blockOffset,const skelly::Parameters& p) {
+    if(!(preparedAudioRate_>0.0)||frames<=0)return;
+    const int mode=playgroundMode();
+    const auto blockMs=displayedHostMs_.load(std::memory_order_relaxed);
+    for(int offset=0;offset<frames;){
+        const int absolute=blockOffset+offset;
+        const auto atMs=skelly::PitchEditTimeline::frameMs(blockMs,absolute,preparedAudioRate_);
+        const bool edit=skelly::playground::graphEditsSupported(mode);
+        const int target=edit?pitchEdits_.targetAt(atMs):-1;
+        const int count=edit?pitchEdits_.framesUntilBoundary(blockMs,absolute,frames-offset,preparedAudioRate_):frames-offset;
+        float* segment[2]={io[0]+offset,channels==2?io[1]+offset:nullptr};
+        playground_.process(segment,channels,count,p,mode,target);
+        offset+=count;
+    }
+    const auto t=playground_.telemetry();
+    playgroundActive_.store(playground_.activeMode(),std::memory_order_relaxed);
+    displayedPitchHz_.store(t.hz,std::memory_order_relaxed);
+    displayedConfidence_.store(t.confidence,std::memory_order_relaxed);
+    displayedTargetNote_.store(t.target,std::memory_order_relaxed);
+    displayedTargetPending_.store(t.pending,std::memory_order_relaxed);
+    displayedCorrectionCents_.store(t.cents,std::memory_order_relaxed);
+}
+#endif
 void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce::MidiBuffer&) {
     juce::ScopedNoDenormals guard;
     const int ch = std::min(2, b.getNumChannels());
@@ -301,6 +342,11 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<float>& b, juce
     const auto params = currentParameters();
     displayedReferenceA_.store(params.referenceA,std::memory_order_relaxed);
     updateTimelinePosition();
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    float* labIO[2]={b.getWritePointer(0),ch==2?b.getWritePointer(1):nullptr};
+    processPlayground(labIO,ch,b.getNumSamples(),0,params);
+    return;
+#endif
     engine_.setParameters(params);
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
     if (state_.getRawParameterValue("meta")->load() > 0.5f) {
@@ -336,7 +382,9 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
     const auto params = currentParameters();
     displayedReferenceA_.store(params.referenceA,std::memory_order_relaxed);
     updateTimelinePosition();
+#if !defined(SKELLY_PITCH_PLAYGROUND) || !SKELLY_PITCH_PLAYGROUND
     engine_.setParameters(params);
+#endif
     const int capacity = doubleScratch_.getNumSamples();
     // Some hosts can probe a processor before prepareToPlay; never enter a
     // zero-stride loop or allocate on the realtime thread. Match the float
@@ -358,7 +406,9 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
         }
         float* dst[2] = {doubleScratch_.getWritePointer(0),
                          ch == 2 ? doubleScratch_.getWritePointer(1) : nullptr};
-#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+        processPlayground(dst,ch,n,offset,params);
+#elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
         if (state_.getRawParameterValue("meta")->load() > 0.5f) {
             if (!metaWasActive_) { meta_.reset(); metaWasActive_ = true; }
             processEditedAudio(dst,ch,n,offset,true);
@@ -379,7 +429,9 @@ void SkellyTuneRealtimeProcessor::processBlock(juce::AudioBuffer<double>& b, juc
             for (int i = 0; i < n; ++i) dest[i] = double(frame[i]);
         }
     }
-#if defined(SKELLY_META_TEST) && SKELLY_META_TEST
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    return; // processPlayground already published the actual selected engine telemetry.
+#elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
     if (metaWasActive_) return;   // runMeta() already published the meter values
 #endif
     const auto pitch = engine_.lastPitch();
@@ -468,6 +520,16 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
         const auto source = incoming.getChild(i);
         if (!source.hasType(juce::Identifier("PARAM"))) continue;
         const auto id = source.getProperty(juce::Identifier("id")).toString();
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+        if(id=="playgroundEngine"){
+            const auto value=decodeSavedNumber(source.getProperty("value"));
+            auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);
+            if(value&&target.isValid()&&std::floor(*value)==*value&&*value>=0&&*value<skelly::playground::modeCount){
+                target.setProperty("value",*value,nullptr);++restored;
+            }
+            continue;
+        }
+#endif
         const auto* spec = skelly::findSavedParameter(id.toRawUTF8());
         if (spec == nullptr || !source.hasProperty(juce::Identifier("value"))) continue;
         const auto rawValue = decodeSavedNumber(source.getProperty(juce::Identifier("value")));

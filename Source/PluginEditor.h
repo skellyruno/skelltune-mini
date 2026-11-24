@@ -174,6 +174,10 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> a4Attachment_;
     // Algorithm switch (REGULAR / TESTTUNE / META). Drives the APVTS ids "testTune" and (test builds) "meta".
     AlgorithmSelector algorithm_{palette_};
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    juce::ComboBox playgroundSelector_;
+    int lastPlaygroundMode_=-1;
+#endif
     LiveReadout inputReadout_{palette_, true}, targetReadout_{palette_, false};
     // Smoothed live-feedback state (message thread only).
     float voicedFade_ = 0.0f, activity_ = 0.0f, dispDeviation_ = 0.0f, dispCorrection_ = 0.0f;

@@ -107,8 +107,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'OG formant A/B render failed' }
           }
           Remove-Item Env:SKELLY_OG_FORMANTS_OFF
-      # Rendered audio only. Do not upload or distribute the linked binary
-      # until AGPL/corresponding-source review and independent pluginval.
+      # Audio is retained for research. The binary is staged only after
+      # all validation passes, on the owner's private repository and branch.
       - uses: actions/upload-artifact@v4
         with:
           name: Pitch-Playground-seven-engine-audio
@@ -154,3 +154,47 @@ jobs:
           if ($null -eq $process.ExitCode -or $process.ExitCode -ne 0) {
             throw "Playground pluginval strictness 5 failed: exit=$($process.ExitCode)"
           }
+
+      - name: Stage private owner listening VST3
+        if: success() && github.event.repository.private == true && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/skellytune-pitch-playground-20261123'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundles = @(Get-ChildItem -LiteralPath build-play -Recurse -Directory -Filter 'SkellyTune Playground.vst3')
+          if ($bundles.Count -ne 1) { throw 'Expected exactly one Playground bundle' }
+          $stage = Join-Path $PWD 'PLAYGROUND-PRIVATE-LISTENING'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item -LiteralPath $bundles[0].FullName -Destination $stage -Recurse
+          Copy-Item -LiteralPath docs/PITCH_PLAYGROUND.md -Destination $stage
+          Copy-Item -LiteralPath external/meta/LICENSE -Destination (Join-Path $stage 'MetaTune-AGPL-LICENSE.txt')
+          Copy-Item -LiteralPath external/meta/THIRD_PARTY_NOTICES.md -Destination $stage
+          @'
+          SKELLYTUNE PLAYGROUND — PRIVATE OWNER DEVELOPMENT ONLY
+          All seven engines. Not a commercial release or redistribution package.
+          Preserve the dependency notices. MetaTune includes AGPL code and
+          imported DSP with unresolved redistribution terms. Private repository
+          access does not establish public distribution rights.
+          Exact source and dependency revisions are in PITCH_PLAYGROUND.md and
+          BUILD-COMMIT.txt. Build instructions are in that document.
+          Install the complete VST3 bundle in a backup FL Studio project.
+          0ms = fast; 100ms = slow. Fixed shared host latency equals the largest
+          native reported delay. Graph editing is supported by Mini modes 0–2.
+          OG Formant Preserve (A/B) host parameter defaults ON; OFF is diagnostic.
+          '@ | Set-Content -LiteralPath (Join-Path $stage 'README-PRIVATE-LISTENING.txt') -Encoding utf8
+          git rev-parse HEAD | Set-Content -LiteralPath (Join-Path $stage 'BUILD-COMMIT.txt')
+          $relativePaths = @('SkellyTune Playground.vst3/Contents/x86_64-win/SkellyTune Playground.vst3','SkellyTune Playground.vst3/Contents/Resources/moduleinfo.json')
+          $manifest = foreach ($relative in $relativePaths) {
+            $file = Join-Path $stage $relative
+            if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing $relative" }
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            "$hash *$relative"
+          }
+          $manifest | Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding utf8
+      - name: Upload private owner listening build
+        if: success() && github.event.repository.private == true && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/skellytune-pitch-playground-20261123'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-Playground-PRIVATE-7-ENGINE-LISTENING
+          path: PLAYGROUND-PRIVATE-LISTENING/
+          if-no-files-found: error
+          retention-days: 3

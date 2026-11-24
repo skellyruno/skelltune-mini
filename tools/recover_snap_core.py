@@ -7,6 +7,8 @@ import io
 from pathlib import Path
 import sys
 import tarfile
+import subprocess
+import tempfile
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -34,9 +36,46 @@ def recover(root: Path, target: Path):
         data = tar.extractfile(matches[0]).read()
     if digest(data) != "9bef538b0df377df49720bcd0fe8ae7c98f9d0a166e952ddc0023e430c3d9736":
         raise ValueError("Pinned native SnapCore source checksum mismatch")
+    # The audition PR uses the same overlay plus a separately verified
+    # DSP-only patch. Recover the exact user-tested engine BEFORE our change.
+    patch = (root / "audition/skell-snap-dsp-only.patch").read_bytes().replace(b"\r\n", b"\n")
+    if digest(patch) != "efa900f00f5f689b6f43f93e75e598d15917fc7f390201589e86ff6b006ed768":
+        raise ValueError("Pinned Snap audition patch checksum mismatch")
+    with tempfile.TemporaryDirectory(prefix="snap-audition-") as directory:
+        work = Path(directory)
+        core = work / "Source/dsp/SnapCore.h"
+        core.parent.mkdir(parents=True)
+        core.write_bytes(data)
+        patchfile = work / "audition.patch"
+        patchfile.write_bytes(patch)
+        command = ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "apply"]
+        subprocess.run(command + ["--check", str(patchfile)], cwd=work, check=True)
+        subprocess.run(command + [str(patchfile)], cwd=work, check=True)
+        data = core.read_bytes()
+    if digest(data) != "2be1e3ebf58a2569756de678e58470d78cd101c8a66324617388e69e306a7541":
+        raise ValueError("User-tested audition header checksum mismatch")
+    # Keep the original audition baseline intact next to the derived header.
+    # Only the Playground copy receives the existing Mini stereo analysis
+    # router, never the standalone Snap source or its program output lanes.
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-    print("Recovered exact verified Classic/Crystal DSP:", target)
+    target.with_name("SnapCore.audition.h").write_bytes(data)
+    source = data.decode("utf-8")
+    replacements = [
+        ('#include <vector>', '#include <vector>\n#include "RealtimeTuner.hpp" // Playground detector-only stereo rescue'),
+        ('        det_.prepare(sr_);', '        stereoRouter_.prepare(sr_);\n        det_.prepare(sr_);'),
+        ('        det_.reset(); detB_.reset();\n        std::fill(fmono_', '        stereoRouter_.reset();\n        det_.reset(); detB_.reset();\n        std::fill(fmono_'),
+        ('            mono_[wi] = m * invN;', '            // Keep stereo output untouched; rescue only the shared analysis/splice reference.\n            mono_[wi] = nch == 2 ? stereoRouter_.push(ring_[0][wi], ring_[1][wi]) : m * invN;'),
+        ('    std::vector<float> ring_[2], mono_;', '    skelly::StereoPitchRouter stereoRouter_;\n    std::vector<float> ring_[2], mono_;'),
+    ]
+    for before, after in replacements:
+        if source.count(before) != 1:
+            raise ValueError("Unexpected audition stereo patch anchor")
+        source = source.replace(before, after, 1)
+    updated = source.encode("utf-8")
+    if digest(updated) != "ca46212c500efe397968a2ef9869050f26b0ea015b5f462fd8ac99ffb6b3672b":
+        raise ValueError("Playground-derived Snap header checksum mismatch")
+    target.write_bytes(updated)
+    print("Recovered exact audition baseline and verified Playground stereo rescue:", target)
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:

@@ -103,7 +103,13 @@ public:
                 if(warm_>0)--warm_;
                 const double mixTarget=dryOnly?0.:p.mix;
                 mixGain_+=std::clamp(mixTarget-mixGain_,-fadeStep_,fadeStep_);
-                const int dr=(cursor_+capacity_-common_)%capacity_,wr=(cursor_+capacity_-pad)%capacity_;
+                // The delay ring has exactly common_+1 slots. Avoid three dynamic
+                // modulo divisions per audio sample, preserving every tap index.
+                const int dr=cursor_+1==capacity_?0:cursor_+1;
+                const int wetIndex=cursor_-pad;
+                const int wr=wetIndex<0?wetIndex+capacity_:wetIndex;
+                const int ahead=dr+attackAdvance_;
+                const int look= ahead>=capacity_?ahead-capacity_:ahead;
                 // Mark only isolated, high-contrast attacks in the ORIGINAL input.
                 // The common transport already provides the history needed to
                 // fade in before the delayed attack; no extra PDC or allocations.
@@ -122,7 +128,7 @@ public:
                 attackMarks_[size_t(cursor_)]=attackHold_>0?1:0;
                 if(attackHold_>0)--attackHold_;
                 if(attackMarks_[size_t(dr)])attackBlend_=1.;
-                else if(attackAdvance_>0&&attackMarks_[size_t((dr+attackAdvance_)%capacity_)])
+                else if(attackAdvance_>0&&attackMarks_[size_t(look)])
                     attackBlend_+=(1.-attackBlend_)*attackEntry_;
                 else attackBlend_*=attackRelease_;
                 if(attackBlend_<1.e-9)attackBlend_=0.;

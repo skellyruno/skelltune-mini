@@ -5,10 +5,10 @@
 #include <vector>
 #include <algorithm>
 static void need(bool ok,const char* why){if(!ok){std::cerr<<"FAIL: "<<why<<'\n';std::exit(1);}}
-struct Result{std::vector<float> l,r;int delay;};
-static Result render(int rate,int mode,float mix){
+struct RecoveryRender{std::vector<float> l,r;int delay;};
+static RecoveryRender render(int rate,int mode,float mix){
     const int n=3*rate;
-    Result out{std::vector<float>(n),std::vector<float>(n),0};
+    RecoveryRender out{std::vector<float>(n),std::vector<float>(n),0};
     for(int i=0;i<n;++i){const double phase=2*skelly::kPi*235.8*i/rate;out.l[i]=float(.15*std::sin(phase)+.04*std::sin(2*phase+.2));out.r[i]=.7f*out.l[i];}
     out.l[2*rate]+=.78f;out.r[2*rate]+=.7f;
     skelly::playground::Bank bank;bank.prepare(rate,2);out.delay=bank.latencySamples();

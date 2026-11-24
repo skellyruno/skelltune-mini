@@ -1,10 +1,12 @@
 #include "PlaygroundBank.hpp"
+#include "playground_stereo_checks.hpp"
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <cstdlib>
 static void check(bool v,const char* s){if(!v){std::cerr<<"FAIL: "<<s<<"\n";std::exit(1);}}
 int main(){using namespace skelly::playground; for(int fs:{44100,48000,96000}){
+    playgroundStereoChecks(fs);
     Bank b;b.prepare(fs,2);const int delay=b.latencySamples();check(delay>0,"no PDC");
     for(int mode=0;mode<modeCount;++mode){
         Bank fresh;fresh.prepare(fs,2);skelly::Parameters p;p.speedMs=0;p.pitchClasses=1u<<9;

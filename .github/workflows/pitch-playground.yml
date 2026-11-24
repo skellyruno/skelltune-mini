@@ -5,6 +5,7 @@ on:
     paths:
       - dsp/PlaygroundBank.hpp
       - tests/playground_*.cpp
+      - tests/playground_*.hpp
       - tools/recover_snap_core.py
       - tools/render.cpp
       - Source/**
@@ -23,7 +24,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: skellyruno/skell-snap
-          ref: 7c5ff11b68a8e0767a6f64378a037b5adf21d50a
+          ref: 8a4876259ebf30dd100204be1cf9beae2c3b5f03
           path: external/snap
           persist-credentials: false
       - run: python3 tools/recover_snap_core.py external/snap recovered/SnapCore.h
@@ -51,7 +52,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: skellyruno/skell-snap
-          ref: 7c5ff11b68a8e0767a6f64378a037b5adf21d50a
+          ref: 8a4876259ebf30dd100204be1cf9beae2c3b5f03
           path: external/snap
           persist-credentials: false
       - uses: actions/checkout@v6
@@ -187,10 +188,10 @@ jobs:
           $sourceRoot = Join-Path $env:RUNNER_TEMP 'playground-corresponding-source'
           New-Item -ItemType Directory -Force $sourceRoot | Out-Null
           $parts = @(
-            @{ Repo='.'; Name='playground'; Paths=@('CMakeLists.txt','Source','dsp','cmake','tools','tests','docs','LICENSE','AGENTS.md') },
+            @{ Repo='.'; Name='playground'; Paths=@('CMakeLists.txt','Source','dsp','cmake','tools','tests','docs','third_party','release/THIRD_PARTY_NOTICES.md','LICENSE','AGENTS.md') },
             @{ Repo='external/og'; Name='og'; Paths=@('Source','CMakeLists.txt','AGENTS.md','INCOMING-ONSET-NOTICES.md') },
             @{ Repo='external/meta'; Name='meta'; Paths=@('Source','CMakeLists.txt','LICENSE','THIRD_PARTY_NOTICES.md') },
-            @{ Repo='external/snap'; Name='snap'; Paths=@('source-overlay','README.md') },
+            @{ Repo='external/snap'; Name='snap'; Paths=@('source-overlay','audition','README.md') },
             @{ Repo='build-play/_deps/skellcoreshared-src'; Name='skellcore'; Paths=@('SkellCore') },
             @{ Repo='build-play/_deps/juce-src'; Name='juce'; Paths=@('CMakeLists.txt','modules','extras','LICENSE.md') }
           )
@@ -209,6 +210,7 @@ jobs:
           $revisions | Set-Content -LiteralPath (Join-Path $stage 'SOURCE-REVISIONS.txt') -Encoding utf8
           Copy-Item -LiteralPath (Join-Path $stage 'SOURCE-REVISIONS.txt') -Destination $sourceRoot
           Copy-Item -LiteralPath recovered/SnapCore.h -Destination (Join-Path $sourceRoot 'snap')
+          Copy-Item -LiteralPath recovered/SnapCore.audition.h -Destination (Join-Path $sourceRoot 'snap')
           Copy-Item -LiteralPath external/meta/LICENSE -Destination (Join-Path $sourceRoot 'AGPL-3.0.txt')
           Copy-Item -LiteralPath 'build-play/_deps/juce-src/LICENSE.md' -Destination (Join-Path $stage 'JUCE-LICENSE.md')
           @'

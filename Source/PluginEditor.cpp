@@ -719,7 +719,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.drawText("SKELLY",57,17,95,31,juce::Justification::centredLeft,true);
     g.setColour(accent);
     // SKELLYTUNE reads as one word, while TUNE remains green.
-    g.drawText("TUNE",135,17,77,31,juce::Justification::centredLeft,true);
+    g.drawText("TUNE",131,17,77,31,juce::Justification::centredLeft,true);
     g.setColour(muted.brighter(0.24f));
     g.setFont(juce::Font(juce::FontOptions(10.5f,juce::Font::bold)));
 #if defined(SKELLY_META_TEST) && SKELLY_META_TEST
@@ -817,7 +817,7 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         g.drawText(processor_.displayedHostMs()<0 ? "NO DAW CLOCK" :
                    (graphEditing_ ? "EDIT " + noteLabel(graphEditMidi_) :
                     juce::String(double(processor_.displayedHostMs())/1000.0,2)+"s"),
-                   210,422,87,17,juce::Justification::centredRight);
+                   197,422,92,17,juce::Justification::centredRight);
         // Eight semitones of real note-space. Dragged voiced lines
         // record host-timed pitch edits, never change published APVTS IDs.
         constexpr float top=451.0f,bottom=649.0f;

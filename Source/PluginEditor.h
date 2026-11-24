@@ -40,9 +40,16 @@ private:
         }
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
                               float, float, juce::Slider&) override;
-        juce::Font getTextButtonFont(juce::TextButton&, int height) override {
+        juce::Font getTextButtonFont(juce::TextButton& button, int height) override {
+            // At 1008px the stacked A4 steppers grow with the editor but
+            // JUCE's ordinary label font leaves tiny +/- glyphs. Scale
+            // only these two glyphs; ANALYZE/UNDO/CLEAR keep normal type.
+            const auto label = button.getButtonText();
+            const bool stepper = label == "+" || label == "-";
             return juce::Font(juce::FontOptions(
-                juce::jlimit(12.0f, 26.0f, float(height) * 0.43f),
+                juce::jlimit(stepper ? 13.0f : 12.0f,
+                             stepper ? 32.0f : 26.0f,
+                             float(height) * (stepper ? 0.67f : 0.43f)),
                 juce::Font::bold));
         }
         juce::Font getComboBoxFont(juce::ComboBox& b) override {

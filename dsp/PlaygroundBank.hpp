@@ -51,8 +51,9 @@ public:
         common_=*std::max_element(native_.begin(),native_.begin()+modeCount);
         capacity_=common_+1;
         for(int c=0;c<2;++c){dry_[c].assign(size_t(capacity_),0);wet_[c].assign(size_t(capacity_),0);}
-        active_=-1;cursor_=0;gate_=mixGain_=0.;warm_=0;telemetry_={};
-        fadeStep_=1./std::max(1.,rate_*.006);
+        active_=-1;cursor_=0;fadePosition_=0;mixGain_=0.;warm_=0;telemetry_={};
+        fadeSamples_=std::max(1,int(std::lround(rate_*.006)));
+        fadeStep_=1./double(fadeSamples_);
     }
     int latencySamples() const noexcept {return common_;}
     int nativeLatency(int mode) const noexcept {return mode>=0&&mode<modeCount?native_[size_t(mode)]:-1;}
@@ -67,8 +68,12 @@ public:
         for(int c=0;c<channels;++c)if(!io[c])return;
         requested=std::clamp(requested,0,modeCount-1);
         for(int off=0;off<frames;){
-            const int n=std::min(128,frames-off);
-            if(active_<0 || (requested!=active_ && gate_<=0.0))activate(requested);
+            if(active_<0 || (requested!=active_ && fadePosition_==0))activate(requested);
+            int n=std::min(128,frames-off);
+            // Finish a switch at the exact fade boundary, not at the next
+            // host/sub-block boundary. This also makes the warm-up start
+            // sample deterministic for odd host callback sizes.
+            if(requested!=active_ && fadePosition_>0)n=std::min(n,fadePosition_);
             float* q[2]={io[0]+off,channels==2?io[1]+off:nullptr};
             std::array<std::array<float,128>,2> raw{};
             for(int c=0;c<channels;++c)for(int i=0;i<n;++i){const float x=q[c][i];q[c][i]=raw[size_t(c)][size_t(i)]=std::isfinite(x)?std::clamp(x,-32.f,32.f):0.f;}
@@ -82,12 +87,12 @@ public:
             render(q,channels,n,p,manualHere?manual:-1);
             const int pad=common_-native_[size_t(active_)];
             for(int i=0;i<n;++i){
-                if(requested!=active_||warm_>0)gate_=std::max(0.,gate_-fadeStep_);
-                else gate_=std::min(1.,gate_+fadeStep_);
+                if(requested!=active_||warm_>0)fadePosition_=std::max(0,fadePosition_-1);
+                else fadePosition_=std::min(fadeSamples_,fadePosition_+1);
                 if(warm_>0)--warm_;
                 const double mixTarget=dryOnly?0.:p.mix;
                 mixGain_+=std::clamp(mixTarget-mixGain_,-fadeStep_,fadeStep_);
-                const float blend=float(gate_*mixGain_);
+                const float blend=float(double(fadePosition_)/fadeSamples_*mixGain_);
                 const int dr=(cursor_+capacity_-common_)%capacity_,wr=(cursor_+capacity_-pad)%capacity_;
                 for(int c=0;c<channels;++c){
                     dry_[c][size_t(cursor_)]=raw[size_t(c)][size_t(i)];
@@ -97,14 +102,14 @@ public:
                 }
                 if(++cursor_==capacity_)cursor_=0;
             }
-            telemetry_.cents*=float(gate_*mixGain_);
+            telemetry_.cents*=float(double(fadePosition_)/fadeSamples_*mixGain_);
             if(bypass||(!p.pitchClasses&&!manualHere)){telemetry_={};}
             off+=n;
         }
     }
 private:
     void activate(int mode) {
-        active_=mode;gate_=0;warm_=common_+int(rate_*.04);telemetry_={};
+        active_=mode;fadePosition_=0;warm_=common_+int(rate_*.04);telemetry_={};
         for(auto& v:wet_)std::fill(v.begin(),v.end(),0.f);
         if(mode<2)regular_->reset();else if(mode==2)meta_->reset();
         else if(mode<5)snap_->reset();
@@ -148,7 +153,8 @@ private:
 #endif
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
-    Telemetry telemetry_{};double rate_=48000.,gate_=0.,mixGain_=0.,fadeStep_=.004;
+    Telemetry telemetry_{};double rate_=48000.,mixGain_=0.,fadeStep_=.004;
+    int fadeSamples_=1,fadePosition_=0;
     int channels_=0,common_=0,capacity_=1,cursor_=0,active_=-1,warm_=0;
 };
 } // namespace skelly::playground

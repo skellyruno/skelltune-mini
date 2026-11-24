@@ -183,6 +183,10 @@ if(SKELLY_BUILD_PLUGIN)
             target_include_directories(${target} PRIVATE "${SKELLY_SNAP_INCLUDE}" "${CMAKE_CURRENT_SOURCE_DIR}/dsp")
             target_compile_definitions(${target} PRIVATE SKELLY_PITCH_PLAYGROUND=1)
             if(SKELLY_PLAYGROUND_FULL)
+                # OG uses explicit template-parameter lambdas in its SIMD
+                # shifter. Its original build requires C++20; do not rewrite
+                # or disable the SIMD engine merely to make C++17 compile.
+                target_compile_features(${target} PRIVATE cxx_std_20)
                 juce_generate_juce_header(${target})
                 target_include_directories(${target} PRIVATE "${SKELLY_OG_SOURCE}/Source" "${SKELLY_META_SOURCE}/Source")
                 target_compile_definitions(${target} PRIVATE SKELLY_PLAYGROUND_FULL=1

@@ -37,10 +37,26 @@ int main(){
     param->setValueNotifyingHost(0.f);
     p->setStateInformation(state.getData(),int(state.getSize()));
     if(p->playgroundMode()!=skelly::playground::modeCount-1)return 9;
-    if(auto* graph=dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.analyzer"))){
-        graph->triggerClick();
-        // TriggerClick posts an event; GUI is exercised by actual paint below.
-    }
+    // Check the real toggle's component ID and run its handler synchronously;
+    // a missing control or a posted-but-unhandled click cannot pass.
+    auto* graph=dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.analyzerToggle"));
+    if(!graph||!graph->onClick)return 10;
+    graph->onClick();
+    if(editor->getWidth()!=432||editor->getHeight()!=700)return 11;
+    auto* undo=editor->findChildWithID("skelly.undoPitchEdits");
+    auto* clear=editor->findChildWithID("skelly.clearPitchEdits");
+    if(!undo||!clear||!undo->isVisible()||!clear->isVisible())return 12;
+    if(p->pitchEdits().add({100,250,57})<0)return 13;
+    juce::MemoryBlock graphState;p->getStateInformation(graphState);
+    p->pitchEdits().clear();
+    p->setStateInformation(graphState.getData(),int(graphState.getSize()));
+    if(p->pitchEdits().targetAt(150)!=57)return 14;
+    selector->setSelectedId(1,juce::sendNotificationSync);
+    if(!p->graphEditsSupported()||p->pitchEdits().targetAt(150)!=57)return 15;
+    graph->onClick();
+    if(editor->getHeight()!=414)return 16;
+    graph->onClick();
+    if(editor->getHeight()!=700)return 17;
     juce::Image image(juce::Image::ARGB,editor->getWidth(),editor->getHeight(),true);
     juce::Graphics graphics(image);editor->paintEntireComponent(graphics,true);
     editor.reset();p->releaseResources();

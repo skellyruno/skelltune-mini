@@ -1333,7 +1333,6 @@ void SkellyTuneEditor::updateLiveFeedback() {
 
     voicedFade_ += ((voiced ? 1.0f : 0.0f) - voicedFade_) * (voiced ? 0.55f : 0.18f);
     if (voiced) {
-        const double a4 = processor_.displayedReferenceA();
         const double inputMidi = 69.0 + 12.0 * std::log2(double(hz) / a4);
         const float deviation = float(juce::jlimit(-100.0, 100.0, (inputMidi - double(target)) * 100.0));
         dispDeviation_ += (deviation - dispDeviation_) * 0.5f;

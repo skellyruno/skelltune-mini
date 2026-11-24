@@ -20,6 +20,24 @@ int main(){using namespace skelly::playground; for(int fs:{44100,48000,96000}){
         for(int i=delay+int(fs*.01);i<n;++i)check(dryL[i]==src[i-delay],"dry PDC mismatch");
         std::cout<<fs<<" "<<names[mode]<<" native="<<fresh.nativeLatency(mode)<<" common="<<delay<<" target=57"<<" wet tone="<<tone(220)<<"\n";
     }
-    skelly::Parameters p;p.speedMs=0;double ph=0;float prev=0;double maxStep=0;for(int i=0;i<fs*3;++i){ph+=2*skelly::kPi*225/fs;float x=float(.15*std::sin(ph)),y=x*.7f;float* io[]={&x,&y};b.process(io,2,1,p,std::min(modeCount-1,i/(fs/2)));maxStep=std::max(maxStep,std::abs(double(x-prev)));prev=x;check(std::isfinite(x)&&std::isfinite(y),"switch nonfinite");}check(b.activeMode()==std::min(modeCount-1,5),"switch never completes");check(maxStep<.2,"switch transient too large");
-    std::cout<<"switch max step "<<maxStep<<" PASS\n";
+    // Every mode, including the seventh route, must be visited. Compare
+    // the exact active-mode transition sample under single-sample and odd
+    // host blocks. The old switch quantized activation to callback boundaries.
+    skelly::Parameters p;p.speedMs=0;
+    const int segment=fs/2, length=segment*modeCount;
+    std::vector<float> source(size_t(length),0.f);
+    double phase=0.;for(int i=0;i<length;++i){phase+=2*skelly::kPi*225/fs;source[size_t(i)]=float(.15*std::sin(phase));}
+    auto switching=[&](int block){Bank bank;bank.prepare(fs,2);auto left=source,right=source;for(float& x:right)x*=.7f;
+        for(int off=0;off<length;){const int mode=off/segment;const int count=std::min(block,(mode+1)*segment-off);float* io[]={left.data()+off,right.data()+off};bank.process(io,2,count,p,mode);off+=count;}
+        check(bank.activeMode()==modeCount-1,"last engine never selected");
+        double maxStep=0.;float prev=0.f;for(int i=0;i<length;++i){check(std::isfinite(left[size_t(i)])&&std::isfinite(right[size_t(i)]),"switch nonfinite");maxStep=std::max(maxStep,std::abs(double(left[size_t(i)]-prev)));prev=left[size_t(i)];}
+        check(maxStep<.2,"switch transient too large");std::cout<<"switch block="<<block<<" max step="<<maxStep<<"\n";return left;};
+    const auto a=switching(1),c=switching(127);
+    // Mini and Snap process per sample. Imported engines may use their own
+    // block-rate controller; compare the five native portable routes exactly.
+#if !defined(SKELLY_PLAYGROUND_FULL) || !SKELLY_PLAYGROUND_FULL
+    double delta=0.;for(int i=0;i<length;++i)delta=std::max(delta,std::abs(double(a[size_t(i)]-c[size_t(i)])));
+    std::cout<<"switch block-invariance max delta="<<delta<<"\n";
+    check(delta<1.e-5,"algorithm handoff depends on host block size");
+#endif
 }std::cout<<"PLAYGROUND native engine routes + fixed dry PDC PASS\n";}

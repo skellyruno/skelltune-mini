@@ -133,28 +133,33 @@ public:
                     wet_[c][size_t(cursor_)]=std::isfinite(q[c][i])?q[c][i]:0.f;
                     alignedDry[c]=dry_[c][size_t(dr)];alignedWet[c]=wet_[c][size_t(wr)];
                 }
-                // The independent bank mix is downstream of every native
-                // renderer, including its PDC padding. Compensate moderate
-                // decorrelation here, once, rather than in seven engines.
-                // Avoid old envelope state at the start of a new blend.
-                const bool partial=(protection==0.||attackBlend_==0.)&&blend>0.075f&&blend<0.925f&&mixGain_>0.075&&mixGain_<0.925;
+                // Keep the compensation envelope alive through a protected
+                // attack. Previously it reset to unity at the first marker,
+                // then took the full release plus reacquisition to recover.
+                // Smoothly taper only the compensation, not the dry anchor.
+                const bool partial=mixGain_>0.075&&mixGain_<0.925;
                 if(partial&&!partialBlend_)mixGuard_.reset();
                 partialBlend_=partial;
-                const double gain=partial?mixGuard_.process(alignedDry,alignedWet,channels,blend,true):1.0;
-                const double mixEligibility=std::clamp((mixGain_-.075)/.15,0.,1.)*
-                    std::clamp((.925-mixGain_)/.15,0.,1.);
-                // Only the additional compensation is attenuated near full
-                // scale, using the same factor for both stereo lanes. For
-                // |linear mix| <=1 this guarantees <=1 without a clipper.
-                float mixPeak=0.f;
-                for(int c=0;c<channels;++c)mixPeak=std::max(mixPeak,std::abs(alignedDry[c]+(alignedWet[c]-alignedDry[c])*blend));
-                const double headroom=std::clamp(2.*(1.-double(mixPeak)),0.,1.);
-                const double safeGain=1.+(gain-1.)*headroom*mixEligibility;
-                for(int c=0;c<channels;++c){
-                    const float d=alignedDry[c],w=alignedWet[c];
-                    // Endpoints are sample exact; the guard cannot affect a
-                    // fully wet engine render, dry bypass, or PDC impulse.
-                    q[c][i]=blend==0.f?d:blend==1.f?w:float((d+(w-d)*blend)*safeGain);
+                if(blend==0.f||blend==1.f){
+                    // Preserve exact endpoints and avoid needless arithmetic.
+                    if(partial)mixGuard_.process(alignedDry,alignedWet,channels,mixGain_,true);
+                    for(int c=0;c<channels;++c)q[c][i]=blend==0.f?alignedDry[c]:alignedWet[c];
+                }else{
+                    float mixed[2]{},mixPeak=0.f;
+                    for(int c=0;c<channels;++c){
+                        mixed[c]=alignedDry[c]+(alignedWet[c]-alignedDry[c])*blend;
+                        mixPeak=std::max(mixPeak,std::abs(mixed[c]));
+                    }
+                    double safeGain=1.;
+                    if(partial){
+                        const double gain=mixGuard_.process(alignedDry,alignedWet,channels,mixGain_,true);
+                        const double mixEligibility=std::clamp((mixGain_-.075)/.15,0.,1.)*
+                            std::clamp((.925-mixGain_)/.15,0.,1.);
+                        const double audibleFraction=std::clamp(double(blend)/mixGain_,0.,1.);
+                        const double headroom=std::clamp(2.*(1.-double(mixPeak)),0.,1.);
+                        safeGain=1.+(gain-1.)*headroom*mixEligibility*audibleFraction;
+                    }
+                    for(int c=0;c<channels;++c)q[c][i]=float(mixed[c]*safeGain);
                 }
                 if(++cursor_==capacity_)cursor_=0;
             }

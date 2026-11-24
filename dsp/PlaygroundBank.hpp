@@ -5,6 +5,7 @@
 #endif
 #include "RealtimeTuner.hpp"
 #include "MetaTest.hpp"
+#include "CoherentMixGuard.hpp"
 #include "SnapCore.h"
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
 #include "AutoTuneEngine.h"
@@ -54,6 +55,7 @@ public:
         active_=-1;cursor_=0;fadePosition_=0;mixGain_=0.;warm_=0;telemetry_={};
         fadeSamples_=std::max(1,int(std::lround(rate_*.006)));
         fadeStep_=1./double(fadeSamples_);
+        mixGuard_.prepare(rate_);partialBlend_=false;
     }
     int latencySamples() const noexcept {return common_;}
     int nativeLatency(int mode) const noexcept {return mode>=0&&mode<modeCount?native_[size_t(mode)]:-1;}
@@ -94,11 +96,34 @@ public:
                 mixGain_+=std::clamp(mixTarget-mixGain_,-fadeStep_,fadeStep_);
                 const float blend=float(double(fadePosition_)/fadeSamples_*mixGain_);
                 const int dr=(cursor_+capacity_-common_)%capacity_,wr=(cursor_+capacity_-pad)%capacity_;
+                float alignedDry[2]{},alignedWet[2]{};
                 for(int c=0;c<channels;++c){
                     dry_[c][size_t(cursor_)]=raw[size_t(c)][size_t(i)];
                     wet_[c][size_t(cursor_)]=std::isfinite(q[c][i])?q[c][i]:0.f;
-                    const float d=dry_[c][size_t(dr)],w=wet_[c][size_t(wr)];
-                    q[c][i]=blend==1.f?w:d+(w-d)*blend;
+                    alignedDry[c]=dry_[c][size_t(dr)];alignedWet[c]=wet_[c][size_t(wr)];
+                }
+                // The independent bank mix is downstream of every native
+                // renderer, including its PDC padding. Compensate moderate
+                // decorrelation here, once, rather than in seven engines.
+                // Avoid old envelope state at the start of a new blend.
+                const bool partial=blend>0.075f&&blend<0.925f&&mixGain_>0.075&&mixGain_<0.925;
+                if(partial&&!partialBlend_)mixGuard_.reset();
+                partialBlend_=partial;
+                const double gain=partial?mixGuard_.process(alignedDry,alignedWet,channels,blend,true):1.0;
+                const double mixEligibility=std::clamp((mixGain_-.075)/.15,0.,1.)*
+                    std::clamp((.925-mixGain_)/.15,0.,1.);
+                // Only the additional compensation is attenuated near full
+                // scale, using the same factor for both stereo lanes. For
+                // |linear mix| <=1 this guarantees <=1 without a clipper.
+                float mixPeak=0.f;
+                for(int c=0;c<channels;++c)mixPeak=std::max(mixPeak,std::abs(alignedDry[c]+(alignedWet[c]-alignedDry[c])*blend));
+                const double headroom=std::clamp(2.*(1.-double(mixPeak)),0.,1.);
+                const double safeGain=1.+(gain-1.)*headroom*mixEligibility;
+                for(int c=0;c<channels;++c){
+                    const float d=alignedDry[c],w=alignedWet[c];
+                    // Endpoints are sample exact; the guard cannot affect a
+                    // fully wet engine render, dry bypass, or PDC impulse.
+                    q[c][i]=blend==0.f?d:blend==1.f?w:float((d+(w-d)*blend)*safeGain);
                 }
                 if(++cursor_==capacity_)cursor_=0;
             }
@@ -109,6 +134,7 @@ public:
     }
 private:
     void activate(int mode) {
+        mixGuard_.reset();partialBlend_=false;
         active_=mode;fadePosition_=0;warm_=common_+int(rate_*.04);telemetry_={};
         for(auto& v:wet_)std::fill(v.begin(),v.end(),0.f);
         if(mode<2)regular_->reset();else if(mode==2)meta_->reset();
@@ -153,6 +179,7 @@ private:
 #endif
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
+    CoherentMixGuard mixGuard_;bool partialBlend_=false;
     Telemetry telemetry_{};double rate_=48000.,mixGain_=0.,fadeStep_=.004;
     int fadeSamples_=1,fadePosition_=0;
     int channels_=0,common_=0,capacity_=1,cursor_=0,active_=-1,warm_=0;

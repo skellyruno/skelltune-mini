@@ -30,3 +30,21 @@ Next test gates: exact build, actual Windows GUI+pluginval, real vocal blind A/B
 ## Integration checkpoint — sample-exact switching
 
 The first full Windows attempt failed because the OG SIMD renderer uses explicit templated lambdas and the Playground was compiling under C++17. Full targets now require C++20, as in OG itself; portable five-engine tests remain C++17. Added integer-sample fade progression and split rendering precisely at the engine handoff boundary. The old five-engine test fixture produces 0.0560701 full-scale maximum difference for 1 vs 127 frames at 44.1 kHz; updated regression produces exactly zero difference at 44.1/48/96 kHz. All 15 pitch + dry PDC cases and ASan/UBSan passed locally. Full test now visits all seven modes rather than stopping at mode 5. GUI smoke must find the real graph toggle, expand/collapse, verify editing buttons and saved note persistence; these Windows checks remain unverified until CI completes. Repository display-name target: SkellyTune Playground, desired slug skellytune-playground. Preserve the existing repository and draft history during any owner-side rename.
+
+## Seven-engine baseline and listening feedback — 2026-11-23
+
+Exact successful full Windows build 83de685bad2ec99c592cffbf39bb53e8872b72f3 (run 45316621253): 21 engine/rate cases and actual GUI smoke passed. Recorded-vocal 0ms, full wet/amount, G major, 44.1k stereo / 128-frame callback: 474 shared voiced frames out of 500 dry/reference voiced frames, declared common delay compensated (726 samples; not measured wet delay).
+
+| Engine | Median scale cents | P90 cents | Ref pitch within 50c (%) | Native delay ms | Offline callback p99 ms |
+|---|---:|---:|---:|---:|---:|
+| REGULAR | 4.935 | 34.205 | 83.33 | 1.497 | .0745 |
+| TESTTUNE | 4.995 | 36.563 | 94.30 | 1.497 | .0762 |
+| META | 2.184 | 21.910 | 90.72 | 1.497 | .0508 |
+| CLASSIC | 5.532 | 31.647 | 95.15 | 2.494 | .0928 |
+| CRYSTAL | 4.612 | 32.625 | 95.15 | 2.494 | .1782 |
+| OG SKELLYTUNE | .193 | 8.740 | 97.68 | 16.463 | .2777 |
+| METATUNE 2.5 | 2.618 | 27.400 | 86.92 | 2.472 | .2936 |
+
+**Owner reports OG sounded bad in their own listening test.** Mark OG listening gate failed (user-reported; exact recording and settings unknown). Keep for repair, do not call it the winner. Owner previously preferred Mini META for clean deep notes. Pitch accuracy does not measure timbre, grain artifacts, natural consonants or transition quality. Keep all seven in every future scorecard; separate listening, pitch, latency, transient and spectral preservation, CPU, loudness and regression outcomes. No unsupported aggregate ranking.
+
+Shared partial-mix candidate: bounded CoherentMixGuard after PDC padding, smooth eligibility and stereo headroom taper. First unbounded experiment rejected (real vocal overshoots 1.102 and 1.072 FS on Regular and Classic). Revised local five-engine test (15 mode/rate cases) changes approximately -3.02 to -3.04dB power loss to -.61 to -.65dB. Five real full-wet vocal arrays exactly unchanged, 50% mix RMS increases 1.34–2.28dB with all sample peaks below .935 FS. Switching/dry PDC regressions pass. Full seven-engine mix/Windows tests unverified until CI; sanitizer attempt timed out. Local JUCE fetch DNS blocked. No UI changes. This shared improvement is not an OG native-timbre fix.

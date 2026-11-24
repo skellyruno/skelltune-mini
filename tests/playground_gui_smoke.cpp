@@ -4,6 +4,12 @@
 #include <memory>
 #include <iostream>
 #include <cmath>
+struct LatencyPlayhead : juce::AudioPlayHead {
+    bool playing=false;
+    juce::Optional<PositionInfo> getPosition() const override {
+        PositionInfo p;p.setIsPlaying(playing);p.setTimeInSamples(0);return p;
+    }
+};
 int main(){
     juce::ScopedJuceInitialiser_GUI gui;
     auto p=std::make_unique<SkellyTuneRealtimeProcessor>();
@@ -57,6 +63,35 @@ int main(){
     if(editor->getHeight()!=414)return 16;
     graph->onClick();
     if(editor->getHeight()!=700)return 17;
+    auto* latency=dynamic_cast<juce::ComboBox*>(editor->findChildWithID("skelly.latencyProfile"));
+    auto* apply=dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.latencyApply"));
+    if(!latency||!apply||!apply->onClick||latency->getNumItems()!=int(skelly::playground::latencyNames.size()))return 18;
+    LatencyPlayhead host;p->setPlayHead(&host);
+    host.playing=true;juce::AudioBuffer<float> frame(2,128);frame.clear();p->processBlock(frame,midi);
+    latency->setSelectedId(2,juce::sendNotificationSync);
+    if(!p->playgroundNeedsApply()||p->applyPlaygroundLatency()||p->getLatencySamples()!=delay)return 19;
+    host.playing=false;frame.clear();p->processBlock(frame,midi);
+    apply->onClick();
+    if(p->playgroundAppliedProfile()!=1||p->getLatencySamples()!=72||p->playgroundNeedsApply())return 20;
+    for(int mode=0;mode<skelly::playground::modeCount;++mode){
+        selector->setSelectedId(mode+1,juce::sendNotificationSync);
+        for(int profile=1;profile<int(skelly::playground::latencyNames.size());++profile){
+            latency->setSelectedId(profile+1,juce::sendNotificationSync);apply->onClick();
+            if(p->playgroundNeedsApply()||p->playgroundAppliedProfile()!=profile||p->playgroundRenderMode()!=mode)return 21;
+            const int target=int(std::lround(48.*skelly::playground::latencyTargets[size_t(profile)]));
+            if(p->getLatencySamples()!=std::max(target,p->playgroundNativeDelay(mode)))return 22;
+            frame.clear();p->processBlock(frame,midi);
+            if(p->playgroundActiveMode()!=mode)return 23;
+        }
+    }
+    juce::MemoryBlock latencyState;p->getStateInformation(latencyState);
+    latency->setSelectedId(1,juce::sendNotificationSync);apply->onClick();
+    if(p->getLatencySamples()!=delay||p->playgroundAppliedProfile()!=0)return 24;
+    p->setStateInformation(latencyState.getData(),int(latencyState.getSize()));
+    if(p->playgroundProfile()!=5||!p->playgroundNeedsApply())return 25;
+    apply->onClick();if(p->getLatencySamples()!=480||p->playgroundNeedsApply())return 26;
+    if(p->pitchEdits().targetAt(150)!=57)return 27;
+    p->setPlayHead(nullptr);
     juce::Image image(juce::Image::ARGB,editor->getWidth(),editor->getHeight(),true);
     juce::Graphics graphics(image);editor->paintEntireComponent(graphics,true);
     editor.reset();p->releaseResources();

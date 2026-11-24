@@ -94,7 +94,10 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
     if(const char* selected=std::getenv("SKELLY_PLAYGROUND_MODE")){
         const int mode=std::atoi(selected);
         if(mode<0||mode>=skelly::playground::modeCount)throw std::runtime_error("Unavailable playground engine");
-        skelly::playground::Bank bank;bank.prepare(w.rate,w.channels,128);
+        const char* latency=std::getenv("SKELLY_PLAYGROUND_LATENCY_PROFILE");
+        const int profile=latency?std::atoi(latency):0;
+        if(profile<0||profile>=int(skelly::playground::latencyNames.size()))throw std::runtime_error("Unavailable latency profile");
+        skelly::playground::Bank bank;bank.prepare(w.rate,w.channels,128,profile,mode);
         bank.setOgFormants(std::getenv("SKELLY_OG_FORMANTS_OFF")==nullptr);
         Wav result=w;std::array<float,128> a{},b{};
         const size_t n=w.samples.size()/size_t(w.channels);
@@ -113,7 +116,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         }
         std::sort(timings.begin(),timings.end());
         std::cout<<"PLAYGROUND "<<skelly::playground::names[size_t(mode)]<<" native_samples="<<bank.nativeLatency(mode)
-                 <<" common_samples="<<bank.latencySamples()<<" peak="<<peak<<" over_full_scale="<<clipped
+                 <<" profile="<<profile<<" common_samples="<<bank.latencySamples()<<" peak="<<peak<<" over_full_scale="<<clipped
                  <<" p99_ms="<<(timings.empty()?0.:timings[std::min(timings.size()-1,size_t(.99*timings.size()))])<<"\n";
         return result;
     }

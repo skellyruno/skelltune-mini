@@ -25,23 +25,33 @@ inline constexpr int modeCount=7;
 #else
 inline constexpr int modeCount=5;
 #endif
+// Matched mode is the old common-delay comparison. Other profiles lock the
+// prepared engine and report its real minimum plus any requested padding.
+// Zero is a requested minimum, NOT a claim of zero physical delay.
+inline constexpr std::array<const char*,6> latencyNames{{"MATCHED", "ZERO / MIN", "1 ms", "2.5 ms", "5 ms", "10 ms"}};
+inline constexpr std::array<double,6> latencyTargets{{-1.,0.,1.,2.5,5.,10.}};
 inline bool graphEditsSupported(int mode) noexcept { return mode>=0 && mode<3; }
 struct Telemetry { float hz=0, confidence=0, cents=0; int target=-1; bool pending=false; };
 
 class Bank {
 public:
-    void prepare(double rate,int channels,int maxBlockSize=128) {
+    void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
         rate_=std::clamp(std::isfinite(rate)?rate:48000.,8000.,192000.);
         channels_=std::clamp(channels,1,2);
-        regular_=std::make_unique<RealtimeTuner>();regular_->prepare(rate_,channels_,false,false,1.5);
-        meta_=std::make_unique<MetaTest>();meta_->prepare(rate_,1.5);
+        profile_=std::clamp(profile,0,int(latencyNames.size())-1);
+        lockedMode_=profile_==0?-1:std::clamp(selectedEngine,0,modeCount-1);
+        const double requestedMs=latencyTargets[size_t(profile_)];
+        const double miniMs=profile_==0?1.5:std::clamp(requestedMs,1.5,3.0);
+        snapMs_=profile_==0?2.5:requestedMs;
+        regular_=std::make_unique<RealtimeTuner>();regular_->prepare(rate_,channels_,false,false,miniMs);
+        meta_=std::make_unique<MetaTest>();meta_->prepare(rate_,miniMs);
         snap_=std::make_unique<snap::Engine>();snap_->prepare(rate_,channels_);
-        snap::Params sp;sp.latencyMs=2.5;snap_->setParams(sp);snap_->reset();
+        snap::Params sp;sp.latencyMs=snapMs_;snap_->setParams(sp);snap_->reset();
         native_[0]=native_[1]=regular_->latencySamples();native_[2]=meta_->latencySamples();
-        native_[3]=native_[4]=snap_->latencySamples();
+        native_[3]=native_[4]=snap_->actualDelaySamples();
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
         og_=std::make_unique<humtune::AutoTuneEngine>();og_->prepare(rate_,std::max(128,maxBlockSize));
-        og_->setLowLatencyMode(false);og_->setVoiceRange(1);og_->setFormantPreserve(true);
+        og_->setLowLatencyMode(profile_!=0);og_->setVoiceRange(1);og_->setFormantPreserve(true);
         native_[5]=og_->getLatencySamples();
         inspired_=std::make_unique<autotune::SkellyFusionEngine>();inspired_->prepare(rate_,70.f,1000.f);
         autotune::Settings ms;ms.lowLatency=true;ms.ultraLowLatency=true;ms.strictRealtime=true;
@@ -49,7 +59,8 @@ public:
 #else
         (void)maxBlockSize;
 #endif
-        common_=*std::max_element(native_.begin(),native_.begin()+modeCount);
+        common_=profile_==0?*std::max_element(native_.begin(),native_.begin()+modeCount)
+            :std::max(native_[size_t(lockedMode_)],int(std::lround(rate_*requestedMs*.001)));
         capacity_=common_+1;
         for(int c=0;c<2;++c){dry_[c].assign(size_t(capacity_),0);wet_[c].assign(size_t(capacity_),0);}
         active_=-1;cursor_=0;fadePosition_=0;mixGain_=0.;warm_=0;telemetry_={};
@@ -66,6 +77,8 @@ public:
     }
     void setOgFormants(bool enabled) noexcept {ogFormants_=enabled;}
     int latencySamples() const noexcept {return common_;}
+    int latencyProfile() const noexcept {return profile_;}
+    int lockedMode() const noexcept {return lockedMode_;}
     int nativeLatency(int mode) const noexcept {return mode>=0&&mode<modeCount?native_[size_t(mode)]:-1;}
     int activeMode() const noexcept {return active_;}
     Telemetry telemetry() const noexcept {return telemetry_;}
@@ -76,7 +89,7 @@ public:
                  int requested,int manual=-1,bool bypass=false) {
         if(!regular_||!io||frames<=0||channels<1||channels>channels_)return;
         for(int c=0;c<channels;++c)if(!io[c])return;
-        requested=std::clamp(requested,0,modeCount-1);
+        requested=lockedMode_>=0?lockedMode_:std::clamp(requested,0,modeCount-1);
         for(int off=0;off<frames;){
             if(active_<0 || (requested!=active_ && fadePosition_==0))activate(requested);
             int n=std::min(128,frames-off);
@@ -193,7 +206,7 @@ private:
             const auto e=regular_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(regular_->appliedCents()),regular_->currentTargetNote(),regular_->targetPending()};return;}
         if(active_==2){meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames);
             const double target=meta_->targetHz();telemetry_={float(meta_->detectedHz()),float(meta_->lastConfidence()),float(meta_->estimatedOutputCorrectionCents()),target>0?int(std::lround(69+12*std::log2(target/p.referenceA))):-1,false};return;}
-        if(active_<5){snap::Params s;s.mode=active_-3;s.latencyMs=2.5;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
+        if(active_<5){snap::Params s;s.mode=active_-3;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
             snap_->setParams(s);snap_->process(io,channels,frames);const auto t=snap_->telemetry();telemetry_={t.voiced?t.inHz:0.f,t.conf,float(1200*std::log2(std::max(1e-6,snap_->currentRatio()))),t.voiced?t.targetNote:-1,false};return;}
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
         std::array<bool,12> mask{};for(int i=0;i<12;++i)mask[size_t(i)]=(p.pitchClasses&(1u<<i))!=0;
@@ -219,6 +232,7 @@ private:
     std::unique_ptr<humtune::AutoTuneEngine> og_;
     std::unique_ptr<autotune::SkellyFusionEngine> inspired_;
 #endif
+    int profile_=0,lockedMode_=-1;double snapMs_=2.5;
     bool ogFormants_=true;
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;

@@ -530,6 +530,29 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     playgroundSelector_.setTooltip("Select the original DSP engine. Common PDC for comparison; native delay shown below.");
     playgroundSelector_.onChange=[this]{chooseAlgorithm(playgroundSelector_.getSelectedId()-1);};
     addAndMakeVisible(playgroundSelector_);
+    playgroundLatencySelector_.setName("Latency audition profile");
+    playgroundLatencySelector_.setComponentID("skelly.latencyProfile");
+    playgroundLatencySelector_.setLookAndFeel(&theme_);
+    styleCombo(playgroundLatencySelector_,palette_);
+    for(size_t i=0;i<skelly::playground::latencyNames.size();++i)
+        playgroundLatencySelector_.addItem(skelly::playground::latencyNames[i],int(i)+1);
+    playgroundLatencySelector_.setSelectedId(processor_.playgroundProfile()+1,juce::dontSendNotification);
+    playgroundLatencySelector_.setTooltip("Matched = common PDC, live A/B. Zero/Min requests the real minimum; unsupported targets use the native floor. Stop playback and Apply after changing engine/profile.");
+    playgroundLatencySelector_.onChange=[this]{
+        if(auto* p=parameters_.getParameter("playgroundLatencyProfile")){
+            p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(float(playgroundLatencySelector_.getSelectedId()-1)));p->endChangeGesture();
+        }
+        updateLiveFeedback();repaint();
+    };
+    addAndMakeVisible(playgroundLatencySelector_);
+    playgroundApplyLatency_.setComponentID("skelly.latencyApply");
+    playgroundApplyLatency_.setLookAndFeel(&theme_);
+    playgroundApplyLatency_.setTooltip("Apply requested engine and latency while transport is stopped. Updates host PDC outside the audio callback.");
+    playgroundApplyLatency_.setColour(juce::TextButton::buttonColourId,palette_.panel);
+    playgroundApplyLatency_.setColour(juce::TextButton::textColourOffId,palette_.accent);
+    playgroundApplyLatency_.onClick=[this]{processor_.applyPlaygroundLatency();updateLiveFeedback();repaint();};
+    playgroundApplyLatency_.setEnabled(processor_.playgroundNeedsApply()&&!processor_.playgroundPlaying());
+    addAndMakeVisible(playgroundApplyLatency_);
 #else
     algorithm_.setName("Algorithm");
     algorithm_.setComponentID("skelly.algorithm");
@@ -640,6 +663,10 @@ SkellyTuneEditor::~SkellyTuneEditor() {
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     playgroundSelector_.onChange=nullptr;
     playgroundSelector_.setLookAndFeel(nullptr);
+    playgroundLatencySelector_.onChange=nullptr;
+    playgroundLatencySelector_.setLookAndFeel(nullptr);
+    playgroundApplyLatency_.onClick=nullptr;
+    playgroundApplyLatency_.setLookAndFeel(nullptr);
 #endif
 }
 void SkellyTuneEditor::toggleAnalyzer() {
@@ -686,7 +713,9 @@ void SkellyTuneEditor::resized() {
                         std::max(92, juce::roundToInt(92.0f*sx)),
                         std::max(30, juce::roundToInt(30.0f*sy)));
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    place(playgroundSelector_, 208, 19, 208, 28);
+    place(playgroundSelector_, 208, 19, 208, 25);
+    place(playgroundLatencySelector_,208,46,131,17);
+    place(playgroundApplyLatency_,344,46,72,17);
 #else
     place(algorithm_, 208, 19, 208, 28);
 #endif
@@ -744,13 +773,17 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     g.setColour(muted.brighter(0.24f));
     g.setFont(juce::Font(juce::FontOptions(10.5f,juce::Font::bold)));
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    g.drawText("PLAYGROUND / "+juce::String(skelly::playground::modeCount),60,46,145,14,juce::Justification::centredLeft);
+    g.drawText("LAB / "+juce::String(skelly::playground::modeCount),60,46,78,14,juce::Justification::centredLeft);
     const double sr=processor_.getSampleRate();
     if(sr>0.0){
-        const int active=processor_.playgroundActiveMode();
+        const int active=processor_.playgroundRenderMode();
         const auto native=processor_.playgroundNativeDelay(active);
-        const juce::String delay=active!=currentAlgorithm()?"SWITCHING":juce::String(1000.*native/sr,2)+"ms NATIVE";
-        g.drawText(delay,208,46,123,14,juce::Justification::centredLeft);
+        const bool pending=processor_.playgroundNeedsApply();
+        const juce::String status=pending?juce::String(processor_.playgroundPlaying()?"STOP + APPLY: ":"APPLY: ")+skelly::playground::names[size_t(active)]
+            :"NATIVE "+juce::String(1000.*native/sr,2)+" ms   |   HOST "+juce::String(1000.*processor_.playgroundHostDelay()/sr,2)+" ms";
+        g.setColour(pending?accent:muted.brighter(.3f));
+        g.setFont(juce::Font(juce::FontOptions(10.f,juce::Font::bold)));
+        g.drawText(status,18,64,312,12,juce::Justification::centredLeft,true);
     }
 #elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
     g.drawText("MINI / LAB",60,46,78,14,juce::Justification::centredLeft);
@@ -762,11 +795,18 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     // controls or keyboard hit targets away from the user.
     const bool signal = voicedFade_ > 0.25f && liveConfidence_ >= 0.55f;
     g.setColour((signal ? accent : muted).withAlpha(signal ? 0.95f : 0.73f));
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    g.fillEllipse(336.0f,67.0f,5.0f,5.0f);
+    g.setColour(signal ? text : muted.brighter(0.18f));
+    g.setFont(juce::Font(juce::FontOptions(9.5f,juce::Font::bold)));
+    g.drawText(signal ? "SIGNAL LOCK" : "NO SIGNAL",346,64,70,12,juce::Justification::centredRight,true);
+#else
     g.fillEllipse(336.0f,51.0f,5.5f,5.5f);
     g.setColour(signal ? text : muted.brighter(0.18f));
     g.setFont(juce::Font(juce::FontOptions(10.3f,juce::Font::bold)));
     g.drawText(signal ? "SIGNAL LOCK" : "NO SIGNAL",346,45,70,15,
                juce::Justification::centredRight,true);
+#endif
     g.setColour(palette_.line);
     g.drawLine(16.0f,63.0f,416.0f,63.0f,1.0f);
 
@@ -1310,6 +1350,9 @@ void SkellyTuneEditor::updateLiveFeedback() {
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     playgroundSelector_.setSelectedId(currentAlgorithm()+1,juce::dontSendNotification);
     styleCombo(playgroundSelector_,palette_);
+    styleCombo(playgroundLatencySelector_,palette_);
+    playgroundLatencySelector_.setSelectedId(processor_.playgroundProfile()+1,juce::dontSendNotification);
+    playgroundApplyLatency_.setEnabled(processor_.playgroundNeedsApply()&&!processor_.playgroundPlaying());
     const int actual=processor_.playgroundActiveMode();
     if(actual!=lastPlaygroundMode_){
         lastPlaygroundMode_=actual;analyzerSamples_=0;analyzerHead_=0;

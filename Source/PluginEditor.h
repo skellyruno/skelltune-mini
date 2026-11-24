@@ -175,7 +175,8 @@ private:
     // Algorithm switch (REGULAR / TESTTUNE / META). Drives the APVTS ids "testTune" and (test builds) "meta".
     AlgorithmSelector algorithm_{palette_};
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    juce::ComboBox playgroundSelector_;
+    juce::ComboBox playgroundSelector_,playgroundLatencySelector_;
+    juce::TextButton playgroundApplyLatency_{"APPLY"};
     int lastPlaygroundMode_=-1;
 #endif
     LiveReadout inputReadout_{palette_, true}, targetReadout_{palette_, false};

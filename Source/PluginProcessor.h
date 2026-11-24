@@ -101,7 +101,7 @@ public:
     }
     bool graphEditsSupported() const noexcept {
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-        return skelly::playground::graphEditsSupported(playgroundMode());
+        return skelly::playground::graphEditsSupported(playgroundRenderMode());
 #else
         return true;
 #endif
@@ -111,6 +111,22 @@ public:
         return juce::jlimit(0,skelly::playground::modeCount-1,
             int(std::lround(state_.getRawParameterValue("playgroundEngine")->load())));
     }
+    int playgroundProfile() const noexcept {
+        return juce::jlimit(0,int(skelly::playground::latencyNames.size())-1,
+            int(std::lround(state_.getRawParameterValue("playgroundLatencyProfile")->load())));
+    }
+    int playgroundAppliedProfile() const noexcept { return playgroundAppliedProfile_.load(); }
+    int playgroundRenderMode() const noexcept {
+        const int locked=playgroundLockedMode_.load();
+        return locked>=0?locked:playgroundMode();
+    }
+    bool playgroundNeedsApply() const noexcept {
+        return playgroundProfile()!=playgroundAppliedProfile() ||
+            (playgroundAppliedProfile()!=0 && playgroundMode()!=playgroundRenderMode());
+    }
+    bool playgroundPlaying() const noexcept { return playgroundPlaying_.load(); }
+    int playgroundHostDelay() const noexcept { return playgroundHostDelay_.load(); }
+    bool applyPlaygroundLatency(); // explicit message-thread action, transport stopped
     int playgroundActiveMode() const noexcept { return playgroundActive_.load(std::memory_order_relaxed); }
     int playgroundNativeDelay(int mode) const noexcept {
         return mode>=0&&mode<skelly::playground::modeCount?playgroundNative_[size_t(mode)].load():0;
@@ -155,6 +171,10 @@ private:
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     skelly::playground::Bank playground_;
     std::atomic<int> playgroundActive_{-1};
+    std::atomic<int> playgroundAppliedProfile_{0},playgroundLockedMode_{-1},playgroundHostDelay_{0};
+    std::atomic<bool> playgroundPlaying_{false};
+    std::atomic<unsigned> playgroundGeneration_{0};
+    void publishPlaygroundConfig();
     std::array<std::atomic<int>,7> playgroundNative_{};
     void processPlayground(float* const* io,int channels,int frames,int blockOffset,const skelly::Parameters& p);
 #endif

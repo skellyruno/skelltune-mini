@@ -145,6 +145,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"playgroundEngine",1},"Playground Engine",engines,0));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"playgroundOgFormants",1},"OG Formant Preserve (A/B)",true));
+    juce::StringArray profiles;
+    for(const auto* name:skelly::playground::latencyNames)profiles.add(name);
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{"playgroundLatencyProfile",1},"Latency Audition Profile",profiles,0,
+        juce::AudioParameterChoiceAttributes{}.withAutomatable(false)));
 #endif
     return layout;
 }
@@ -154,10 +159,9 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
         sampleRate : 0.0;
     doubleScratch_.setSize(2, juce::jlimit(1, 16384, maxBlockSize), false, true, false);
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    playground_.prepare(sampleRate,std::max(1,getTotalNumInputChannels()),maxBlockSize);
-    for(int i=0;i<skelly::playground::modeCount;++i)playgroundNative_[size_t(i)].store(playground_.nativeLatency(i));
-    playgroundActive_.store(-1);
-    setLatencySamples(playground_.latencySamples());
+    playground_.prepare(sampleRate,std::max(1,getTotalNumInputChannels()),maxBlockSize,playgroundProfile(),playgroundMode());
+    playgroundPlaying_.store(false);
+    publishPlaygroundConfig();
     return;
 #endif
 #if defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
@@ -188,10 +192,52 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     jassert(meta_.latencySamples() == realtime.reportedSamples);
 #endif
 }
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+void SkellyTuneRealtimeProcessor::publishPlaygroundConfig() {
+    for(int i=0;i<skelly::playground::modeCount;++i)playgroundNative_[size_t(i)].store(playground_.nativeLatency(i));
+    playgroundLockedMode_.store(playground_.lockedMode());
+    playgroundAppliedProfile_.store(playground_.latencyProfile());
+    playgroundHostDelay_.store(playground_.latencySamples());
+    playgroundActive_.store(-1);
+    displayedPitchHz_.store(0);displayedConfidence_.store(0);
+    displayedTargetNote_.store(-1);displayedCorrectionCents_.store(0);
+    displayedTargetPending_.store(false);
+    ++playgroundGeneration_;
+    setLatencySamples(playground_.latencySamples());
+}
+bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
+    auto* mm=juce::MessageManager::getInstanceWithoutCreating();
+    if(!mm||!mm->isThisTheMessageThread()||playgroundPlaying())return false;
+    if(!playgroundNeedsApply())return true;
+    double rate=0.;int channels=0,block=0,profile=0,mode=0;unsigned generation=0;
+    {
+        const juce::ScopedLock lock(getCallbackLock());
+        rate=preparedAudioRate_;channels=getTotalNumInputChannels();block=doubleScratch_.getNumSamples();
+        profile=playgroundProfile();mode=playgroundMode();generation=playgroundGeneration_.load();
+    }
+    if(!(rate>0.)||channels<1||block<1)return false;
+    // Allocate and prepare the replacement while the current engine remains
+    // untouched. Hold the callback lock only for the stopped-state swap.
+    skelly::playground::Bank next;
+    try { next.prepare(rate,channels,block,profile,mode); }
+    catch(...) { return false; }
+    {
+        const juce::ScopedLock lock(getCallbackLock());
+        if(playgroundPlaying()||generation!=playgroundGeneration_.load()||
+           profile!=playgroundProfile()||mode!=playgroundMode())return false;
+        const bool suspended=isSuspended();
+        suspendProcessing(true);
+        std::swap(playground_,next);
+        publishPlaygroundConfig();
+        suspendProcessing(suspended);
+    }
+    return true;
+}
+#endif
 void SkellyTuneRealtimeProcessor::releaseResources() {
     preparedAudioRate_ = 0.0;
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    playgroundActive_.store(-1);
+    playgroundActive_.store(-1);playgroundPlaying_.store(false);++playgroundGeneration_;
     return;
 #endif
     engine_.reset();
@@ -255,11 +301,17 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
 }
 void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
     int64_t positionMs=-1;
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    bool playing=false;
+#endif
     const double rate=preparedAudioRate_;
     if(rate>0.0) {
         if(auto* playhead=getPlayHead()) {
             const auto pos=playhead->getPosition();
             if(pos) {
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+                playing=pos->getIsPlaying()||pos->getIsRecording();
+#endif
                 if(const auto samples=pos->getTimeInSamples()) {
                     // Ignore negative preroll and out-of-range host samples
                     // before llround, avoiding undefined signed overflow.
@@ -280,6 +332,9 @@ void SkellyTuneRealtimeProcessor::updateTimelinePosition() noexcept {
         }
     }
     displayedHostMs_.store(positionMs,std::memory_order_relaxed);
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    playgroundPlaying_.store(playing);
+#endif
 }
 void SkellyTuneRealtimeProcessor::processEditedAudio(
     float* const* io,int channels,int frames,int blockOffset,bool useMeta) {
@@ -315,7 +370,7 @@ void SkellyTuneRealtimeProcessor::processEditedAudio(
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
 void SkellyTuneRealtimeProcessor::processPlayground(float* const* io,int channels,int frames,int blockOffset,const skelly::Parameters& p) {
     if(!(preparedAudioRate_>0.0)||frames<=0)return;
-    const int mode=playgroundMode();
+    const int mode=playgroundRenderMode();
     playground_.setOgFormants(state_.getRawParameterValue("playgroundOgFormants")->load()>0.5f);
     const auto blockMs=displayedHostMs_.load(std::memory_order_relaxed);
     for(int offset=0;offset<frames;){
@@ -527,6 +582,14 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
             const auto value=decodeSavedNumber(source.getProperty("value"));
             auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);
             if(value&&target.isValid()&&(*value==0.||*value==1.)){
+                target.setProperty("value",*value,nullptr);++restored;
+            }
+            continue;
+        }
+        if(id=="playgroundLatencyProfile"){
+            const auto value=decodeSavedNumber(source.getProperty("value"));
+            auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);
+            if(value&&target.isValid()&&std::floor(*value)==*value&&*value>=0&&*value<double(skelly::playground::latencyNames.size())){
                 target.setProperty("value",*value,nullptr);++restored;
             }
             continue;

@@ -375,3 +375,9 @@ add_test(NAME dsp_v64_host_safety COMMAND dsp_v64_host_safety)
 add_executable(dsp_v66_listening_round tests/test_v66_listening_round.cpp)
 target_link_libraries(dsp_v66_listening_round PRIVATE skelly_dsp)
 add_test(NAME dsp_v66_listening_round COMMAND dsp_v66_listening_round)
+
+# v67: detector reset equivalence, high-rate low-note wet output and
+# physically calibrated META correction (rather than stale source pitch).
+add_executable(dsp_v67_retune_quality tests/test_v67_retune_quality.cpp)
+target_link_libraries(dsp_v67_retune_quality PRIVATE skelly_dsp)
+add_test(NAME dsp_v67_retune_quality COMMAND dsp_v67_retune_quality)

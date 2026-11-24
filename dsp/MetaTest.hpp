@@ -41,7 +41,11 @@ namespace skelly {
 class MetaTest {
 public:
     static constexpr double kPi = 3.14159265358979323846264338327950288;
-    static constexpr int kLanes = 2, kRing = 8192, kRingM = kRing - 1;
+    // 3+ low-note periods can exceed 8192 samples at 192/384kHz.
+    // Keep enough preallocated PCM history for causal cubic grains at
+    // every advertised sample rate. The legacy analysis buffers stay small.
+    static constexpr int kLanes = 2, kRing = 32768, kRingM = kRing - 1;
+    static constexpr int kAnalysisRing = 8192;
     static constexpr int kOctaves = 7, kSemis = 12, kMaxEntry = kOctaves * kSemis;   // 84
     static constexpr double kBaseDly = 120.0, kFloor = 8.0;
     static constexpr double kSrMin = 8000.0, kSrMax = 384000.0, kRefMin = 300.0, kRefMax = 600.0;
@@ -86,6 +90,7 @@ public:
         n_ = fresh_ = 0; f1_ = f2_ = 0.0; curveRef_ = 1.0; w_ = 0;
         wasBypassed_ = false;
         smooth_ = log_ = std::log2(200.0);
+        smoothedCorrectionLog_ = 0.0;
         raw_ = sel_ = conf_ = lastTrustedLag_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
         manualTargetMidi_ = -1;
         // Acquire from the first *detected* phrase, not a fixed 240Hz
@@ -267,7 +272,7 @@ public:
             const float detectorSample = lanes == 2 ?
                 stereoRouter_.push(in0, ring_[1][w & kRingM]) : in0;
             if (fileDetector_) {
-                if (n_ < kRing - 1) anal_[n_++] = prefilter(detectorSample);
+                if (n_ < kAnalysisRing - 1) anal_[n_++] = prefilter(detectorSample);
             } else {
                 skelly::PitchEstimate e;
                 if (tracker_.push(detectorSample, e)) est_ = e;
@@ -277,6 +282,10 @@ public:
 
             const double pin = period_;
             const double pt = sel_ > 0.0 ? sel_ : pin;
+            // Grain wraps are in measured INPUT cycles, not retune-
+            // smoothed periods. Otherwise a 25/100ms pitch change wraps
+            // into unrelated phase and generates a brief extra tone.
+            const double cycle = lastTrustedLag_ > 0.0 ? lastTrustedLag_ : pin;
             if (!(pin > 0.0) || !(pt > 0.0)) { w_ = w + 1; continue; }
             const double rawRatio = std::clamp(pin / pt, 0.5, 2.0);
             // The old 120-sample floor was YOUNGER than the advertised
@@ -296,10 +305,10 @@ public:
             }
             const double srat = sourceRatio_;
             const double base = sourceBase_;
-            const bool safeGeometry = base + pin + 16.0 < double(kRing);
+            const bool safeGeometry = base + cycle + 16.0 < double(kRing);
             const bool wetReady = detectedVoiced_ && safeGeometry &&
                 uint64_t(w) > uint64_t(dryDelaySamples_) +
-                    uint64_t(std::ceil(base + pin + 4.0));
+                    uint64_t(std::ceil(base + cycle + 4.0));
             double sharedPhaseAdjustment = 0.0;
             const double goal = wetReady ? amount_ : 0.0;
             wetBlend_ += (goal - wetBlend_) * (goal > wetBlend_ ? entry : exit);
@@ -310,7 +319,7 @@ public:
 
             for (int l = 0; l < lanes; ++l) {
                 if (flen_[l] == 0) {
-                    pos_[l] = out_[l] = double(w) - base - pin;
+                    pos_[l] = out_[l] = double(w) - base - cycle;
                     flen_[l] = fade_[l] = static_cast<uint32_t>(pt);
                 }
                 const double d = double(w) - pos_[l];
@@ -319,7 +328,7 @@ public:
                 // (k=1) and could create a large click at any pitch drift.
                 // Carry the old head forward while blending toward the new
                 // one over a bounded pitch period. Each lane remains lock-free.
-                const bool jumpForward = d > base + pin;
+                const bool jumpForward = d > base + cycle;
                 const bool jumpBackward = d < base;
                 // Do not restart a crossfade while its old head is still
                 // contributing: that was a second-order grain click when
@@ -327,8 +336,8 @@ public:
                 if ((jumpForward || jumpBackward) && fade_[l] == 0) {
                     out_[l] = pos_[l];
                     const double oldHead = pos_[l];
-                    const double proposed = pos_[l] + (jumpForward ? pin : -pin);
-                    if (l == 0 && w > uint64_t(2.0 * (base + pin) + 64.0) &&
+                    const double proposed = pos_[l] + (jumpForward ? cycle : -cycle);
+                    if (l == 0 && w > uint64_t(2.0 * (base + cycle) + 64.0) &&
                         phaseAlignedGrains_) {
                         const int radius = std::clamp(int(std::lround(pt * 0.065)), 3, 12);
                         const double limit = double(w) - double(dryDelaySamples_) - 8.0;
@@ -372,8 +381,12 @@ public:
                                               int(flen_[l] + 1));
                     if (--fade_[l] == 0) out_[l] = pos_[l];
                 }
-                const double a = tap(ring_[l].data(), out_[l], highQualityInterpolation_);
                 const double b = tap(ring_[l].data(), pos_[l], highQualityInterpolation_);
+                // Only evaluate the outgoing head while it contributes.
+                // At unity blend the old head is redundant; no waveform or
+                // phase offset changes, but most samples need one cubic tap.
+                const double a = k == 1.0 ? b :
+                    tap(ring_[l].data(), out_[l], highQualityInterpolation_);
                 const double wet = a + (b - a) * k;
                 const float dry = ring_[l][(w - dryDelaySamples_) & kRingM];
                 io[l][i] = static_cast<float>(dry * (1.0 - wetBlend_) +
@@ -519,6 +532,7 @@ private:
             // reset pitch. Preserve normal legato and short consonants.
             if (rearmOnVoiced_) {
                 smooth_ = lg;
+                smoothedCorrectionLog_ = lg-sl;
                 period_ = lag;
                 rearmOnVoiced_ = false;
                 // Never restart a phrase on an old grain trajectory.
@@ -558,8 +572,16 @@ private:
         }
         target_ = target;
         const double sm = smoothStep(smoothDetected_ ? detectedLog : target, hop);
-        period_ = std::exp2(sm);
-        ratio_ = std::exp2(log_ - sm);
+        // Smooth the correction, not the detected pitch: changing input
+        // notes should not inherit an obsolete source period in the ratio.
+        const double requestedCorrection = detectedLog-log_;
+        const double retention = smoothingRetention(speed_,double(sr_),hop);
+        smoothedCorrectionLog_ = requestedCorrection + retention *
+            (smoothedCorrectionLog_ - requestedCorrection);
+        const double effectiveLog = smoothDetected_ && speed_ > 0.0
+            ? log_+smoothedCorrectionLog_ : sm;
+        period_ = std::exp2(effectiveLog);
+        ratio_ = std::exp2(log_ - effectiveLog);
         if (!fileDetector_) return;
         const int n = int(n_);
         if (n > int(hop)) { std::memmove(anal_.data(), anal_.data() + hop, size_t(n - int(hop)) * sizeof(float)); n_ = uint32_t(n - int(hop)); }
@@ -584,24 +606,28 @@ private:
                             double youngestSafe,
                             double* before=nullptr,double* after=nullptr,
                             const float* right=nullptr) noexcept {
-        // Weight the common offset by both channel energies. A silent
-        // left lane must not dictate the phase of an audible right lane.
-        // Mono keeps the exact former search score.
-        const auto mismatch = [&](double a, double b) noexcept {
-            if (!right) return phaseMismatch(r,a,b);
+        // Cache the outgoing grain's exact cubic samples once. All
+        // candidate offsets share them, including stereo phase scoring.
+        // The arithmetic order and mono/stereo weights stay identical.
+        std::array<std::array<float,2>,12> outgoing{};
+        const int lanes=right?2:1;
+        const float* histories[2]={r,right};
+        for(int i=0;i<12;++i)
+            for(int lane=0;lane<lanes;++lane)
+                outgoing[size_t(i)][size_t(lane)]=tap(histories[lane],previous-double(i)*2.0,true);
+        const auto mismatch = [&](double b) noexcept {
             double diff=0.0, energy=1.0e-9;
-            for (int i=0;i<12;++i) {
-                const double t=double(i)*2.0;
-                for (const float* lane : {r,right}) {
-                    const double x=tap(lane,a-t,true), y=tap(lane,b-t,true);
+            for(int i=0;i<12;++i)
+                for(int lane=0;lane<lanes;++lane) {
+                    const double x=outgoing[size_t(i)][size_t(lane)];
+                    const double y=tap(histories[lane],b-double(i)*2.0,true);
                     diff+=(x-y)*(x-y); energy+=x*x+y*y;
                 }
-            }
             return diff/energy;
         };
         // One set of comparisons supplies both head choice and mismatch
         // telemetry. The strict phase-improvement gate is unchanged.
-        const double originalError = mismatch(previous, proposed);
+        const double originalError = mismatch(proposed);
         if(before)*before=originalError;
         if(after)*after=originalError;
         if (proposed > youngestSafe) return proposed;
@@ -611,7 +637,7 @@ private:
         for (int offset = -radius; offset <= radius; ++offset) {
             const double candidate = proposed + double(offset);
             if (candidate > youngestSafe || candidate < 30.0) continue;
-            const double error = mismatch(previous, candidate);
+            const double error = mismatch(candidate);
             const double penalized = error + 0.001 * double(std::abs(offset));
             if (penalized < bestError) {
                 bestError = penalized;
@@ -675,14 +701,14 @@ private:
     skelly::PitchEstimate est_{};
     double f1_ = 0, f2_ = 0, c50_ = 0.99, c70_ = 0.2, curveRef_ = 1.0;
     double raw_ = 0, sel_ = 0, log_ = 0, period_ = 200, ratio_ = 1, target_ = 0, conf_ = 0, smooth_ = 0;
-    double lastTrustedLag_ = 0.0;
+    double lastTrustedLag_ = 0.0, smoothedCorrectionLog_=0.0;
     double pos_[kLanes]{}, out_[kLanes]{}; uint32_t fade_[kLanes]{}, flen_[kLanes]{};
-    std::array<float, kRing> anal_{};
+    std::array<float, kAnalysisRing> anal_{};
     std::array<std::array<float, kRing>, kLanes> ring_{};
     std::array<double, kMaxEntry> tbl_{},logTbl_{},periodFactors_{};
     bool periodFactorsReady_=false;
     int count_ = 0;
-    std::array<double, kRing> m_{};
+    std::array<double, kAnalysisRing> m_{};
 };
 
 } // namespace skelly

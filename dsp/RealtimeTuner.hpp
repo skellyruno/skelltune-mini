@@ -197,6 +197,10 @@ public:
         sinceUpdate_ = 0; estimate_ = {}; useSlowWindow_ = false; window_ = fastWindow_;
         initializedDifference_ = false; differenceAge_ = 0;
         stableHops_ = 0; stableLastF0_ = 0.0f;
+        // Continuity evidence belongs to the current phrase/session.
+        // Retaining it across prepare/reset can reject the first real low
+        // note after a seek, bypass or META/REGULAR mode switch.
+        goodLag_ = 0; goodAgeHops_ = 1000000;
     }
 
     // Returns true only when a new estimate is available; the estimate may be unvoiced.
@@ -1435,6 +1439,14 @@ private:
         const int length = std::clamp(int(std::lround(period * 0.12)), 12, 42);
         const int capacity = mask_ + 1;
         double bestScore = 1e40, best = nominal, baseline = -1.0, chosenMismatch = 0.0;
+        // Every candidate compares against the same outgoing waveform.
+        // Cache it once at the grain boundary (fixed 168-byte stack array)
+        // instead of recomputing cubic interpolation for every offset.
+        std::array<std::array<float, 2>, 21> outgoing{};
+        for (int k=0; k<length; k+=2)
+            for (int ch=0; ch<channels_; ++ch)
+                outgoing[size_t(k/2)][size_t(ch)] = interpolate(
+                    history_.data()+size_t(ch)*capacity,from+k+3.0);
         for (int offset = -maxAdjust; offset <= maxAdjust; ++offset) {
             const double to = nominal + offset;
             if (to < minDelay || to > capacity - 8.0) continue;
@@ -1444,7 +1456,7 @@ private:
                 // not the future overlap region, to choose the next read cycle.
                 for (int ch=0; ch<channels_; ++ch) {
                     const float* ring=history_.data()+size_t(ch)*capacity;
-                    const double a=interpolate(ring,from+k+3.0);
+                    const double a=outgoing[size_t(k/2)][size_t(ch)];
                     const double b=interpolate(ring,to+k+3.0);
                     const double d=a-b;
                     mismatch+=d*d;

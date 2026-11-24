@@ -28,8 +28,8 @@ jobs:
           persist-credentials: false
       - run: python3 tools/recover_snap_core.py external/snap recovered/SnapCore.h
       - run: cmake -S . -B build-play -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON -DSKELLY_SNAP_HEADER="$PWD/recovered/SnapCore.h" -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_render --parallel 2
-      - run: ctest --test-dir build-play -R '^playground_(bank|mix)_test --output-on-failure
+      - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_attack_test playground_render --parallel 2
+      - run: ctest --test-dir build-play -R '^playground_(bank|mix|attack)_test$' --output-on-failure
       - name: Render actual five-engine singer comparisons
         run: |
           mkdir -p playground-audio
@@ -77,11 +77,11 @@ jobs:
           "-DSKELLY_OG_SOURCE=$PWD/external/og"
           "-DSKELLY_META_SOURCE=$PWD/external/meta"
       - name: Compile actual native VST3 and direct DSP / editor QA
-        run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundFullMixTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
+        run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundFullMixTest SkellyPlaygroundFullAttackTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
       - name: Verify all seven algorithms and real editor
         shell: pwsh
         run: |
-          foreach ($target in @('SkellyPlaygroundFullBankTest.exe','SkellyPlaygroundFullMixTest.exe','SkellyPlaygroundSmoke.exe')) {
+          foreach ($target in @('SkellyPlaygroundFullBankTest.exe','SkellyPlaygroundFullMixTest.exe','SkellyPlaygroundFullAttackTest.exe','SkellyPlaygroundSmoke.exe')) {
             $exe = Get-ChildItem build-play -Recurse -File -Filter $target | Select-Object -First 1
             if (!$exe) { throw "Missing $target" }
             & $exe.FullName
@@ -100,6 +100,13 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "Engine $mode render failed" }
             }
           }
+          $env:SKELLY_PLAYGROUND_MODE = '5'
+          $env:SKELLY_OG_FORMANTS_OFF = '1'
+          foreach ($speed in @(0,10,25,100)) {
+            & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/og_formants_off_$($speed)ms.wav" $speed 100 100 0 0 2773
+            if ($LASTEXITCODE -ne 0) { throw 'OG formant A/B render failed' }
+          }
+          Remove-Item Env:SKELLY_OG_FORMANTS_OFF
       # Rendered audio only. Do not upload or distribute the linked binary
       # until AGPL/corresponding-source review and independent pluginval.
       - uses: actions/upload-artifact@v4
@@ -107,81 +114,43 @@ jobs:
           name: Pitch-Playground-seven-engine-audio
           path: playground-full
           retention-days: 3
- --output-on-failure
-      - name: Render actual five-engine singer comparisons
-        run: |
-          mkdir -p playground-audio
-          cp benchmark/v33/raw_levelmatched_20-28.wav playground-audio/DRY.wav
-          for mode in 0 1 2 3 4; do
-            for speed in 0 10 25 100; do
-              SKELLY_PLAYGROUND_MODE=$mode ./build-play/playground_render playground-audio/DRY.wav "playground-audio/engine_${mode}_${speed}ms.wav" "$speed" 100 100 0 0 2773
-            done
-          done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Pitch-Playground-five-engine-audio
-          path: playground-audio
-          retention-days: 3
-  windows-full:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
-        with:
-          repository: skellyruno/skell-snap
-          ref: 7c5ff11b68a8e0767a6f64378a037b5adf21d50a
-          path: external/snap
-          persist-credentials: false
-      - uses: actions/checkout@v6
-        with:
-          repository: skellyruno/skell-autotune-vst
-          ref: 99e419a164e736e50e9cc4b1e0d751338f6f5019
-          path: external/og
-          persist-credentials: false
-      - uses: actions/checkout@v6
-        with:
-          repository: skellyruno/MetaTuneInspiredvst
-          ref: 73d759307ce9536e522b2cf78dc1da943afc8f3d
-          path: external/meta
-          persist-credentials: false
-      - run: python tools/recover_snap_core.py external/snap recovered/SnapCore.h
-      - name: Configure seven-engine native research build
-        shell: pwsh
-        run: >
-          cmake -S . -B build-play -A x64
-          -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON
-          -DSKELLY_PLAYGROUND_FULL=ON -DSKELLY_BUILD_PLUGIN=ON -DSKELLY_BUILD_DSP_TESTS=OFF
-          "-DSKELLY_SNAP_HEADER=$PWD/recovered/SnapCore.h"
-          "-DSKELLY_OG_SOURCE=$PWD/external/og"
-          "-DSKELLY_META_SOURCE=$PWD/external/meta"
-      - name: Compile actual native VST3 and direct DSP / editor QA
-        run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
-      - name: Verify all seven algorithms and real editor
+
+      - name: Strict Playground identity and metadata
         shell: pwsh
         run: |
-          foreach ($target in @('SkellyPlaygroundFullBankTest.exe','SkellyPlaygroundSmoke.exe')) {
-            $exe = Get-ChildItem build-play -Recurse -File -Filter $target | Select-Object -First 1
-            if (!$exe) { throw "Missing $target" }
-            & $exe.FullName
-            if ($LASTEXITCODE -ne 0) { throw "$target failed: $LASTEXITCODE" }
+          $bundles = @(Get-ChildItem -LiteralPath build-play -Recurse -Directory -Filter 'SkellyTune Playground.vst3')
+          if ($bundles.Count -ne 1) { throw 'Expected exactly one Playground bundle' }
+          $module = Join-Path $bundles[0].FullName 'Contents/Resources/moduleinfo.json'
+          python tools/normalize_vst3_moduleinfo.py --path "$module" --cmake-file CMakeLists.txt --expected-name "SkellyTune Playground"
+          if ($LASTEXITCODE -ne 0) { throw 'Metadata validation failed' }
+      - name: Download pinned pluginval 2.0.0-beta3 for seven-engine Playground
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip'
+          Invoke-WebRequest -Uri 'https://github.com/Tracktion/pluginval/releases/download/v2.0.0-beta3/pluginval_Windows.zip' -OutFile $archive
+          $expectedSha256 = 'da158e918b60430c6a5223cd99cc2e746bda604e583258c400898caf4e95c523'
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) { throw "Pinned pluginval hash mismatch: $actualSha256" }
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'skelly-meta-pluginval'
+          Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot -Force
+          $validator = Get-ChildItem -LiteralPath $toolRoot -Recurse -File -Filter 'pluginval.exe' | Select-Object -First 1
+          if (!$validator) { throw 'Verified pluginval executable missing' }
+          "PLUGINVAL_EXE=$($validator.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Validate actual seven-engine Playground VST3 with pluginval strictness 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundles = @(Get-ChildItem -LiteralPath build-play -Recurse -Directory -Filter 'SkellyTune Playground.vst3')
+          if ($bundles.Count -ne 1) { throw "Expected one Lab VST3; got $($bundles.Count)" }
+          $stdout = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stdout'
+          $stderr = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stderr'
+          $argumentLine = '--strictness-level 5 "' + $bundles[0].FullName + '"'
+          $process = Start-Process -FilePath $env:PLUGINVAL_EXE -ArgumentList $argumentLine `
+            -WorkingDirectory $PWD.Path -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+          if ($null -eq $process.ExitCode -or $process.ExitCode -ne 0) {
+            throw "Playground pluginval strictness 5 failed: exit=$($process.ExitCode)"
           }
-      - name: Render all seven real engines on same singer
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem build-play -Recurse -File -Filter 'SkellyPlaygroundFullRender.exe' | Select-Object -First 1
-          if (!$exe) { throw "Missing full renderer" }
-          New-Item -ItemType Directory -Force playground-full | Out-Null
-          foreach ($mode in 0..6) {
-            $env:SKELLY_PLAYGROUND_MODE = "$mode"
-            foreach ($speed in @(0,10,25,100)) {
-              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/engine_$($mode)_$($speed)ms.wav" $speed 100 100 0 0 2773
-              if ($LASTEXITCODE -ne 0) { throw "Engine $mode render failed" }
-            }
-          }
-      # Rendered audio only. Do not upload or distribute the linked binary
-      # until AGPL/corresponding-source review and independent pluginval.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Pitch-Playground-seven-engine-audio
-          path: playground-full
-          retention-days: 3

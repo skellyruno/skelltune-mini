@@ -56,7 +56,15 @@ public:
         fadeSamples_=std::max(1,int(std::lround(rate_*.006)));
         fadeStep_=1./double(fadeSamples_);
         mixGuard_.prepare(rate_);partialBlend_=false;
+        attackMarks_.assign(size_t(capacity_),0);
+        attackPrevious_.fill(0.);attackPower_=attackDiffPower_=attackBlend_=0.;attackHold_=0;
+        attackHoldSamples_=std::max(1,int(std::lround(rate_*.002)));
+        attackAdvance_=std::min(common_,std::max(1,int(std::lround(rate_*.00075))));
+        attackMeter_=1.-std::exp(-1./(rate_*.03));
+        attackEntry_=1.-std::exp(-1./(rate_*.00012));
+        attackRelease_=std::exp(-1./(rate_*.003));
     }
+    void setOgFormants(bool enabled) noexcept {ogFormants_=enabled;}
     int latencySamples() const noexcept {return common_;}
     int nativeLatency(int mode) const noexcept {return mode>=0&&mode<modeCount?native_[size_t(mode)]:-1;}
     int activeMode() const noexcept {return active_;}
@@ -84,6 +92,7 @@ public:
             p.amount=std::clamp(std::isfinite(p.amount)?p.amount:1.f,0.f,1.f);
             p.mix=std::clamp(std::isfinite(p.mix)?p.mix:1.f,0.f,1.f);
             p.pitchClasses&=0xfffu;
+            const double protection=std::clamp(std::isfinite(p.transientProtection)?double(p.transientProtection):1.,0.,1.);
             const bool manualHere=graphEditsSupported(active_)&&manual>=24&&manual<=107;
             const bool dryOnly=bypass||p.amount==0.f||p.mix==0.f||(!p.pitchClasses&&!manualHere);
             render(q,channels,n,p,manualHere?manual:-1);
@@ -94,8 +103,30 @@ public:
                 if(warm_>0)--warm_;
                 const double mixTarget=dryOnly?0.:p.mix;
                 mixGain_+=std::clamp(mixTarget-mixGain_,-fadeStep_,fadeStep_);
-                const float blend=float(double(fadePosition_)/fadeSamples_*mixGain_);
                 const int dr=(cursor_+capacity_-common_)%capacity_,wr=(cursor_+capacity_-pad)%capacity_;
+                // Mark only isolated, high-contrast attacks in the ORIGINAL input.
+                // The common transport already provides the history needed to
+                // fade in before the delayed attack; no extra PDC or allocations.
+                double power=0.,derivative=0.;
+                for(int c=0;c<channels;++c){
+                    const double x=raw[size_t(c)][size_t(i)];
+                    power=std::max(power,x*x);
+                    derivative=std::max(derivative,std::abs(x-attackPrevious_[size_t(c)]));
+                    attackPrevious_[size_t(c)]=x;
+                }
+                const double diff=derivative*derivative;
+                const bool sharp=diff>std::max({.0625,3.*attackPower_,64.*attackDiffPower_});
+                attackPower_+=attackMeter_*(std::min(power,4.)-attackPower_);
+                attackDiffPower_+=attackMeter_*(std::min(diff,1.)-attackDiffPower_);
+                if(sharp)attackHold_=attackHoldSamples_;
+                attackMarks_[size_t(cursor_)]=attackHold_>0?1:0;
+                if(attackHold_>0)--attackHold_;
+                if(attackMarks_[size_t(dr)])attackBlend_=1.;
+                else if(attackAdvance_>0&&attackMarks_[size_t((dr+attackAdvance_)%capacity_)])
+                    attackBlend_+=(1.-attackBlend_)*attackEntry_;
+                else attackBlend_*=attackRelease_;
+                if(attackBlend_<1.e-9)attackBlend_=0.;
+                const float blend=float(double(fadePosition_)/fadeSamples_*mixGain_*(1.-protection*attackBlend_));
                 float alignedDry[2]{},alignedWet[2]{};
                 for(int c=0;c<channels;++c){
                     dry_[c][size_t(cursor_)]=raw[size_t(c)][size_t(i)];
@@ -106,7 +137,7 @@ public:
                 // renderer, including its PDC padding. Compensate moderate
                 // decorrelation here, once, rather than in seven engines.
                 // Avoid old envelope state at the start of a new blend.
-                const bool partial=blend>0.075f&&blend<0.925f&&mixGain_>0.075&&mixGain_<0.925;
+                const bool partial=(protection==0.||attackBlend_==0.)&&blend>0.075f&&blend<0.925f&&mixGain_>0.075&&mixGain_<0.925;
                 if(partial&&!partialBlend_)mixGuard_.reset();
                 partialBlend_=partial;
                 const double gain=partial?mixGuard_.process(alignedDry,alignedWet,channels,blend,true):1.0;
@@ -127,7 +158,7 @@ public:
                 }
                 if(++cursor_==capacity_)cursor_=0;
             }
-            telemetry_.cents*=float(double(fadePosition_)/fadeSamples_*mixGain_);
+            telemetry_.cents*=float(double(fadePosition_)/fadeSamples_*mixGain_*(1.-protection*attackBlend_));
             if(bypass||(!p.pitchClasses&&!manualHere)){telemetry_={};}
             off+=n;
         }
@@ -160,7 +191,7 @@ private:
             // Map to its nearest supported time constant; >100ms saturates.
             const float ms=p.speedMs;
             const float native=ms<.35f?0.f:ms<3.f?.099f:ms<25.5f?std::clamp((ms-.5f)/50.f,.1f,.4999f):ms<42.f?.4999f:std::clamp((ms-20.f)/80.f,.5f,1.f);
-            og_->setRetuneSpeed(native);og_->setAmount(p.amount);og_->setReferenceFreq(p.referenceA);og_->setCustomScale(mask);og_->setHumanize(0);og_->setNoteStabilizer(false);og_->setFormantPreserve(true);
+            og_->setRetuneSpeed(native);og_->setAmount(p.amount);og_->setReferenceFreq(p.referenceA);og_->setCustomScale(mask);og_->setHumanize(0);og_->setNoteStabilizer(false);og_->setFormantPreserve(ogFormants_);
             juce::AudioBuffer<float> view(io,channels,frames);og_->process(view);
             telemetry_={og_->getDetectedHz(),og_->getConfidence(),float(1200*std::log2(std::max(1e-6f,og_->getAppliedPitchRatio()))),og_->getTargetMidiNote(),false};return;
         }
@@ -177,9 +208,15 @@ private:
     std::unique_ptr<humtune::AutoTuneEngine> og_;
     std::unique_ptr<autotune::SkellyFusionEngine> inspired_;
 #endif
+    bool ogFormants_=true;
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;
+    std::vector<uint8_t> attackMarks_;
+    std::array<double,2> attackPrevious_{};
+    double attackPower_=0.,attackDiffPower_=0.,attackBlend_=0.;
+    double attackMeter_=0.,attackEntry_=0.,attackRelease_=0.;
+    int attackHold_=0,attackHoldSamples_=1,attackAdvance_=0;
     Telemetry telemetry_{};double rate_=48000.,mixGain_=0.,fadeStep_=.004;
     int fadeSamples_=1,fadePosition_=0;
     int channels_=0,common_=0,capacity_=1,cursor_=0,active_=-1,warm_=0;

@@ -95,6 +95,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         const int mode=std::atoi(selected);
         if(mode<0||mode>=skelly::playground::modeCount)throw std::runtime_error("Unavailable playground engine");
         skelly::playground::Bank bank;bank.prepare(w.rate,w.channels,128);
+        bank.setOgFormants(std::getenv("SKELLY_OG_FORMANTS_OFF")==nullptr);
         Wav result=w;std::array<float,128> a{},b{};
         const size_t n=w.samples.size()/size_t(w.channels);
         float peak=0.f;size_t clipped=0;std::vector<double> timings;

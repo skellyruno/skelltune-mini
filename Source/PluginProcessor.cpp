@@ -144,6 +144,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
     for(int i=0;i<skelly::playground::modeCount;++i)engines.add(skelly::playground::names[size_t(i)]);
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"playgroundEngine",1},"Playground Engine",engines,0));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"playgroundOgFormants",1},"OG Formant Preserve (A/B)",true));
 #endif
     return layout;
 }
@@ -315,6 +316,7 @@ void SkellyTuneRealtimeProcessor::processEditedAudio(
 void SkellyTuneRealtimeProcessor::processPlayground(float* const* io,int channels,int frames,int blockOffset,const skelly::Parameters& p) {
     if(!(preparedAudioRate_>0.0)||frames<=0)return;
     const int mode=playgroundMode();
+    playground_.setOgFormants(state_.getRawParameterValue("playgroundOgFormants")->load()>0.5f);
     const auto blockMs=displayedHostMs_.load(std::memory_order_relaxed);
     for(int offset=0;offset<frames;){
         const int absolute=blockOffset+offset;
@@ -521,6 +523,14 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
         if (!source.hasType(juce::Identifier("PARAM"))) continue;
         const auto id = source.getProperty(juce::Identifier("id")).toString();
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+        if(id=="playgroundOgFormants"){
+            const auto value=decodeSavedNumber(source.getProperty("value"));
+            auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);
+            if(value&&target.isValid()&&(*value==0.||*value==1.)){
+                target.setProperty("value",*value,nullptr);++restored;
+            }
+            continue;
+        }
         if(id=="playgroundEngine"){
             const auto value=decodeSavedNumber(source.getProperty("value"));
             auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);

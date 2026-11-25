@@ -3,12 +3,14 @@
 #include "playground_latency_checks.hpp"
 #include "playground_amount_checks.hpp"
 #include "playground_challenger_checks.hpp"
+#include "playground_level_checks.hpp"
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <cstdlib>
 static void check(bool v,const char* s){if(!v){std::cerr<<"FAIL: "<<s<<"\n";std::exit(1);}}
 int main(){challenger_checks::run();using namespace skelly::playground; for(int fs:{44100,48000,96000}){
+    level_checks::run(fs);
     playgroundStereoChecks(fs);
     playgroundLatencyChecks(fs);
     if(fs==48000)playgroundAmountChecks(fs);

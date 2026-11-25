@@ -6,6 +6,7 @@
 #include "RealtimeTuner.hpp"
 #include "MetaTest.hpp"
 #include "CoherentMixGuard.hpp"
+#include "WetLevelGuard.hpp"
 #include "SnapCore.h"
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
 #include "AutoTuneEngine.h"
@@ -41,6 +42,7 @@ struct Telemetry { float hz=0, confidence=0, cents=0; int target=-1; bool pendin
 class Bank {
 public:
     // Set before prepare. Offline A/B keeps the complete previous engine policy.
+    void setWetLevelRecoveryEnabled(bool enabled) noexcept { wetLevelRecovery_=enabled; }
     void setChallengerExperiments(bool enabled) noexcept { challengers_=enabled; }
     void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
         rate_=std::clamp(std::isfinite(rate)?rate:48000.,8000.,192000.);
@@ -76,6 +78,7 @@ public:
         active_=-1;cursor_=0;fadePosition_=0;mixGain_=0.;warm_=0;telemetry_={};
         fadeSamples_=std::max(1,int(std::lround(rate_*.006)));
         fadeStep_=1./double(fadeSamples_);
+        wetLevelGuard_.prepare(rate_);
         mixGuard_.prepare(rate_);partialBlend_=false;
         attackMarks_.assign(size_t(capacity_),0);
         attackPrevious_.fill(0.);attackPower_=attackDiffPower_=attackBlend_=0.;attackHold_=0;
@@ -166,6 +169,9 @@ public:
                     wet_[c][size_t(cursor_)]=std::isfinite(q[c][i])?q[c][i]:0.f;
                     alignedDry[c]=dry_[c][size_t(dr)];alignedWet[c]=wet_[c][size_t(wr)];
                 }
+                // Classic and Crystal are immutable listening references.
+                if(wetLevelRecovery_ && active_!=3 && active_!=4)
+                    wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&telemetry_.hz>0,mixGain_,blend);
                 // Keep the compensation envelope alive through a protected
                 // attack. Previously it reset to unity at the first marker,
                 // then took the full release plus reacquisition to recover.
@@ -203,6 +209,7 @@ public:
     }
 private:
     void activate(int mode) {
+        wetLevelGuard_.reset();
         mixGuard_.reset();partialBlend_=false;
         active_=mode;fadePosition_=0;warm_=common_+int(rate_*.04);telemetry_={};
         for(auto& v:wet_)std::fill(v.begin(),v.end(),0.f);
@@ -249,6 +256,8 @@ private:
     int profile_=0,lockedMode_=-1;double snapMs_=2.5;
     bool ogFormants_=true;
     bool challengers_=true;
+    bool wetLevelRecovery_=true;
+    WetLevelGuard wetLevelGuard_;
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

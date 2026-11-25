@@ -112,7 +112,7 @@ public:
             int(std::lround(state_.getRawParameterValue("playgroundEngine")->load())));
     }
     int playgroundProfile() const noexcept {
-        return juce::jlimit(0,int(skelly::playground::latencyNames.size())-1,
+        return skelly::playground::interactiveLatencyProfile(
             int(std::lround(state_.getRawParameterValue("playgroundLatencyProfile")->load())));
     }
     int playgroundAppliedProfile() const noexcept { return playgroundAppliedProfile_.load(); }
@@ -126,7 +126,7 @@ public:
     }
     bool playgroundPlaying() const noexcept { return playgroundPlaying_.load(); }
     int playgroundHostDelay() const noexcept { return playgroundHostDelay_.load(); }
-    bool applyPlaygroundLatency(); // explicit message-thread action, transport stopped
+    bool applyPlaygroundLatency(); // message thread, also while transport runs
     int playgroundActiveMode() const noexcept { return playgroundActive_.load(std::memory_order_relaxed); }
     int playgroundNativeDelay(int mode) const noexcept {
         return mode>=0&&mode<skelly::playground::modeCount?playgroundNative_[size_t(mode)].load():0;

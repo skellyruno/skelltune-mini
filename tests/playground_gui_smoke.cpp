@@ -10,13 +10,20 @@ struct LatencyPlayhead : juce::AudioPlayHead {
         PositionInfo p;p.setIsPlaying(playing);p.setTimeInSamples(0);return p;
     }
 };
+struct LatencyListener : juce::AudioProcessorListener {
+    int changes=0,last=-1;
+    void audioProcessorParameterChanged(juce::AudioProcessor*,int,float) override {}
+    void audioProcessorChanged(juce::AudioProcessor* p,const ChangeDetails& c) override {
+        if(c.latencyChanged){++changes;last=p->getLatencySamples();}
+    }
+};
 int main(){
     juce::ScopedJuceInitialiser_GUI gui;
     auto p=std::make_unique<SkellyTuneRealtimeProcessor>();
     p->setPlayConfigDetails(2,2,48000.,128);
     p->prepareToPlay(48000.,128);
     const int delay=p->getLatencySamples();
-    if(delay<=0)return 1;
+    if(delay!=120||p->playgroundAppliedProfile()!=3)return 1;
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p->createEditor());
     if(!editor||editor->getWidth()!=432)return 2;
     auto* selector=dynamic_cast<juce::ComboBox*>(editor->findChildWithID("skelly.algorithm"));
@@ -27,7 +34,7 @@ int main(){
     double phase=0;
     for(int mode=0;mode<skelly::playground::modeCount;++mode){
         selector->setSelectedId(mode+1,juce::sendNotificationSync);
-        if(p->playgroundMode()!=mode||p->graphEditsSupported()!=(mode<3))return 5;
+        if(p->playgroundMode()!=mode||p->playgroundRenderMode()!=mode||p->graphEditsSupported()!=(mode<3))return 5;
         for(int k=0;k<400;++k){
             juce::AudioBuffer<float> b(2,128);
             for(int i=0;i<128;++i){phase+=2*skelly::kPi*225./48000.;const float x=float(.18*std::sin(phase)+.04*std::sin(2*phase));b.setSample(0,i,x);b.setSample(1,i,.8f*x);}
@@ -64,36 +71,49 @@ int main(){
     graph->onClick();
     if(editor->getHeight()!=700)return 17;
     auto* latency=dynamic_cast<juce::ComboBox*>(editor->findChildWithID("skelly.latencyProfile"));
-    auto* apply=dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.latencyApply"));
-    if(!latency||!apply||!apply->onClick||latency->getNumItems()!=int(skelly::playground::latencyNames.size()))return 18;
+    if(!latency||!latency->onChange||latency->getNumItems()!=5||editor->findChildWithID("skelly.latencyApply"))return 18;
+    if(latency->getBounds().getHeight()<22||latency->getItemId(0)!=2||latency->getItemId(4)!=6)return 19;
     LatencyPlayhead host;p->setPlayHead(&host);
+    LatencyListener listener;p->addListener(&listener);
     host.playing=true;juce::AudioBuffer<float> frame(2,128);frame.clear();p->processBlock(frame,midi);
-    latency->setSelectedId(2,juce::sendNotificationSync);
-    if(!p->playgroundNeedsApply()||p->applyPlaygroundLatency()||p->getLatencySamples()!=delay)return 19;
-    host.playing=false;frame.clear();p->processBlock(frame,midi);
-    apply->onClick();
-    if(p->playgroundAppliedProfile()!=1||p->getLatencySamples()!=72||p->playgroundNeedsApply())return 20;
+    // Simulate the popup's async selection. A repaint timer must never
+    // overwrite this choice before its notification is delivered.
+    latency->setSelectedId(2,juce::sendNotificationAsync);
+    juce::Thread::sleep(45);juce::Timer::callPendingTimersSynchronously();
+    if(latency->getSelectedId()!=2)return 20;
+    latency->onChange();
+    if(p->playgroundAppliedProfile()!=1||p->getLatencySamples()!=72||p->playgroundNeedsApply()||listener.last!=72)return 21;
     for(int mode=0;mode<skelly::playground::modeCount;++mode){
         selector->setSelectedId(mode+1,juce::sendNotificationSync);
         for(int profile=1;profile<int(skelly::playground::latencyNames.size());++profile){
-            latency->setSelectedId(profile+1,juce::sendNotificationSync);apply->onClick();
-            if(p->playgroundNeedsApply()||p->playgroundAppliedProfile()!=profile||p->playgroundRenderMode()!=mode)return 21;
+            const int before=p->getLatencySamples(),notifications=listener.changes;
+            latency->setSelectedId(profile+1,juce::sendNotificationSync);
+            if(p->playgroundNeedsApply()||p->playgroundAppliedProfile()!=profile||p->playgroundRenderMode()!=mode)return 22;
             const int target=int(std::lround(48.*skelly::playground::latencyTargets[size_t(profile)]));
-            if(p->getLatencySamples()!=std::max(target,p->playgroundNativeDelay(mode)))return 22;
+            const int expected=std::max(target,p->playgroundNativeDelay(mode));
+            if(p->getLatencySamples()!=expected)return 23;
+            if(before!=expected&&(listener.changes<=notifications||listener.last!=expected))return 24;
             frame.clear();p->processBlock(frame,midi);
-            if(p->playgroundActiveMode()!=mode)return 23;
+            if(p->playgroundActiveMode()!=mode)return 25;
         }
     }
     juce::MemoryBlock latencyState;p->getStateInformation(latencyState);
-    latency->setSelectedId(1,juce::sendNotificationSync);apply->onClick();
-    if(p->getLatencySamples()!=delay||p->playgroundAppliedProfile()!=0)return 24;
+    latency->setSelectedId(4,juce::sendNotificationSync);
+    if(p->getLatencySamples()!=120||p->playgroundAppliedProfile()!=3)return 26;
     p->setStateInformation(latencyState.getData(),int(latencyState.getSize()));
-    if(p->playgroundProfile()!=5||!p->playgroundNeedsApply())return 25;
-    apply->onClick();if(p->getLatencySamples()!=480||p->playgroundNeedsApply())return 26;
+    if(p->playgroundProfile()!=5||p->playgroundNeedsApply()||p->getLatencySamples()!=480)return 28;
+    // Old matched-state index 0 is still accepted, mapped to Snap's default.
+    auto xml=juce::AudioProcessor::getXmlFromBinary(latencyState.getData(),int(latencyState.getSize()));
+    if(!xml)return 29;
+    for(auto* child:xml->getChildIterator())if(child->getStringAttribute("id")=="playgroundLatencyProfile")child->setAttribute("value",0);
+    juce::MemoryBlock oldState;juce::AudioProcessor::copyXmlToBinary(*xml,oldState);
+    p->setStateInformation(oldState.getData(),int(oldState.getSize()));
+    if(p->playgroundProfile()!=3||p->playgroundNeedsApply()||p->getLatencySamples()!=120)return 30;
+    p->removeListener(&listener);
     if(p->pitchEdits().targetAt(150)!=57)return 27;
     p->setPlayHead(nullptr);
     juce::Image image(juce::Image::ARGB,editor->getWidth(),editor->getHeight(),true);
     juce::Graphics graphics(image);editor->paintEntireComponent(graphics,true);
     editor.reset();p->releaseResources();
-    std::cout<<"PASS: real Playground JUCE selector, all active engines, 32/64-bit callbacks, stable PDC, state and editor paint\n";
+    std::cout<<"PASS: real Playground selector, live latency selection and host PDC notifications, all engines, state migration and editor paint\n";
 }

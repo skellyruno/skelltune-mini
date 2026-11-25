@@ -28,7 +28,12 @@ inline constexpr int modeCount=5;
 // Matched mode is the old common-delay comparison. Other profiles lock the
 // prepared engine and report its real minimum plus any requested padding.
 // Zero is a requested minimum, NOT a claim of zero physical delay.
-inline constexpr std::array<const char*,6> latencyNames{{"MATCHED", "ZERO / MIN", "1 ms", "2.5 ms", "5 ms", "10 ms"}};
+// Keep numeric IDs for existing research states/render commands. Profile 0
+// is a legacy offline comparison, not an interactive latency choice.
+inline constexpr std::array<const char*,6> latencyNames{{"Legacy matched", "0 ms (Zero)", "1 ms (Ultra)", "2.5 ms (Low)", "5 ms (Bass / Baritone)", "10 ms (Stable)"}};
+inline constexpr int interactiveLatencyProfile(int value) noexcept {
+    return value<=0?3:std::min(value,int(latencyNames.size())-1);
+}
 inline constexpr std::array<double,6> latencyTargets{{-1.,0.,1.,2.5,5.,10.}};
 inline bool graphEditsSupported(int mode) noexcept { return mode>=0 && mode<3; }
 struct Telemetry { float hz=0, confidence=0, cents=0; int target=-1; bool pending=false; };

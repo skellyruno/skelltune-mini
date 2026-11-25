@@ -51,6 +51,11 @@ bool SkellyTuneRealtimeProcessor::applySkellKeyTuning(
 }
 
 void SkellyTuneRealtimeProcessor::timerCallback() {
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    // Preset recall and host parameter edits also work without an open editor.
+    // Never allocate or announce changing PDC from processBlock.
+    if(playgroundNeedsApply())applyPlaygroundLatency();
+#endif
     // The listener is automatic. Its worker retries 127.0.0.1 without ever
     // blocking audio or requesting a receiver-side JOIN/FOLLOW button.
     if (!joinWorld()) return;
@@ -148,7 +153,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
     juce::StringArray profiles;
     for(const auto* name:skelly::playground::latencyNames)profiles.add(name);
     layout.add(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID{"playgroundLatencyProfile",1},"Latency Audition Profile",profiles,0,
+        juce::ParameterID{"playgroundLatencyProfile",1},"Latency",profiles,3,
         juce::AudioParameterChoiceAttributes{}.withAutomatable(false)));
 #endif
     return layout;
@@ -207,7 +212,7 @@ void SkellyTuneRealtimeProcessor::publishPlaygroundConfig() {
 }
 bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     auto* mm=juce::MessageManager::getInstanceWithoutCreating();
-    if(!mm||!mm->isThisTheMessageThread()||playgroundPlaying())return false;
+    if(!mm||!mm->isThisTheMessageThread())return false;
     if(!playgroundNeedsApply())return true;
     double rate=0.;int channels=0,block=0,profile=0,mode=0;unsigned generation=0;
     {
@@ -217,13 +222,15 @@ bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     }
     if(!(rate>0.)||channels<1||block<1)return false;
     // Allocate and prepare the replacement while the current engine remains
-    // untouched. Hold the callback lock only for the stopped-state swap.
+    // untouched. The callback lock is held only for the replacement swap;
+    // publishPlaygroundConfig announces actual latency through JUCE to the host.
+    // A transport change is not a reason to reject the selection.
     skelly::playground::Bank next;
     try { next.prepare(rate,channels,block,profile,mode); }
     catch(...) { return false; }
     {
         const juce::ScopedLock lock(getCallbackLock());
-        if(playgroundPlaying()||generation!=playgroundGeneration_.load()||
+        if(generation!=playgroundGeneration_.load()||
            profile!=playgroundProfile()||mode!=playgroundMode())return false;
         const bool suspended=isSuspended();
         suspendProcessing(true);
@@ -590,7 +597,8 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
             const auto value=decodeSavedNumber(source.getProperty("value"));
             auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);
             if(value&&target.isValid()&&std::floor(*value)==*value&&*value>=0&&*value<double(skelly::playground::latencyNames.size())){
-                target.setProperty("value",*value,nullptr);++restored;
+                // Old matched sessions migrate to Snap's default 2.5ms.
+                target.setProperty("value",skelly::playground::interactiveLatencyProfile(int(*value)),nullptr);++restored;
             }
             continue;
         }
@@ -658,6 +666,10 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
             pitchEdits_.set(index,{int64_t(*first),int64_t(*last),int(*midi)});
         }
     }
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    // On other threads the processor timer performs the same application.
+    if(playgroundNeedsApply())applyPlaygroundLatency();
+#endif
     // Invalid/unknown chunks do not damage the current valid state.
 }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {

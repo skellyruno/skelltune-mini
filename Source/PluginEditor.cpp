@@ -526,33 +526,36 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     styleCombo(playgroundSelector_,palette_);
     for(int i=0;i<skelly::playground::modeCount;++i)
         playgroundSelector_.addItem(skelly::playground::names[size_t(i)],i+1);
-    playgroundSelector_.setSelectedId(currentAlgorithm()+1,juce::dontSendNotification);
-    playgroundSelector_.setTooltip("Select the original DSP engine. Common PDC for comparison; native delay shown below.");
+    playgroundSelector_.setTooltip("Select an engine. Its actual latency and host compensation update automatically.");
+    playgroundEngineAttachment_=std::make_unique<juce::ParameterAttachment>(
+        *parameters_.getParameter("playgroundEngine"),[this](float value){
+            playgroundSelector_.setSelectedId(int(std::lround(value))+1,juce::dontSendNotification);
+        });
     playgroundSelector_.onChange=[this]{chooseAlgorithm(playgroundSelector_.getSelectedId()-1);};
     addAndMakeVisible(playgroundSelector_);
-    playgroundLatencySelector_.setName("Latency audition profile");
+    playgroundEngineAttachment_->sendInitialUpdate();
+    playgroundLatencySelector_.setName("Latency");
     playgroundLatencySelector_.setComponentID("skelly.latencyProfile");
     playgroundLatencySelector_.setLookAndFeel(&theme_);
     styleCombo(playgroundLatencySelector_,palette_);
-    for(size_t i=0;i<skelly::playground::latencyNames.size();++i)
+    // Retain old parameter indices, but never expose the retired matched choice.
+    for(size_t i=1;i<skelly::playground::latencyNames.size();++i)
         playgroundLatencySelector_.addItem(skelly::playground::latencyNames[i],int(i)+1);
-    playgroundLatencySelector_.setSelectedId(processor_.playgroundProfile()+1,juce::dontSendNotification);
-    playgroundLatencySelector_.setTooltip("Matched = common PDC, live A/B. Zero/Min requests the real minimum; unsupported targets use the native floor. Stop playback and Apply after changing engine/profile.");
+    playgroundLatencySelector_.setTooltip("Choose latency directly, like Skell Snap. Zero requests the engine minimum. Actual native and host delays are shown below. Changing latency during playback may briefly interrupt audio.");
+    playgroundLatencyAttachment_=std::make_unique<juce::ParameterAttachment>(
+        *parameters_.getParameter("playgroundLatencyProfile"),[this](float value){
+            playgroundLatencySelector_.setSelectedId(skelly::playground::interactiveLatencyProfile(int(std::lround(value)))+1,juce::dontSendNotification);
+        });
     playgroundLatencySelector_.onChange=[this]{
-        if(auto* p=parameters_.getParameter("playgroundLatencyProfile")){
-            p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(float(playgroundLatencySelector_.getSelectedId()-1)));p->endChangeGesture();
+        const int choice=playgroundLatencySelector_.getSelectedId()-1;
+        if(choice>=1&&choice<int(skelly::playground::latencyNames.size())){
+            playgroundLatencyAttachment_->setValueAsCompleteGesture(float(choice));
+            processor_.applyPlaygroundLatency();
         }
         updateLiveFeedback();repaint();
     };
     addAndMakeVisible(playgroundLatencySelector_);
-    playgroundApplyLatency_.setComponentID("skelly.latencyApply");
-    playgroundApplyLatency_.setLookAndFeel(&theme_);
-    playgroundApplyLatency_.setTooltip("Apply requested engine and latency while transport is stopped. Updates host PDC outside the audio callback.");
-    playgroundApplyLatency_.setColour(juce::TextButton::buttonColourId,palette_.panel);
-    playgroundApplyLatency_.setColour(juce::TextButton::textColourOffId,palette_.accent);
-    playgroundApplyLatency_.onClick=[this]{processor_.applyPlaygroundLatency();updateLiveFeedback();repaint();};
-    playgroundApplyLatency_.setEnabled(processor_.playgroundNeedsApply()&&!processor_.playgroundPlaying());
-    addAndMakeVisible(playgroundApplyLatency_);
+    playgroundLatencyAttachment_->sendInitialUpdate();
 #else
     algorithm_.setName("Algorithm");
     algorithm_.setComponentID("skelly.algorithm");
@@ -665,8 +668,8 @@ SkellyTuneEditor::~SkellyTuneEditor() {
     playgroundSelector_.setLookAndFeel(nullptr);
     playgroundLatencySelector_.onChange=nullptr;
     playgroundLatencySelector_.setLookAndFeel(nullptr);
-    playgroundApplyLatency_.onClick=nullptr;
-    playgroundApplyLatency_.setLookAndFeel(nullptr);
+    playgroundLatencyAttachment_.reset();
+    playgroundEngineAttachment_.reset();
 #endif
 }
 void SkellyTuneEditor::toggleAnalyzer() {
@@ -713,9 +716,8 @@ void SkellyTuneEditor::resized() {
                         std::max(92, juce::roundToInt(92.0f*sx)),
                         std::max(30, juce::roundToInt(30.0f*sy)));
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    place(playgroundSelector_, 208, 19, 208, 25);
-    place(playgroundLatencySelector_,208,46,131,17);
-    place(playgroundApplyLatency_,344,46,72,17);
+    place(playgroundSelector_, 208, 15, 208, 26);
+    place(playgroundLatencySelector_,208,44,208,22);
 #else
     place(algorithm_, 208, 19, 208, 28);
 #endif
@@ -779,11 +781,11 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
         const int active=processor_.playgroundRenderMode();
         const auto native=processor_.playgroundNativeDelay(active);
         const bool pending=processor_.playgroundNeedsApply();
-        const juce::String status=pending?juce::String(processor_.playgroundPlaying()?"STOP + APPLY: ":"APPLY: ")+skelly::playground::names[size_t(active)]
+        const juce::String status=pending?juce::String("UPDATING LATENCY...")
             :"NATIVE "+juce::String(1000.*native/sr,2)+" ms   |   HOST "+juce::String(1000.*processor_.playgroundHostDelay()/sr,2)+" ms";
         g.setColour(pending?accent:muted.brighter(.3f));
         g.setFont(juce::Font(juce::FontOptions(10.f,juce::Font::bold)));
-        g.drawText(status,18,64,312,12,juce::Justification::centredLeft,true);
+        g.drawText(status,18,66,312,12,juce::Justification::centredLeft,true);
     }
 #elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
     g.drawText("MINI / LAB",60,46,78,14,juce::Justification::centredLeft);
@@ -796,10 +798,10 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
     const bool signal = voicedFade_ > 0.25f && liveConfidence_ >= 0.55f;
     g.setColour((signal ? accent : muted).withAlpha(signal ? 0.95f : 0.73f));
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    g.fillEllipse(336.0f,67.0f,5.0f,5.0f);
+    g.fillEllipse(336.0f,69.0f,5.0f,5.0f);
     g.setColour(signal ? text : muted.brighter(0.18f));
     g.setFont(juce::Font(juce::FontOptions(9.5f,juce::Font::bold)));
-    g.drawText(signal ? "SIGNAL LOCK" : "NO SIGNAL",346,64,70,12,juce::Justification::centredRight,true);
+    g.drawText(signal ? "SIGNAL LOCK" : "NO SIGNAL",346,66,70,12,juce::Justification::centredRight,true);
 #else
     g.fillEllipse(336.0f,51.0f,5.5f,5.5f);
     g.setColour(signal ? text : muted.brighter(0.18f));
@@ -808,13 +810,22 @@ void SkellyTuneEditor::paint(juce::Graphics& g) {
                juce::Justification::centredRight,true);
 #endif
     g.setColour(palette_.line);
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    g.drawLine(16.0f,78.0f,416.0f,78.0f,1.0f);
+#else
     g.drawLine(16.0f,63.0f,416.0f,63.0f,1.0f);
+#endif
 
     g.setColour(muted);
     g.setFont(juce::Font(juce::FontOptions(11.5f,juce::Font::bold)));
-    g.drawText("KEY",20,76,92,16,juce::Justification::centredLeft);
-    g.drawText("SCALE",126,76,148,16,juce::Justification::centredLeft);
-    g.drawText("A4",288,76,120,16,juce::Justification::centredLeft);
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    constexpr int labelY=79;
+#else
+    constexpr int labelY=76;
+#endif
+    g.drawText("KEY",20,labelY,92,16,juce::Justification::centredLeft);
+    g.drawText("SCALE",126,labelY,148,16,juce::Justification::centredLeft);
+    g.drawText("A4",288,labelY,120,16,juce::Justification::centredLeft);
 
     // Keep Mini's approved dark/neon identity, but soften the instrument
     // surface with gentle gradient depth and a restrained top highlight.
@@ -1326,9 +1337,8 @@ int SkellyTuneEditor::currentAlgorithm() const {
 void SkellyTuneEditor::chooseAlgorithm(int index) {
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     if(index>=0&&index<skelly::playground::modeCount){
-        if(auto* p=parameters_.getParameter("playgroundEngine")){
-            p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(float(index)));p->endChangeGesture();
-        }
+        playgroundEngineAttachment_->setValueAsCompleteGesture(float(index));
+        processor_.applyPlaygroundLatency();
     }
     return;
 #endif
@@ -1348,11 +1358,10 @@ void SkellyTuneEditor::chooseAlgorithm(int index) {
 void SkellyTuneEditor::updateLiveFeedback() {
     // Follow automation / preset recall.
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-    playgroundSelector_.setSelectedId(currentAlgorithm()+1,juce::dontSendNotification);
+    // ParameterAttachment owns selection updates. Polling setSelectedId here
+    // used to overwrite a pending async popup selection before onChange ran.
     styleCombo(playgroundSelector_,palette_);
     styleCombo(playgroundLatencySelector_,palette_);
-    playgroundLatencySelector_.setSelectedId(processor_.playgroundProfile()+1,juce::dontSendNotification);
-    playgroundApplyLatency_.setEnabled(processor_.playgroundNeedsApply()&&!processor_.playgroundPlaying());
     const int actual=processor_.playgroundActiveMode();
     if(actual!=lastPlaygroundMode_){
         lastPlaygroundMode_=actual;analyzerSamples_=0;analyzerHead_=0;

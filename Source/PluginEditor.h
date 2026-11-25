@@ -176,7 +176,7 @@ private:
     AlgorithmSelector algorithm_{palette_};
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     juce::ComboBox playgroundSelector_,playgroundLatencySelector_;
-    juce::TextButton playgroundApplyLatency_{"APPLY"};
+    std::unique_ptr<juce::ParameterAttachment> playgroundEngineAttachment_,playgroundLatencyAttachment_;
     int lastPlaygroundMode_=-1;
 #endif
     LiveReadout inputReadout_{palette_, true}, targetReadout_{palette_, false};

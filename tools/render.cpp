@@ -97,7 +97,9 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         const char* latency=std::getenv("SKELLY_PLAYGROUND_LATENCY_PROFILE");
         const int profile=latency?std::atoi(latency):0;
         if(profile<0||profile>=int(skelly::playground::latencyNames.size()))throw std::runtime_error("Unavailable latency profile");
-        skelly::playground::Bank bank;bank.prepare(w.rate,w.channels,128,profile,mode);
+        skelly::playground::Bank bank;
+        bank.setChallengerExperiments(std::getenv("SKELLY_PLAYGROUND_LEGACY_CHALLENGERS")==nullptr);
+        bank.prepare(w.rate,w.channels,128,profile,mode);
         bank.setOgFormants(std::getenv("SKELLY_OG_FORMANTS_OFF")==nullptr);
         Wav result=w;std::array<float,128> a{},b{};
         const size_t n=w.samples.size()/size_t(w.channels);

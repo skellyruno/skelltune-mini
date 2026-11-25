@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - dsp/PlaygroundBank.hpp
+      - dsp/RealtimeTuner.hpp
+      - dsp/NoteDecision.hpp
       - tests/playground_*.cpp
       - tests/playground_*.hpp
       - tools/recover_snap_core.py
@@ -108,6 +110,20 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'OG formant A/B render failed' }
           }
           Remove-Item Env:SKELLY_OG_FORMANTS_OFF
+          # Direct A/B of the three challengers; OG explicit bass, Mini 2.5ms.
+          foreach ($mode in @(0,1,5)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = if ($mode -eq 5) {'4'} else {'3'}
+            foreach ($speed in @(0,10,25,100)) {
+              $env:SKELLY_PLAYGROUND_LEGACY_CHALLENGERS = '1'
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/challenger_${mode}_legacy_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Legacy challenger $mode failed" }
+              Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_CHALLENGERS
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/challenger_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Candidate challenger $mode failed" }
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
       # Audio is retained for research. The binary is staged only after
       # all validation passes, on the owner's same-repository research branch.
       - uses: actions/upload-artifact@v4
@@ -178,8 +194,9 @@ jobs:
           Exact source and dependency revisions: SOURCE-REVISIONS.txt.
           The complete corresponding source archive accompanies this bundle.
           Install the complete VST3 bundle in a backup FL Studio project.
-          0ms = fast; 100ms = slow. Fixed shared host latency equals the largest
-          native reported delay. Graph editing is supported by Mini modes 0–2.
+          0ms retune = fast; 100ms retune = slow. Select latency directly;
+          actual engine minimum and host delay are reported. Graph editing is
+          supported by Mini modes 0–2. All seven stable engine IDs are retained.
           OG Formant Preserve (A/B) host parameter defaults ON; OFF is diagnostic.
           '@ | Set-Content -LiteralPath (Join-Path $stage 'README-RESEARCH-LISTENING.txt') -Encoding utf8
           git rev-parse HEAD | Set-Content -LiteralPath (Join-Path $stage 'BUILD-COMMIT.txt')

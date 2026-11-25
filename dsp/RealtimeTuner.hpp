@@ -755,6 +755,13 @@ public:
     void setHarmonicAwareWetGateEnabled(bool enabled) noexcept { harmonicWetGateEnabled_ = enabled; }
     // Experimental A/B only. Enable only after real-vocal benchmarking.
     void setProvisionalTransitionEnabled(bool enabled) noexcept { provisionalTransitionEnabled_ = enabled; }
+    void setPlaygroundTransitionExperiment(bool enabled) noexcept { playgroundTransitionExperiment_=enabled; }
+    static bool holdTestTuneBoundary(int previous,int candidate,uint16_t mask,double midi,double onset) noexcept {
+        return previous>=0 && previous<128 && candidate>=0 && candidate<128 && previous!=candidate &&
+            (mask & (1u<<(previous%12))) && (mask & (1u<<(candidate%12))) &&
+            std::abs(candidate-previous)<=2 && std::isfinite(midi) && std::isfinite(onset) && onset<.72 &&
+            std::abs(midi-previous)-std::abs(midi-candidate)<.24;
+    }
     // When a new note is still being confirmed, keep tuning toward the note that is
     // currently held (provided the singer is still near it) instead of dropping to
     // uncorrected dry audio. Disable only for A/B comparison.
@@ -951,6 +958,7 @@ public:
                     e.valid && e.confidence >= 0.85f && onsetHoldSamples_ > 0 &&
                     onsetCue_.score() < 0.72f;
                 const int priorTarget = targetNote_;
+                notes_.setFastStableTransitions(playgroundTransitionExperiment_ && !params_.testTune && params_.speedMs<=25.f);
                 auto result = notes_.update(e.valid ? e.hertz : 0.0,
                     e.valid ? e.confidence : 0.0,
                     rememberedOnset ? 0.72 : double(onsetCue_.score()),
@@ -1016,8 +1024,13 @@ public:
                         else { testCandidateMidi_ = note; testCandidateHops_ = 1; }
                         const bool octaveCandidate = priorTarget >= 0 &&
                             std::abs(note-priorTarget) >= 10;
-                        const bool hold = uncertain &&
-                            testCandidateHops_ < (octaveCandidate ? 4 : 2);
+                        // At natural retune speeds, suppress small boundary reversals
+                        // without changing the hard-tune TestTune response.
+                        const bool boundaryHold=playgroundTransitionExperiment_ && params_.speedMs>=25.f &&
+                            holdTestTuneBoundary(priorTarget,note,params_.pitchClasses,
+                                69.0+12.0*std::log2(e.hertz/params_.referenceA),onsetCue_.score());
+                        const bool hold = boundaryHold || (uncertain &&
+                            testCandidateHops_ < (octaveCandidate ? 4 : 2));
                         // Holding the old MIDI target is NOT permission to
                         // calculate a new ratio from an incompatible period.
                         // A weak octave-down detector frame previously steered
@@ -1591,6 +1604,7 @@ private:
     std::array<double,2> dryLow_{}, wetLow_{}, cycleLow_{};
     bool harmonicWetGateEnabled_ = true;
     bool provisionalTransitionEnabled_ = false;
+    bool playgroundTransitionExperiment_=false;
     bool holdActiveWhilePending_ = true;
     PeriodTable periodTable_;
     int nearZeroSamples_ = 0;

@@ -22,6 +22,8 @@ public:
         sampleRate_ = std::clamp(hostRate, 8000.0, 384000.0);
         reset();
     }
+    // Playground-only opt-in; standalone note policy remains unchanged.
+    void setFastStableTransitions(bool enabled) noexcept { fastStableTransitions_=enabled; }
     void reset() noexcept {
         activeNote_ = -1;
         pendingNote_ = -1;
@@ -117,7 +119,7 @@ public:
                 // This prevents a ~100 cent vibrato trough from masquerading as
                 // a new target while leaving stationary, exact-center notes fast.
                 const bool stableCenter = candidateSpread <= 16.0;
-                if (aggressiveRetune && confidence >= 0.85 && centerCents < 11.0)
+                if ((aggressiveRetune || fastStableTransitions_) && confidence >= (aggressiveRetune?0.85:0.92) && centerCents < 11.0)
                     centeredCandidateSamples_ = satAdd(centeredCandidateSamples_, delta);
                 else
                     centeredCandidateSamples_ = 0;
@@ -127,10 +129,10 @@ public:
                 // 15-30 cents off center should not suffer the old 95 ms hold.
                 // Require >=35 ms of low-drift evidence from its first hop;
                 // wide vibrato excursions still use the conservative timeout.
-                const bool stableOffCenterAdjacent = aggressiveRetune &&
+                const bool stableOffCenterAdjacent = (aggressiveRetune || fastStableTransitions_) &&
                     std::abs(candidate - activeNote_) == 1 &&
                     confidence >= 0.92 && centerCents <= 30.0 &&
-                    stableCenter && pendingSamples_ >= toSamples(0.035);
+                    stableCenter && pendingSamples_ >= toSamples(fastStableTransitions_ ? 0.025 : 0.035);
                 // Wait for evidence that persists beyond a short vibrato excursion;
                 // strong onsets bypass this timeout, preserving genuine short notes.
                 // v2.7: maximum-speed hard tuning must not inherit a 65 ms
@@ -194,6 +196,7 @@ private:
         }
         return best;
     }
+    bool fastStableTransitions_=false;
     double sampleRate_ = 48000.0;
     int activeNote_ = -1;
     int pendingNote_ = -1;

@@ -40,6 +40,8 @@ struct Telemetry { float hz=0, confidence=0, cents=0; int target=-1; bool pendin
 
 class Bank {
 public:
+    // Set before prepare. Offline A/B keeps the complete previous engine policy.
+    void setChallengerExperiments(bool enabled) noexcept { challengers_=enabled; }
     void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
         rate_=std::clamp(std::isfinite(rate)?rate:48000.,8000.,192000.);
         channels_=std::clamp(channels,1,2);
@@ -56,7 +58,10 @@ public:
         native_[3]=native_[4]=snap_->actualDelaySamples();
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
         og_=std::make_unique<humtune::AutoTuneEngine>();og_->prepare(rate_,std::max(128,maxBlockSize));
-        og_->setLowLatencyMode(profile_!=0);og_->setVoiceRange(1);og_->setFormantPreserve(true);
+        og_->setLowLatencyMode(profile_!=0);
+        // The explicitly named Bass / Baritone profile gets the native sub-bass
+        // analysis range. Keep all other profiles (including Matched) unchanged.
+        og_->setVoiceRange(challengers_ && profile_==4?5:1);og_->setFormantPreserve(true);
         native_[5]=og_->getLatencySamples();
         inspired_=std::make_unique<autotune::SkellyFusionEngine>();inspired_->prepare(rate_,70.f,1000.f);
         autotune::Settings ms;ms.lowLatency=true;ms.ultraLowLatency=true;ms.strictRealtime=true;
@@ -210,7 +215,7 @@ private:
     }
     void render(float* const* io,int channels,int frames,Parameters p,int manual) {
         if(active_<2){p.testTune=active_==1;p.mix=1.f;p.experimentalCycleSynthesis=false;
-            regular_->setParameters(p);regular_->setManualTargetMidi(manual);
+            regular_->setPlaygroundTransitionExperiment(challengers_);regular_->setParameters(p);regular_->setManualTargetMidi(manual);
             const float* in[2]={io[0],channels==2?io[1]:nullptr};regular_->process(in,io,frames,channels);
             const auto e=regular_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(regular_->appliedCents()),regular_->currentTargetNote(),regular_->targetPending()};return;}
         if(active_==2){meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames);
@@ -243,6 +248,7 @@ private:
 #endif
     int profile_=0,lockedMode_=-1;double snapMs_=2.5;
     bool ogFormants_=true;
+    bool challengers_=true;
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

@@ -32,8 +32,8 @@ jobs:
           persist-credentials: false
       - run: python3 tools/recover_snap_core.py external/snap recovered/SnapCore.h
       - run: cmake -S . -B build-play -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON -DSKELLY_SNAP_HEADER="$PWD/recovered/SnapCore.h" -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_attack_test playground_recovery_test playground_render --parallel 2
-      - run: ctest --test-dir build-play -R '^playground_(bank|mix|attack|recovery)_test$' --output-on-failure
+      - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_attack_test playground_recovery_test playground_formant_test playground_render --parallel 2
+      - run: ctest --test-dir build-play -R '^playground_(bank|mix|attack|recovery|formant)_test$' --output-on-failure
       - name: Render actual five-engine singer comparisons
         run: |
           mkdir -p playground-audio

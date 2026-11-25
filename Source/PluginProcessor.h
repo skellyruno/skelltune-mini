@@ -12,6 +12,7 @@
 
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
 #include "../dsp/PlaygroundBank.hpp"
+#include "../dsp/FormantAudition.hpp"
 #endif
 
 class SkellyTuneRealtimeProcessor final : public juce::AudioProcessor, private juce::Timer {
@@ -120,8 +121,12 @@ public:
         const int locked=playgroundLockedMode_.load();
         return locked>=0?locked:playgroundMode();
     }
+    bool playgroundFormantRequested() const noexcept {
+        return state_.getRawParameterValue("playgroundFormantEnabled")->load()>0.5f;
+    }
     bool playgroundNeedsApply() const noexcept {
-        return playgroundProfile()!=playgroundAppliedProfile() ||
+        return playgroundFormantRequested()!=playgroundFormantApplied_.load() ||
+            playgroundProfile()!=playgroundAppliedProfile() ||
             (playgroundAppliedProfile()!=0 && playgroundMode()!=playgroundRenderMode());
     }
     bool playgroundPlaying() const noexcept { return playgroundPlaying_.load(); }
@@ -170,6 +175,8 @@ private:
 #endif
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     skelly::playground::Bank playground_;
+    skelly::playground::FormantAudition playgroundFormant_;
+    std::atomic<bool> playgroundFormantApplied_{false};
     std::atomic<int> playgroundActive_{-1};
     std::atomic<int> playgroundAppliedProfile_{0},playgroundLockedMode_{-1},playgroundHostDelay_{0};
     std::atomic<bool> playgroundPlaying_{false};

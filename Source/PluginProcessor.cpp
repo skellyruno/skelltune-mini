@@ -155,6 +155,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"playgroundLatencyProfile",1},"Latency",profiles,3,
         juce::AudioParameterChoiceAttributes{}.withAutomatable(false)));
+    // Append research-only controls; never change old parameter IDs or latency defaults.
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"playgroundFormantEnabled",1},
+        "Formant Audition (adds latency)",false,juce::AudioParameterBoolAttributes{}.withAutomatable(false)));
+    layout.add(std::make_unique<F>(juce::ParameterID{"playgroundFormantShift",1}, "Formant Shift (semitones)",
+        juce::NormalisableRange<float>(-12.f,12.f,0.1f),0.f));
 #endif
     return layout;
 }
@@ -165,6 +170,7 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     doubleScratch_.setSize(2, juce::jlimit(1, 16384, maxBlockSize), false, true, false);
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     playground_.prepare(sampleRate,std::max(1,getTotalNumInputChannels()),maxBlockSize,playgroundProfile(),playgroundMode());
+    playgroundFormant_.prepare(sampleRate,playgroundFormantRequested());
     playgroundPlaying_.store(false);
     publishPlaygroundConfig();
     return;
@@ -202,23 +208,27 @@ void SkellyTuneRealtimeProcessor::publishPlaygroundConfig() {
     for(int i=0;i<skelly::playground::modeCount;++i)playgroundNative_[size_t(i)].store(playground_.nativeLatency(i));
     playgroundLockedMode_.store(playground_.lockedMode());
     playgroundAppliedProfile_.store(playground_.latencyProfile());
-    playgroundHostDelay_.store(playground_.latencySamples());
+    playgroundFormantApplied_.store(playgroundFormant_.enabled());
+    const int totalDelay=playground_.latencySamples()+playgroundFormant_.latency();
+    playgroundHostDelay_.store(totalDelay);
     playgroundActive_.store(-1);
     displayedPitchHz_.store(0);displayedConfidence_.store(0);
     displayedTargetNote_.store(-1);displayedCorrectionCents_.store(0);
     displayedTargetPending_.store(false);
     ++playgroundGeneration_;
-    setLatencySamples(playground_.latencySamples());
+    setLatencySamples(totalDelay);
 }
 bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     auto* mm=juce::MessageManager::getInstanceWithoutCreating();
     if(!mm||!mm->isThisTheMessageThread())return false;
     if(!playgroundNeedsApply())return true;
     double rate=0.;int channels=0,block=0,profile=0,mode=0;unsigned generation=0;
+    bool formantEnabled=false;
     {
         const juce::ScopedLock lock(getCallbackLock());
         rate=preparedAudioRate_;channels=getTotalNumInputChannels();block=doubleScratch_.getNumSamples();
         profile=playgroundProfile();mode=playgroundMode();generation=playgroundGeneration_.load();
+        formantEnabled=playgroundFormantRequested();
     }
     if(!(rate>0.)||channels<1||block<1)return false;
     // Allocate and prepare the replacement while the current engine remains
@@ -228,13 +238,17 @@ bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     skelly::playground::Bank next;
     try { next.prepare(rate,channels,block,profile,mode); }
     catch(...) { return false; }
+    skelly::playground::FormantAudition nextFormant;
+    nextFormant.prepare(rate,formantEnabled);
     {
         const juce::ScopedLock lock(getCallbackLock());
         if(generation!=playgroundGeneration_.load()||
-           profile!=playgroundProfile()||mode!=playgroundMode())return false;
+           profile!=playgroundProfile()||mode!=playgroundMode()||
+           formantEnabled!=playgroundFormantRequested())return false;
         const bool suspended=isSuspended();
         suspendProcessing(true);
         std::swap(playground_,next);
+        std::swap(playgroundFormant_,nextFormant);
         publishPlaygroundConfig();
         suspendProcessing(suspended);
     }
@@ -389,6 +403,15 @@ void SkellyTuneRealtimeProcessor::processPlayground(float* const* io,int channel
         float* segment[2]={io[0]+offset,channels==2?io[1]+offset:nullptr};
         playground_.process(segment,channels,count,p,mode,target);
         offset+=count;
+    }
+    if(playgroundFormant_.enabled()) {
+        playgroundFormant_.setSemitones(state_.getRawParameterValue("playgroundFormantShift")->load());
+        const bool bypass=state_.getRawParameterValue("bypass")->load()>0.5f;
+        for(int i=0;i<frames;++i){
+            const float l=io[0][i],r=channels==2?io[1][i]:l;
+            const auto y=playgroundFormant_.process(l,r,bypass);
+            io[0][i]=y[0];if(channels==2)io[1][i]=y[1];
+        }
     }
     const auto t=playground_.telemetry();
     playgroundActive_.store(playground_.activeMode(),std::memory_order_relaxed);
@@ -580,11 +603,24 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
     if (!incoming.isValid()) return;
     auto safeState = state_.copyState();
     int restored = 0;
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    bool seenFormantEnabled=false,seenFormantShift=false;
+#endif
     for (int i = 0; i < incoming.getNumChildren(); ++i) {
         const auto source = incoming.getChild(i);
         if (!source.hasType(juce::Identifier("PARAM"))) continue;
         const auto id = source.getProperty(juce::Identifier("id")).toString();
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+        if(id=="playgroundFormantEnabled"||id=="playgroundFormantShift"){
+            const bool enabled=id=="playgroundFormantEnabled";
+            if(enabled)seenFormantEnabled=true;else seenFormantShift=true;
+            const auto value=decodeSavedNumber(source.getProperty("value"));
+            auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);
+            if(value&&target.isValid()&&(enabled?(*value==0.||*value==1.):(*value>=-12.&&*value<=12.))){
+                target.setProperty("value",*value,nullptr);++restored;
+            }
+            continue;
+        }
         if(id=="playgroundOgFormants"){
             const auto value=decodeSavedNumber(source.getProperty("value"));
             auto target=safeState.getChildWithProperty(juce::Identifier("id"),id);
@@ -639,6 +675,13 @@ void SkellyTuneRealtimeProcessor::setStateInformation(const void* data, int byte
     // An XML chunk with no known fields is not a valid user project;
     // it must not silently wipe existing manual pitch corrections.
     if(restored==0 && !restoredSkin && !edits.isValid())return;
+#if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    // An older valid project must not inherit the newly enabled colour stage.
+    if(restored>0){
+        if(!seenFormantEnabled)safeState.getChildWithProperty("id","playgroundFormantEnabled").setProperty("value",0.,nullptr);
+        if(!seenFormantShift)safeState.getChildWithProperty("id","playgroundFormantShift").setProperty("value",0.,nullptr);
+    }
+#endif
     if (restored > 0 || restoredSkin) state_.replaceState(safeState);
     // Valid legacy presets have no manual edits, so clear them on recall.
     pitchEdits_.clear();

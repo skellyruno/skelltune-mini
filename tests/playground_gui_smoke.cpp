@@ -109,6 +109,25 @@ int main(){
     juce::MemoryBlock oldState;juce::AudioProcessor::copyXmlToBinary(*xml,oldState);
     p->setStateInformation(oldState.getData(),int(oldState.getSize()));
     if(p->playgroundProfile()!=3||p->playgroundNeedsApply()||p->getLatencySamples()!=120)return 30;
+    auto* enableFormant=p->parameters().getParameter("playgroundFormantEnabled");
+    auto* shiftFormant=p->parameters().getParameter("playgroundFormantShift");
+    if(!enableFormant||!shiftFormant||enableFormant->isAutomatable())return 31;
+    const int basePdc=p->getLatencySamples();
+    enableFormant->setValueNotifyingHost(1.f);
+    shiftFormant->setValueNotifyingHost(shiftFormant->convertTo0to1(-7.f));
+    if(!p->applyPlaygroundLatency()||p->getLatencySamples()!=basePdc+1024||listener.last!=basePdc+1024)return 32;
+    juce::MemoryBlock formantState;p->getStateInformation(formantState);
+    for(int i=0;i<24;++i){frame.clear();p->processBlock(frame,midi);}
+    enableFormant->setValueNotifyingHost(0.f);
+    if(!p->applyPlaygroundLatency()||p->getLatencySamples()!=basePdc)return 33;
+    p->setStateInformation(formantState.getData(),int(formantState.getSize()));
+    if(p->getLatencySamples()!=basePdc+1024||std::abs(p->parameters().getRawParameterValue("playgroundFormantShift")->load()+7.f)>.11f)return 34;
+    auto legacy=juce::AudioProcessor::getXmlFromBinary(oldState.getData(),int(oldState.getSize()));
+    if(!legacy)return 35;
+    for(int i=legacy->getNumChildElements()-1;i>=0;--i){auto* child=legacy->getChildElement(i);if(child->getStringAttribute("id").startsWith("playgroundFormant"))legacy->removeChildElement(child,true);}
+    juce::MemoryBlock legacyFormant;juce::AudioProcessor::copyXmlToBinary(*legacy,legacyFormant);
+    p->setStateInformation(legacyFormant.getData(),int(legacyFormant.getSize()));
+    if(p->getLatencySamples()!=basePdc||p->playgroundFormantRequested())return 36;
     p->removeListener(&listener);
     if(p->pitchEdits().targetAt(150)!=57)return 27;
     p->setPlayHead(nullptr);

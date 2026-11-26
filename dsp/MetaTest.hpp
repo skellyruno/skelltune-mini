@@ -172,7 +172,7 @@ public:
     static double probeAlignedHead(const float* history, double previousHead,
                                    double candidateHead, int radius,
                                    double youngestSafeHead,
-                                   const float* right=nullptr,bool continuity=false,double cycle=0.) noexcept {
+                                   const float* right=nullptr) noexcept {
         return alignHead(history, previousHead, candidateHead, radius,
                          youngestSafeHead,nullptr,nullptr,right);
     }
@@ -664,7 +664,7 @@ private:
                             double proposed, int radius,
                             double youngestSafe,
                             double* before=nullptr,double* after=nullptr,
-                            const float* right=nullptr) noexcept {
+                            const float* right=nullptr,bool continuity=false,double cycle=0.) noexcept {
         // Cache the outgoing grain's exact cubic samples once. All
         // candidate offsets share them, including stereo phase scoring.
         // The arithmetic order and mono/stereo weights stay identical.

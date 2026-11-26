@@ -10,6 +10,7 @@
 #include "FormantEnvelopeGuard.hpp"
 #include "AdaptiveVowelGuard.hpp"
 #include "ChallengerDynamics.hpp"
+#include "FinalListeningPolicy.hpp"
 #include "SnapCore.h"
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
 #include "SkellyFusionEngine.h"
@@ -65,6 +66,14 @@ public:
     // reference renders can deliberately leave it off for reproducible A/B.
     void setListeningPromotion(bool enabled) noexcept { listeningPromotion_=enabled; }
     void setMeasuredGrainPromotion(bool enabled) noexcept { measuredGrainPromotion_=enabled; }
+    void setFinalListeningPolicy(bool enabled) noexcept { finalListeningPolicy_=enabled; }
+    void setFinalTrial(unsigned flags) noexcept { finalTrial_=int(flags&15u); }
+    static float finalMotionSpeed(float hostSpeed,float existing,int mode) noexcept {
+        if(mode==2||mode==3)return existing;
+        const float weight=std::clamp(std::min((hostSpeed-2.f)/8.f,(85.f-hostSpeed)/35.f),0.f,1.f);
+        const float factor=mode==0?.70f:mode==1?.80f:.72f;
+        return existing*(1.f-weight*(1.f-factor));
+    }
     static double measuredMetaGrain(float hostSpeed) noexcept {
         return std::max(std::clamp(1.-double(hostSpeed)/8.,0.,1.),std::clamp((double(hostSpeed)-50.)/50.,0.,1.));
     }
@@ -225,10 +234,11 @@ public:
                     const double cap=std::max(1.,original),safe=peak>cap?cap/peak:1.;
                     for(int c=0;c<channels;++c)alignedWet[c]=float(corrected[c]*safe);
                 }
-                if(adaptiveStrength_>0. && active_!=2 && active_!=3){
+                const double vowelStrength=(finalFlags()&8u)?1.:adaptiveStrength_;
+                if(vowelStrength>0. && active_!=2 && active_!=3){
                     const double voiced=!dryOnly&&pitchValidHistory_[size_t(wr)]!=0?1.:0.;
                     const double fullWet=std::clamp((double(blend)-.90)*10.,0.,1.);
-                    adaptiveVowel_.process(alignedDry,alignedWet,channels,voiced*fullWet,adaptiveStrength_);
+                    adaptiveVowel_.process(alignedDry,alignedWet,channels,voiced*fullWet,vowelStrength);
                 }
                 // Keep the compensation envelope alive through a protected
                 // attack. Previously it reset to unity at the first marker,
@@ -281,15 +291,23 @@ private:
         else inspired_->reset();
 #endif
     }
+    unsigned finalFlags() const noexcept {
+        if(profile_!=3||active_<0||active_==2||active_==3)return 0;
+        return finalTrial_>=0?unsigned(finalTrial_):finalListeningPolicy_?finalListeningFlags[size_t(active_)]:0u;
+    }
     void render(float* const* io,int channels,int frames,Parameters p,int manual,uint8_t* pitchValid) {
+        const unsigned flags=finalFlags();
+        const bool phase=phaseContinuityCandidate_||(flags&1u);
+        const bool compact=synthesisCandidate_||(flags&2u);
         const float hostSpeed=p.speedMs;
         if(motionCandidate_&&active_!=2&&active_!=3)p.speedMs=skelly::challengerSpeed(p.speedMs,active_);
         else if(listeningPromotion_&&profile_==3)p.speedMs=skelly::listeningSpeed(p.speedMs,active_);
+        if(flags&4u)p.speedMs=finalMotionSpeed(hostSpeed,p.speedMs,active_);
         if(active_==0){p.testTune=true;p.mix=1.f;p.experimentalCycleSynthesis=false;
-            testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setCompactWrapCandidate(synthesisCandidate_);testTune_->setPhaseContinuityCandidate(phaseContinuityCandidate_);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
+            testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setCompactWrapCandidate(compact);testTune_->setPhaseContinuityCandidate(phase);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
             const float* in[2]={io[0],channels==2?io[1]:nullptr};testTune_->process(in,io,frames,channels,pitchValid);
             const auto e=testTune_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(testTune_->appliedCents()),testTune_->currentTargetNote(),testTune_->targetPending()};return;}
-        if(active_==1){meta_->setCompactGrainWeight(synthesisCandidate_?1.:(measuredGrainPromotion_&&profile_==3?measuredMetaGrain(hostSpeed):0.));meta_->setPhaseContinuityCandidate(phaseContinuityCandidate_);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
+        if(active_==1){meta_->setCompactGrainWeight(compact?1.:(measuredGrainPromotion_&&profile_==3?measuredMetaGrain(hostSpeed):0.));meta_->setPhaseContinuityCandidate(phase);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
             const double target=meta_->targetHz();telemetry_={float(meta_->detectedHz()),float(meta_->lastConfidence()),float(meta_->estimatedOutputCorrectionCents()),target>0?int(std::lround(69+12*std::log2(target/p.referenceA))):-1,false};return;}
         if(active_<4){snap::Params s;s.mode=active_-2;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
             snap_->setParams(s);snap_->process(io,channels,frames);const auto t=snap_->telemetry();telemetry_={t.voiced?t.inHz:0.f,t.conf,float(1200*std::log2(std::max(1e-6,snap_->currentRatio()))),t.voiced?t.targetNote:-1,false};return;}
@@ -298,10 +316,10 @@ private:
         autotune::Settings s;s.key=0;s.scale=autotune::Scale::Custom;s.customScale=mask;s.referenceHz=p.referenceA;s.retuneMs=p.speedMs;s.strength=p.amount;
         s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=motionCandidate_&&p.speedMs>2.f&&p.speedMs<45.f?5.f:10.f;
         if(!motionCandidate_&&listeningPromotion_&&profile_==3)s.noteConfirmMs=10.f-5.f*skelly::inspiredPromotionWeight(hostSpeed);
-        if(synthesisCandidate_&&profile_<=3)s.noteConfirmMs=std::min(s.noteConfirmMs,6.f);
+        if(compact&&profile_<=3)s.noteConfirmMs=std::min(s.noteConfirmMs,6.f);
         // The pinned native adapter actually maps snapLive to its own
         // confidence and hysteresis controller. Its legacy follow field is ignored.
-        if(phaseContinuityCandidate_&&profile_<=3)s.snapLive=true;
+        if(phase&&profile_<=3)s.snapLive=true;
         s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
         // Restore consonants sooner at intermediate retune rates without
         // changing hard tune, slow retune or the higher-latency quality path.
@@ -332,6 +350,8 @@ private:
     double adaptiveStrength_=0.;
     skelly::ChallengerDynamics challengerDynamics_;
     bool motionCandidate_=false,dynamicsCandidate_=false,listeningPromotion_=false,synthesisCandidate_=false,phaseContinuityCandidate_=false,measuredGrainPromotion_=false;
+    bool finalListeningPolicy_=false;
+    int finalTrial_=-1;
     std::array<int,modeCount> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

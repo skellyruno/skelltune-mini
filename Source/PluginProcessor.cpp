@@ -178,6 +178,7 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     playground_.setListeningPromotion(true);
     playground_.setMeasuredGrainPromotion(true);
+    playground_.setFinalListeningPolicy(true);
     playground_.prepare(sampleRate,std::max(1,getTotalNumInputChannels()),maxBlockSize,playgroundProfile(),playgroundMode());
     playgroundFormant_.prepare(sampleRate,true);
     playgroundPlaying_.store(false);
@@ -245,6 +246,7 @@ bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     skelly::playground::Bank next;
     next.setListeningPromotion(true);
     next.setMeasuredGrainPromotion(true);
+    next.setFinalListeningPolicy(true);
     try { next.prepare(rate,channels,block,profile,mode); }
     catch(...) { return false; }
     {

@@ -18,7 +18,8 @@ public:
         double a=0.,b=0.,peak=0.;
         for(int c=0;c<ch;++c){a+=double(d[c])*d[c];b+=double(w[c])*w[c];peak=std::max(peak,std::abs(double(w[c])));}
         dp_+=meter_*(a/ch-dp_);wp_+=meter_*(b/ch-wp_);
-        if(dp_<1.e-20)dp_=0.;if(wp_<1.e-20)wp_=0.;
+        if(dp_<1.e-20)dp_=0.;
+        if(wp_<1.e-20)wp_=0.;
         const double eligible=voiced?std::clamp((blend-.90)*10.,0.,1.):0.;
         gate_+=gateStep_*(eligible-gate_);if(gate_<1.e-9)gate_=0.;
         if(phase_==0){

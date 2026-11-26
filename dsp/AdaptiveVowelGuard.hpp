@@ -37,7 +37,8 @@ public:
         }
         for(int k=0;k<6;++k){
             dp_[k]+=meter_*(dp[k]/channels-dp_[k]);wp_[k]+=meter_*(wp[k]/channels-wp_[k]);
-            if(dp_[k]<1.e-20)dp_[k]=0.;if(wp_[k]<1.e-20)wp_[k]=0.;
+            if(dp_[k]<1.e-20)dp_[k]=0.;
+            if(wp_[k]<1.e-20)wp_[k]=0.;
         }
         eligibility=std::clamp(eligibility,0.,1.);
         activity_+=(eligibility-activity_)*(eligibility>activity_?enter_:leave_);

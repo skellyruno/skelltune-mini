@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 namespace skelly {
 // Gain-normalised waveform AND derivative continuity. Accumulated across
 // stereo lanes, fixed stack storage. No correlation across unrelated takes,
@@ -32,7 +33,7 @@ struct PhaseContinuity {
 };
 template<class Cost>
 inline double refinePhase(double best,double nominal,double lo,double hi,Cost&& cost) noexcept {
-    double chosen=best,score=cost(best);
+    double chosen=best,score=cost(best)+.0001*std::abs(best-nominal);
     for(double delta:{-.5,.5,-.25,.25}){
         const double candidate=std::clamp(best+delta,lo,hi);
         // Fractional refinement cannot exceed the integer search bounds.

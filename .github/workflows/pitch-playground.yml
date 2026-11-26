@@ -9,6 +9,7 @@ on:
       - tests/playground_*.hpp
       - tools/recover_snap_core.py
       - tools/render.cpp
+      - tools/score_playground.py
       - tools/normalize_vst3_moduleinfo.py
       - cmake/**
       - Source/**
@@ -43,6 +44,20 @@ jobs:
               SKELLY_PLAYGROUND_MODE=$mode ./build-play/playground_render playground-audio/DRY.wav "playground-audio/engine_${mode}_${speed}ms.wav" "$speed" 100 100 0 0 2773
             done
           done
+      - name: Score portable challengers at equal 2.5ms transport
+        run: |
+          for mode in 1 2 3 4; do
+            for speed in 0 10 25 100; do
+              export SKELLY_PLAYGROUND_MODE=$mode SKELLY_PLAYGROUND_LATENCY_PROFILE=3
+              ./build-play/playground_render playground-audio/DRY.wav "playground-audio/envelope_${mode}_base_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/envelope_${mode}_candidate_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              for strength in 0.35 0.65; do
+                SKELLY_PLAYGROUND_ADAPTIVE_VOWEL=$strength ./build-play/playground_render playground-audio/DRY.wav "playground-audio/adaptive_${mode}_${strength}_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              done
+            done
+          done
+          python -m pip install numpy scipy
+          python tools/score_playground.py playground-audio/DRY.wav playground-audio
       - uses: actions/upload-artifact@v4
         with:
           name: Pitch-Playground-four-engine-audio
@@ -128,6 +143,23 @@ jobs:
             }
           }
           Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+          # Adaptive candidate: compare two strengths with the previous envelope path, no default changes.
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              foreach ($strength in @('0.35','0.65')) {
+                $env:SKELLY_PLAYGROUND_ADAPTIVE_VOWEL = $strength
+                & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/adaptive_${mode}_${strength}_${speed}ms.wav" $speed 100 100 0 0 2773
+                if ($LASTEXITCODE -ne 0) { throw "Adaptive candidate failed" }
+                if ($mode -eq 3 -or $mode -eq 4) {
+                  if ((Get-FileHash "playground-full/envelope_${mode}_base_${speed}ms.wav").Hash -ne (Get-FileHash "playground-full/adaptive_${mode}_${strength}_${speed}ms.wav").Hash) { throw "Frozen reference changed" }
+                }
+              }
+              Remove-Item Env:SKELLY_PLAYGROUND_ADAPTIVE_VOWEL
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
           # Level A/B isolates only the new wet recovery, including both references.
           $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
           foreach ($mode in @(1,2,3,4,6)) {
@@ -168,6 +200,10 @@ jobs:
             }
           }
           Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+      - name: Score real-vocal pitch, envelope and level against frozen references
+        run: |
+          python -m pip install numpy scipy
+          python tools/score_playground.py benchmark/v33/raw_levelmatched_20-28.wav playground-full
       # Audio is retained for research. The binary is staged only after
       # all validation passes, on the owner's same-repository research branch.
       - uses: actions/upload-artifact@v4

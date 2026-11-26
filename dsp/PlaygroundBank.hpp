@@ -8,6 +8,7 @@
 #include "CoherentMixGuard.hpp"
 #include "WetLevelGuard.hpp"
 #include "FormantEnvelopeGuard.hpp"
+#include "AdaptiveVowelGuard.hpp"
 #include "SnapCore.h"
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
 #include "SkellyFusionEngine.h"
@@ -58,6 +59,7 @@ public:
     void setWetLevelRecoveryEnabled(bool enabled) noexcept { wetLevelRecovery_=enabled; }
     void setChallengerExperiments(bool enabled) noexcept { challengers_=enabled; }
     void setEnvelopeCandidate(bool enabled) noexcept { envelopeCandidate_=enabled; }
+    void setAdaptiveVowelCandidate(double strength) noexcept { adaptiveStrength_=std::clamp(strength,0.,1.); }
     void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
         rate_=std::clamp(std::isfinite(rate)?rate:48000.,8000.,192000.);
         channels_=std::clamp(channels,1,2);
@@ -92,6 +94,7 @@ public:
         fadeStep_=1./double(fadeSamples_);
         wetLevelGuard_.prepare(rate_);
         envelopeGuard_.prepare(rate_,channels_);
+        adaptiveVowel_.prepare(rate_);
         mixGuard_.prepare(rate_);partialBlend_=false;
         attackMarks_.assign(size_t(capacity_),0);
         pitchValidHistory_.assign(size_t(capacity_),0);
@@ -184,8 +187,8 @@ public:
                     alignedDry[c]=dry_[c][size_t(dr)];alignedWet[c]=wet_[c][size_t(wr)];
                 }
                 // Classic and Crystal are immutable listening references.
+                if(active_!=2 && active_!=3) pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
                 if(wetLevelRecovery_ && active_!=2 && active_!=3){
-                    pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
                     wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend,overshootBalance_ && (active_==1));
                 }
                 // Candidate only: aligned dry envelope guides the corrected wet signal.
@@ -195,6 +198,11 @@ public:
                     const double strength=!dryOnly && pitchValidHistory_[size_t(wr)]!=0 ? .65 : 0.;
                     envelopeGuard_.process(alignedDry,alignedWet,corrected,channels,strength,strength>0.);
                     for(int c=0;c<channels;++c)alignedWet[c]=corrected[c];
+                }
+                if(adaptiveStrength_>0. && active_!=2 && active_!=3){
+                    const double voiced=!dryOnly&&pitchValidHistory_[size_t(wr)]!=0?1.:0.;
+                    const double fullWet=std::clamp((double(blend)-.90)*10.,0.,1.);
+                    adaptiveVowel_.process(alignedDry,alignedWet,channels,voiced*fullWet,adaptiveStrength_);
                 }
                 // Keep the compensation envelope alive through a protected
                 // attack. Previously it reset to unity at the first marker,
@@ -235,6 +243,7 @@ private:
     void activate(int mode) {
         wetLevelGuard_.reset();
         envelopeGuard_.reset();
+        adaptiveVowel_.reset();
         std::fill(pitchValidHistory_.begin(),pitchValidHistory_.end(),uint8_t(0));
         mixGuard_.reset();partialBlend_=false;
         active_=mode;fadePosition_=0;warm_=common_+int(rate_*.04);telemetry_={};
@@ -283,6 +292,8 @@ private:
     WetLevelGuard wetLevelGuard_;
     skelly::FormantEnvelopeGuard envelopeGuard_;
     bool envelopeCandidate_=false;
+    skelly::AdaptiveVowelGuard adaptiveVowel_;
+    double adaptiveStrength_=0.;
     std::array<int,modeCount> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

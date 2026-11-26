@@ -32,6 +32,10 @@ inline void run(int fs){
     require(wet[0]>=.26399f&&wet[0]<.265f&&std::abs(wet[1]+.7f*wet[0])<1.e-6f,"bounded stereo overshoot attenuation");
     for(double mix:{0.,.5,.95}){wet[0]=.3f;wet[1]=-.21f;g.process(dry,wet,2,true,mix,mix,true);require(wet[0]==.3f&&wet[1]==-.21f,"overshoot changed partial Mix");}
     wet[0]=1.2f;wet[1]=-.84f;g.process(dry,wet,2,true,1.,1.,true);require(wet[0]==1.2f&&wet[1]==-.84f,"overshoot changed overloaded input");
+    // Adaptive vowel candidate: identical envelopes at different volume are not coloration targets.
+    skelly::AdaptiveVowelGuard vowel;vowel.prepare(fs);
+    for(int i=0;i<fs/4;++i){const float x=.18f*std::sin(float(i)*.13f);float d[2]{x,-.7f*x},w[2]{.6f*x,-.42f*x};vowel.process(d,w,2,1.,.65);require(std::abs(w[0]-.6f*x)<2.e-5f&&std::abs(w[1]+.7f*w[0])<2.e-6f,"adaptive vowel mistaken level shift or stereo unlink");}
+    for(int i=0;i<fs/10;++i){float d[2]{.4f,-.2f},w[2]{.1f,-.05f};vowel.process(d,w,2,0.,.65);require(w[0]==.1f&&w[1]==-.05f,"adaptive changed protected attack/bypass");}
     // Explicit higher-delay profiles now spend their existing host budget
     // on native synthesis instead of padding. All lower profiles are frozen.
     for(int profile=0;profile<6;++profile){
@@ -82,7 +86,7 @@ inline void run(int fs){
     for(int mode:{2,3})for(int profile=0;profile<int(skelly::playground::latencyNames.size());++profile){
         const int n=fs/2;std::vector<float> src(n);double phase=0.;
         for(int i=0;i<n;++i){double t=double(i)/fs;phase+=2*skelly::kPi*(225.+17.*std::sin(2*skelly::kPi*4.*t))/fs;src[i]=float((.12+.08*std::sin(2*skelly::kPi*3.*t))*std::sin(phase));}
-        auto render=[&](bool enabled){skelly::playground::Bank b;b.setEnvelopeCandidate(enabled);b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.setRecordingResponseEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
+        auto render=[&](bool enabled){skelly::playground::Bank b;b.setEnvelopeCandidate(enabled);b.setAdaptiveVowelCandidate(enabled?.65:0.);b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.setRecordingResponseEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
         require(render(false)==render(true),"Classic/Crystal reference changed");
     }
     std::cout<<fs<<" PASS: bounded wet recovery and 12 frozen Classic/Crystal profile pairs\n";

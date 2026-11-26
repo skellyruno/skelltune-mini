@@ -99,6 +99,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         const int profile=latency?std::atoi(latency):0;
         if(profile<0||profile>=int(skelly::playground::latencyNames.size()))throw std::runtime_error("Unavailable latency profile");
         skelly::playground::Bank bank;
+        if(const char* strength=std::getenv("SKELLY_PLAYGROUND_ADAPTIVE_VOWEL"))bank.setAdaptiveVowelCandidate(std::atof(strength));
         bank.setEnvelopeCandidate(std::getenv("SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE")!=nullptr);
         bank.setChallengerExperiments(std::getenv("SKELLY_PLAYGROUND_LEGACY_CHALLENGERS")==nullptr);
         bank.setWetLevelRecoveryEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_LEVEL")==nullptr);

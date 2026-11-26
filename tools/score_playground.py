@@ -97,6 +97,11 @@ def main():
         elif mode=="6" and speed=="25ms":expected=folder/f"next_{mode}_combined_{speed}.wav"
         else:expected=folder/f"envelope_{mode}_base_{speed}.wav"
         assert expected.exists() and hashlib.sha256(path.read_bytes()).digest()==hashlib.sha256(expected.read_bytes()).digest(),("promoted audio differs",path,expected)
+    for path in folder.glob("next_*_listening_*ms.wav"):
+        _,mode,_,speed=path.stem.split("_")
+        variant="synthesis" if mode=="2" and speed in ("0ms","100ms") else "promoted"
+        expected=folder/f"next_{mode}_{variant}_{speed}.wav"
+        assert expected.exists() and hashlib.sha256(path.read_bytes()).digest()==hashlib.sha256(expected.read_bytes()).digest(),("listening promotion differs",path,expected)
     lookup={r["file"]:r for r in rows}
     for r in rows:
         bits=pathlib.Path(r["file"]).stem.split("_")

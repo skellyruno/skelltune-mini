@@ -64,6 +64,10 @@ public:
     // The real plugin always enables the measured listening policy. Offline
     // reference renders can deliberately leave it off for reproducible A/B.
     void setListeningPromotion(bool enabled) noexcept { listeningPromotion_=enabled; }
+    void setMeasuredGrainPromotion(bool enabled) noexcept { measuredGrainPromotion_=enabled; }
+    static double measuredMetaGrain(float hostSpeed) noexcept {
+        return std::max(std::clamp(1.-double(hostSpeed)/8.,0.,1.),std::clamp((double(hostSpeed)-50.)/50.,0.,1.));
+    }
     void setSynthesisCandidate(bool enabled) noexcept { synthesisCandidate_=enabled; }
     void setPhaseContinuityCandidate(bool enabled) noexcept { phaseContinuityCandidate_=enabled; }
     void setMotionCandidate(bool enabled) noexcept { motionCandidate_=enabled; }
@@ -285,7 +289,7 @@ private:
             testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setCompactWrapCandidate(synthesisCandidate_);testTune_->setPhaseContinuityCandidate(phaseContinuityCandidate_);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
             const float* in[2]={io[0],channels==2?io[1]:nullptr};testTune_->process(in,io,frames,channels,pitchValid);
             const auto e=testTune_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(testTune_->appliedCents()),testTune_->currentTargetNote(),testTune_->targetPending()};return;}
-        if(active_==1){meta_->setCompactGrainCandidate(synthesisCandidate_);meta_->setPhaseContinuityCandidate(phaseContinuityCandidate_);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
+        if(active_==1){meta_->setCompactGrainWeight(synthesisCandidate_?1.:(measuredGrainPromotion_&&profile_==3?measuredMetaGrain(hostSpeed):0.));meta_->setPhaseContinuityCandidate(phaseContinuityCandidate_);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
             const double target=meta_->targetHz();telemetry_={float(meta_->detectedHz()),float(meta_->lastConfidence()),float(meta_->estimatedOutputCorrectionCents()),target>0?int(std::lround(69+12*std::log2(target/p.referenceA))):-1,false};return;}
         if(active_<4){snap::Params s;s.mode=active_-2;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
             snap_->setParams(s);snap_->process(io,channels,frames);const auto t=snap_->telemetry();telemetry_={t.voiced?t.inHz:0.f,t.conf,float(1200*std::log2(std::max(1e-6,snap_->currentRatio()))),t.voiced?t.targetNote:-1,false};return;}
@@ -327,7 +331,7 @@ private:
     skelly::AdaptiveVowelGuard adaptiveVowel_;
     double adaptiveStrength_=0.;
     skelly::ChallengerDynamics challengerDynamics_;
-    bool motionCandidate_=false,dynamicsCandidate_=false,listeningPromotion_=false,synthesisCandidate_=false,phaseContinuityCandidate_=false;
+    bool motionCandidate_=false,dynamicsCandidate_=false,listeningPromotion_=false,synthesisCandidate_=false,phaseContinuityCandidate_=false,measuredGrainPromotion_=false;
     std::array<int,modeCount> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

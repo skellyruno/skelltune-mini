@@ -65,6 +65,7 @@ public:
     // reference renders can deliberately leave it off for reproducible A/B.
     void setListeningPromotion(bool enabled) noexcept { listeningPromotion_=enabled; }
     void setSynthesisCandidate(bool enabled) noexcept { synthesisCandidate_=enabled; }
+    void setPhaseContinuityCandidate(bool enabled) noexcept { phaseContinuityCandidate_=enabled; }
     void setMotionCandidate(bool enabled) noexcept { motionCandidate_=enabled; }
     void setDynamicsCandidate(bool enabled) noexcept { dynamicsCandidate_=enabled; }
     void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
@@ -196,14 +197,15 @@ public:
                 }
                 // Classic and Crystal are immutable listening references.
                 if(active_!=2 && active_!=3) pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
-                if((dynamicsCandidate_ || (listeningPromotion_ && profile_==3 && (active_==0||active_==1||(active_==4&&skelly::inspiredPromotionWeight(p.speedMs)>0.f)))) && active_!=2 && active_!=3){
+                if((dynamicsCandidate_ || (listeningPromotion_ && profile_==3 && (active_==0||active_==1||active_==4))) && active_!=2 && active_!=3){
                     const double strength=active_==1?1.:.75;
                     if(!dynamicsCandidate_ && active_==4){
                         float old[2]{alignedWet[0],alignedWet[1]};
                         wetLevelGuard_.process(alignedDry,old,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend,false);
                         challengerDynamics_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,blend,strength);
                         const float weight=skelly::inspiredPromotionWeight(p.speedMs);
-                        if(weight<1.f)for(int c=0;c<channels;++c)alignedWet[c]=old[c]+weight*(alignedWet[c]-old[c]);
+                        if(weight==0.f)for(int c=0;c<channels;++c)alignedWet[c]=old[c];
+                        else if(weight<1.f)for(int c=0;c<channels;++c)alignedWet[c]=old[c]+weight*(alignedWet[c]-old[c]);
                     }else challengerDynamics_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,blend,strength);
                 }else if(wetLevelRecovery_ && active_!=2 && active_!=3){
                     wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend,overshootBalance_ && (active_==1));
@@ -280,10 +282,10 @@ private:
         if(motionCandidate_&&active_!=2&&active_!=3)p.speedMs=skelly::challengerSpeed(p.speedMs,active_);
         else if(listeningPromotion_&&profile_==3)p.speedMs=skelly::listeningSpeed(p.speedMs,active_);
         if(active_==0){p.testTune=true;p.mix=1.f;p.experimentalCycleSynthesis=false;
-            testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setCompactWrapCandidate(synthesisCandidate_);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
+            testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setCompactWrapCandidate(synthesisCandidate_);testTune_->setPhaseContinuityCandidate(phaseContinuityCandidate_);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
             const float* in[2]={io[0],channels==2?io[1]:nullptr};testTune_->process(in,io,frames,channels,pitchValid);
             const auto e=testTune_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(testTune_->appliedCents()),testTune_->currentTargetNote(),testTune_->targetPending()};return;}
-        if(active_==1){meta_->setCompactGrainCandidate(synthesisCandidate_);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
+        if(active_==1){meta_->setCompactGrainCandidate(synthesisCandidate_);meta_->setPhaseContinuityCandidate(phaseContinuityCandidate_);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
             const double target=meta_->targetHz();telemetry_={float(meta_->detectedHz()),float(meta_->lastConfidence()),float(meta_->estimatedOutputCorrectionCents()),target>0?int(std::lround(69+12*std::log2(target/p.referenceA))):-1,false};return;}
         if(active_<4){snap::Params s;s.mode=active_-2;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
             snap_->setParams(s);snap_->process(io,channels,frames);const auto t=snap_->telemetry();telemetry_={t.voiced?t.inHz:0.f,t.conf,float(1200*std::log2(std::max(1e-6,snap_->currentRatio()))),t.voiced?t.targetNote:-1,false};return;}
@@ -292,7 +294,11 @@ private:
         autotune::Settings s;s.key=0;s.scale=autotune::Scale::Custom;s.customScale=mask;s.referenceHz=p.referenceA;s.retuneMs=p.speedMs;s.strength=p.amount;
         s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=motionCandidate_&&p.speedMs>2.f&&p.speedMs<45.f?5.f:10.f;
         if(!motionCandidate_&&listeningPromotion_&&profile_==3)s.noteConfirmMs=10.f-5.f*skelly::inspiredPromotionWeight(hostSpeed);
-        if(synthesisCandidate_&&profile_<=3){s.noteConfirmMs=std::min(s.noteConfirmMs,6.f);s.follow=.95f;}s.noteStabilizerMs=0.;s.follow=synthesisCandidate_&&profile_<=3?.95f:.85f;s.voicingThreshold=.68f;
+        if(synthesisCandidate_&&profile_<=3)s.noteConfirmMs=std::min(s.noteConfirmMs,6.f);
+        // The pinned native adapter actually maps snapLive to its own
+        // confidence and hysteresis controller. Its legacy follow field is ignored.
+        if(phaseContinuityCandidate_&&profile_<=3)s.snapLive=true;
+        s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
         // Restore consonants sooner at intermediate retune rates without
         // changing hard tune, slow retune or the higher-latency quality path.
         if(recordingResponse_ && profile_>=1 && profile_<=3){
@@ -321,7 +327,7 @@ private:
     skelly::AdaptiveVowelGuard adaptiveVowel_;
     double adaptiveStrength_=0.;
     skelly::ChallengerDynamics challengerDynamics_;
-    bool motionCandidate_=false,dynamicsCandidate_=false,listeningPromotion_=false,synthesisCandidate_=false;
+    bool motionCandidate_=false,dynamicsCandidate_=false,listeningPromotion_=false,synthesisCandidate_=false,phaseContinuityCandidate_=false;
     std::array<int,modeCount> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

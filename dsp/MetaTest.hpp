@@ -29,6 +29,7 @@
 
 #include "RealtimeTuner.hpp"   // CausalPitchTracker (optional working detector)
 #include "PhaseCrossfadeLut.hpp"
+#include "PhaseContinuity.hpp"
 #include <algorithm>
 #include <array>
 #include <cfloat>
@@ -164,12 +165,13 @@ public:
     // Playground recording profiles only. Default standalone remains exact.
     void setFastRatioResponseEnabled(bool on) noexcept { fastRatioResponse_=on; }
     void setCompactGrainCandidate(bool on) noexcept { compactGrain_=on; }
+    void setPhaseContinuityCandidate(bool on) noexcept { phaseContinuityCandidate_=on; }
     // Pure deterministic comparison probe for the exact same alignment
     // routine used by the live engine; requires a valid PCM history.
     static double probeAlignedHead(const float* history, double previousHead,
                                    double candidateHead, int radius,
                                    double youngestSafeHead,
-                                   const float* right=nullptr) noexcept {
+                                   const float* right=nullptr,bool continuity=false,double cycle=0.) noexcept {
         return alignHead(history, previousHead, candidateHead, radius,
                          youngestSafeHead,nullptr,nullptr,right);
     }
@@ -397,7 +399,7 @@ public:
                         double before=0.0, after=0.0;
                         const double selected = alignHead(ring_[0].data(),
                             oldHead, proposed, radius, limit,&before,&after,
-                            lanes == 2 ? ring_[1].data() : nullptr);
+                            lanes == 2 ? ring_[1].data() : nullptr,phaseContinuityCandidate_,cycle);
                         sharedPhaseAdjustment = selected - proposed;
                         // Reuse identical phase comparisons from alignment.
                         phaseErrorBefore_ += before;
@@ -665,6 +667,25 @@ private:
         // Cache the outgoing grain's exact cubic samples once. All
         // candidate offsets share them, including stereo phase scoring.
         // The arithmetic order and mono/stereo weights stay identical.
+        if(continuity){
+            const int lanes=right?2:1;
+            const float* histories[2]={r,right};
+            const int count=std::clamp(int(std::lround(cycle*.20)),12,48);
+            std::array<std::array<float,2>,48> source{};
+            for(int i=0;i<count;++i)for(int l=0;l<lanes;++l)source[size_t(i)][size_t(l)]=tap(histories[l],previous-double(i)*2.,true);
+            const auto score=[&](double head) noexcept {
+                skelly::PhaseContinuity metric;
+                for(int i=0;i<count;++i)for(int l=0;l<lanes;++l)metric.add(l,source[size_t(i)][size_t(l)],tap(histories[l],head-double(i)*2.,true));
+                return metric.cost();
+            };
+            const double original=score(proposed);if(before)*before=original;if(after)*after=original;
+            if(proposed>youngestSafe)return proposed;
+            const int span=std::clamp(radius,0,16);double best=proposed,bestCost=original;
+            const auto penalized=[&](double h) noexcept {return score(h)+.002*std::abs(h-proposed);};
+            for(int off=-span;off<=span;++off){const double h=proposed+off;if(h<30.||h>youngestSafe)continue;const double v=penalized(h);if(v<bestCost){best=h;bestCost=v;}}
+            if(bestCost<original*.94){best=skelly::refinePhase(best,proposed,std::max(30.,proposed-span),std::min(youngestSafe,proposed+span),penalized);if(after)*after=score(best);return best;}
+            return proposed;
+        }
         std::array<std::array<float,2>,12> outgoing{};
         const int lanes=right?2:1;
         const float* histories[2]={r,right};
@@ -743,7 +764,7 @@ private:
     double exitAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.004));
     double ratioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.0025));
     double fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.001));
-    bool fastRatioResponse_=false,compactGrain_=false;
+    bool fastRatioResponse_=false,compactGrain_=false,phaseContinuityCandidate_=false;
     double baseAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.010));
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;

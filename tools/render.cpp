@@ -100,6 +100,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         if(profile<0||profile>=int(skelly::playground::latencyNames.size()))throw std::runtime_error("Unavailable latency profile");
         skelly::playground::Bank bank;
         if(const char* strength=std::getenv("SKELLY_PLAYGROUND_ADAPTIVE_VOWEL"))bank.setAdaptiveVowelCandidate(std::atof(strength));
+        bank.setPhaseContinuityCandidate(std::getenv("SKELLY_PLAYGROUND_PHASE_CONTINUITY")!=nullptr);
         bank.setSynthesisCandidate(std::getenv("SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE")!=nullptr);
         bank.setListeningPromotion(std::getenv("SKELLY_PLAYGROUND_LISTENING_PROMOTION")!=nullptr);
         bank.setMotionCandidate(std::getenv("SKELLY_PLAYGROUND_MOTION_CANDIDATE")!=nullptr);

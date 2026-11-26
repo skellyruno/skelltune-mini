@@ -10,6 +10,7 @@
 #include "HarmonicAirGuard.hpp"
 #include "WetRumbleGuard.hpp"
 #include "PhaseCrossfadeLut.hpp"
+#include "PhaseContinuity.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -757,6 +758,7 @@ public:
     void setProvisionalTransitionEnabled(bool enabled) noexcept { provisionalTransitionEnabled_ = enabled; }
     void setPlaygroundTransitionExperiment(bool enabled) noexcept { playgroundTransitionExperiment_=enabled; }
     void setCompactWrapCandidate(bool enabled) noexcept { compactWrapCandidate_=enabled; }
+    void setPhaseContinuityCandidate(bool enabled) noexcept { phaseContinuityCandidate_=enabled; }
     static bool holdTestTuneBoundary(int previous,int candidate,uint16_t mask,double midi,double onset) noexcept {
         return previous>=0 && previous<128 && candidate>=0 && candidate<128 && previous!=candidate &&
             (mask & (1u<<(previous%12))) && (mask & (1u<<(candidate%12))) &&
@@ -1511,6 +1513,19 @@ private:
     // already in the ring; no lookahead or audio-thread allocations.
     double choosePhaseAlignedDestination(double from, double nominal, double period, double minDelay) noexcept {
         const int maxAdjust = std::clamp(int(std::lround(period * 0.085)), 2, 32);
+        if(phaseContinuityCandidate_){
+            const int count=std::clamp(int(std::lround(period*.20)),12,48),capacity=mask_+1;
+            std::array<std::array<float,2>,48> source{};
+            for(int i=0;i<count;++i)for(int l=0;l<channels_;++l)source[size_t(i)][size_t(l)]=interpolate(history_.data()+size_t(l)*capacity,from+i*2.+3.);
+            const auto score=[&](double age) noexcept {skelly::PhaseContinuity metric;for(int i=0;i<count;++i)for(int l=0;l<channels_;++l)metric.add(l,source[size_t(i)][size_t(l)],interpolate(history_.data()+size_t(l)*capacity,age+i*2.+3.));return metric.cost();};
+            const double lo=std::max(minDelay,nominal-maxAdjust),hi=std::min(double(capacity)-8.,nominal+maxAdjust);
+            if(lo>hi)return nominal;
+            const auto penalty=[&](double age) noexcept {const double offset=(age-nominal)/maxAdjust;return score(age)+.028*offset*offset;};
+            const double original=score(nominal);double best=std::clamp(nominal,lo,hi),bestCost=penalty(best);
+            for(int k=-maxAdjust;k<=maxAdjust;++k){const double age=nominal+k;if(age<lo||age>hi)continue;const double v=penalty(age);if(v<bestCost){best=age;bestCost=v;}}
+            best=skelly::refinePhase(best,nominal,lo,hi,penalty);
+            ++phaseJumpCount_;phaseJumpError_+=std::abs(best-nominal);mismatchBefore_+=original;mismatchAfter_+=score(best);return best;
+        }
         const int length = std::clamp(int(std::lround(period * 0.12)), 12, 42);
         const int capacity = mask_ + 1;
         double bestScore = 1e40, best = nominal, baseline = -1.0, chosenMismatch = 0.0;
@@ -1608,7 +1623,7 @@ private:
     bool harmonicWetGateEnabled_ = true;
     bool provisionalTransitionEnabled_ = false;
     bool playgroundTransitionExperiment_=false;
-    bool compactWrapCandidate_=false;
+    bool compactWrapCandidate_=false,phaseContinuityCandidate_=false;
     bool holdActiveWhilePending_ = true;
     PeriodTable periodTable_;
     int nearZeroSamples_ = 0;

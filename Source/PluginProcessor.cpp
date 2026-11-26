@@ -164,7 +164,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor:
         juce::AudioParameterChoiceAttributes{}.withAutomatable(false)));
     // Append research-only controls; never change old parameter IDs or latency defaults.
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"playgroundFormantEnabled",1},
-        "Formant Audition (adds latency)",false,juce::AudioParameterBoolAttributes{}.withAutomatable(false)));
+        "Formant Audition (no added delay)",false,juce::AudioParameterBoolAttributes{}.withAutomatable(false)));
     layout.add(std::make_unique<F>(juce::ParameterID{"playgroundFormantShift",1}, "Formant Shift (semitones)",
         juce::NormalisableRange<float>(-12.f,12.f,0.1f),0.f));
 #endif
@@ -177,7 +177,7 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
     doubleScratch_.setSize(2, juce::jlimit(1, 16384, maxBlockSize), false, true, false);
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     playground_.prepare(sampleRate,std::max(1,getTotalNumInputChannels()),maxBlockSize,playgroundProfile(),playgroundMode());
-    playgroundFormant_.prepare(sampleRate,playgroundFormantRequested());
+    playgroundFormant_.prepare(sampleRate,true);
     playgroundPlaying_.store(false);
     publishPlaygroundConfig();
     return;
@@ -215,8 +215,8 @@ void SkellyTuneRealtimeProcessor::publishPlaygroundConfig() {
     for(int i=0;i<skelly::playground::modeCount;++i)playgroundNative_[size_t(i)].store(playground_.nativeLatency(i));
     playgroundLockedMode_.store(playground_.lockedMode());
     playgroundAppliedProfile_.store(playground_.latencyProfile());
-    playgroundFormantApplied_.store(playgroundFormant_.enabled());
-    const int totalDelay=playground_.latencySamples()+playgroundFormant_.latency();
+    playgroundFormantApplied_.store(playgroundFormantRequested());
+    const int totalDelay=playground_.latencySamples();
     playgroundHostDelay_.store(totalDelay);
     playgroundActive_.store(-1);
     displayedPitchHz_.store(0);displayedConfidence_.store(0);
@@ -230,12 +230,10 @@ bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     if(!mm||!mm->isThisTheMessageThread())return false;
     if(!playgroundNeedsApply())return true;
     double rate=0.;int channels=0,block=0,profile=0,mode=0;unsigned generation=0;
-    bool formantEnabled=false;
     {
         const juce::ScopedLock lock(getCallbackLock());
         rate=preparedAudioRate_;channels=getTotalNumInputChannels();block=doubleScratch_.getNumSamples();
         profile=playgroundProfile();mode=playgroundMode();generation=playgroundGeneration_.load();
-        formantEnabled=playgroundFormantRequested();
     }
     if(!(rate>0.)||channels<1||block<1)return false;
     // Allocate and prepare the replacement while the current engine remains
@@ -245,19 +243,16 @@ bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     skelly::playground::Bank next;
     try { next.prepare(rate,channels,block,profile,mode); }
     catch(...) { return false; }
-    skelly::playground::FormantAudition nextFormant;
-    nextFormant.prepare(rate,formantEnabled);
     {
         const juce::ScopedLock lock(getCallbackLock());
         if(generation!=playgroundGeneration_.load()||
-           profile!=playgroundProfile()||mode!=playgroundMode()||
-           formantEnabled!=playgroundFormantRequested())return false;
-        const bool suspended=isSuspended();
+           profile!=playgroundProfile()||mode!=playgroundMode())return false;
+        const bool wasSuspended=isSuspended();
         suspendProcessing(true);
         std::swap(playground_,next);
-        std::swap(playgroundFormant_,nextFormant);
+        playgroundFormant_.prepare(rate,true);
         publishPlaygroundConfig();
-        suspendProcessing(suspended);
+        suspendProcessing(wasSuspended);
     }
     return true;
 }
@@ -390,9 +385,9 @@ void SkellyTuneRealtimeProcessor::processPlayground(float* const* io,int channel
         playground_.process(segment,channels,count,p,mode,target);
         offset+=count;
     }
-    if(playgroundFormant_.enabled()) {
-        playgroundFormant_.setSemitones(state_.getRawParameterValue("playgroundFormantShift")->load());
-        const bool bypass=state_.getRawParameterValue("bypass")->load()>0.5f;
+    {
+        playgroundFormant_.setSemitones(playgroundFormantRequested()?state_.getRawParameterValue("playgroundFormantShift")->load():0.f);
+        const bool bypass=state_.getRawParameterValue("bypass")->load()>0.5f || !playgroundFormantRequested();
         for(int i=0;i<frames;++i){
             const float l=io[0][i],r=channels==2?io[1][i]:l;
             const auto y=playgroundFormant_.process(l,r,bypass);

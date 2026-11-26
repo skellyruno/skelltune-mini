@@ -82,7 +82,7 @@ inline void run(int fs){
     for(int mode:{2,3})for(int profile=0;profile<int(skelly::playground::latencyNames.size());++profile){
         const int n=fs/2;std::vector<float> src(n);double phase=0.;
         for(int i=0;i<n;++i){double t=double(i)/fs;phase+=2*skelly::kPi*(225.+17.*std::sin(2*skelly::kPi*4.*t))/fs;src[i]=float((.12+.08*std::sin(2*skelly::kPi*3.*t))*std::sin(phase));}
-        auto render=[&](bool enabled){skelly::playground::Bank b;b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.setRecordingResponseEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
+        auto render=[&](bool enabled){skelly::playground::Bank b;b.setEnvelopeCandidate(enabled);b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.setRecordingResponseEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
         require(render(false)==render(true),"Classic/Crystal reference changed");
     }
     std::cout<<fs<<" PASS: bounded wet recovery and 12 frozen Classic/Crystal profile pairs\n";

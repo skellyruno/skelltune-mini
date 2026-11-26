@@ -118,13 +118,14 @@ int main(){
     const int basePdc=p->getLatencySamples();
     enableFormant->setValueNotifyingHost(1.f);
     shiftFormant->setValueNotifyingHost(shiftFormant->convertTo0to1(-7.f));
-    if(!p->applyPlaygroundLatency()||p->getLatencySamples()!=basePdc+1024||listener.last!=basePdc+1024)return 32;
+    const int formantNotifications=listener.changes;
+    if(!p->applyPlaygroundLatency()||p->getLatencySamples()!=basePdc||listener.changes!=formantNotifications)return 32;
     juce::MemoryBlock formantState;p->getStateInformation(formantState);
     for(int i=0;i<24;++i){frame.clear();p->processBlock(frame,midi);}
     enableFormant->setValueNotifyingHost(0.f);
     if(!p->applyPlaygroundLatency()||p->getLatencySamples()!=basePdc)return 33;
     p->setStateInformation(formantState.getData(),int(formantState.getSize()));
-    if(p->getLatencySamples()!=basePdc+1024||std::abs(p->parameters().getRawParameterValue("playgroundFormantShift")->load()+7.f)>.11f)return 34;
+    if(p->getLatencySamples()!=basePdc||std::abs(p->parameters().getRawParameterValue("playgroundFormantShift")->load()+7.f)>.11f)return 34;
     auto legacy=juce::AudioProcessor::getXmlFromBinary(oldState.getData(),int(oldState.getSize()));
     if(!legacy)return 35;
     for(int i=legacy->getNumChildElements()-1;i>=0;--i){auto* child=legacy->getChildElement(i);if(child->getStringAttribute("id").startsWith("playgroundFormant"))legacy->removeChildElement(child,true);}
@@ -159,13 +160,13 @@ int main(){
     if(std::abs(p->displayedReferenceA()-445.f)>.06f||keyBox->getSelectedId()!=8||scaleBox->getSelectedId()!=2)return 44;
     for(int i=0;i<12;++i){auto* note=dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.note."+juce::String(i)));if(!note||note->getToggleState()!=bool(skelly::scaleMask(7,1)&(1u<<i)))return 45;}
     juce::MemoryBlock manualState;p->getStateInformation(manualState);
-    if(!sender.publishMusicalTuning(skellycore::world::makeMusicalTuning(9,0,440.)))return 46;
+    if(!sender.publishMusicalTuning(skellcore::world::makeMusicalTuning(9,0,440.)))return 46;
     for(int i=0;i<8&&!matches(9,1,440.f);++i)pump();
     if(!matches(9,1,440.f))return 47;
     p->setStateInformation(manualState.getData(),int(manualState.getSize()));pump();
     if(!matches(7,1,445.f))return 48;
     sender.leave();pump();pump();
-    if(!sender.join()||!sender.publishMusicalTuning(skellycore::world::makeMusicalTuning(9,0,440.)))return 49;
+    if(!sender.join()||!sender.publishMusicalTuning(skellcore::world::makeMusicalTuning(9,0,440.)))return 49;
     for(int i=0;i<8&&!matches(9,1,440.f);++i)pump();
     if(!matches(9,1,440.f))return 50;
     sender.leave();

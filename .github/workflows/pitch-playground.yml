@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      # Shared detector, synthesis and helper changes must also validate all seven.
+      # Shared detector, synthesis and helper changes must also validate all five.
       - dsp/**
       - tests/playground_*.cpp
       - tests/playground_*.hpp
@@ -32,8 +32,8 @@ jobs:
           persist-credentials: false
       - run: python3 tools/recover_snap_core.py external/snap recovered/SnapCore.h
       - run: cmake -S . -B build-play -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON -DSKELLY_SNAP_HEADER="$PWD/recovered/SnapCore.h" -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_attack_test playground_recovery_test playground_formant_test playground_render --parallel 2
-      - run: ctest --test-dir build-play -R '^playground_(bank|mix|attack|recovery|formant)_test$' --output-on-failure
+      - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_attack_test playground_recovery_test playground_formant_test playground_causal_formant_test playground_render --parallel 2
+      - run: ctest --test-dir build-play -R '^playground_(bank|mix|attack|recovery|formant|causal_formant)_test$' --output-on-failure
       - name: Render actual four-engine singer comparisons
         run: |
           mkdir -p playground-audio
@@ -108,6 +108,23 @@ jobs:
               Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_CHALLENGERS
               & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/challenger_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
               if ($LASTEXITCODE -ne 0) { throw "Candidate challenger $mode failed" }
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+          # Causal envelope restoration candidate: all three challengers, protected references as hash controls.
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/envelope_${mode}_base_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Envelope baseline failed" }
+              $env:SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE = '1'
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/envelope_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Envelope candidate failed" }
+              Remove-Item Env:SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE
+              if ($mode -eq 3 -or $mode -eq 4) {
+                if ((Get-FileHash "playground-full/envelope_${mode}_base_${speed}ms.wav").Hash -ne (Get-FileHash "playground-full/envelope_${mode}_candidate_${speed}ms.wav").Hash) { throw "Protected reference changed" }
+              }
             }
           }
           Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE

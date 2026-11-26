@@ -10,13 +10,15 @@ CLASSIC and CRYSTAL are frozen listening references; do not modify their pinned 
 - MetaTune 2.5 source pin: skellyruno/MetaTuneInspiredvst at 73d759307ce9536e522b2cf78dc1da943afc8f3d. Full combined research binary and corresponding-source package must retain all license notices and AGPL-3.0 terms. No production release from this draft.
 - Portable test targets: playground_bank_test, playground_mix_test, playground_attack_test, playground_recovery_test, playground_formant_test. Full Windows targets and owner research artifact are specified in .github/workflows/pitch-playground.yml.
 - Windows test includes all five native engines, actual editor smoke, pluginval strictness 5, VST3 identity, real-vocal renders, hash checks for protected reference pairs, and complete corresponding source. FL Studio validation and real Quick4 UI inspection are separate.
-- Retune: 0 ms fastest; 100 ms slower. Latency selector requests 0, 1, 2.5, 5 or 10 ms; actual engine minimum and host delay are reported. Formant audition is opt-in with 1024 samples additional PDC. Graph editing is supported by TESTTUNE and META; the other three are monitor-only.
+- Retune: 0 ms fastest; 100 ms slower. Latency selector requests 0, 1, 2.5, 5 or 10 ms; actual engine minimum and host delay are reported. Formant audition is opt-in and adds no fixed audio transport or host PDC. Its causal envelope warp approximates formant movement; listening verification is required. Graph editing is supported by TESTTUNE and META; the other three are monitor-only.
 
 ## Latest verified portable result (retirement commit 9528d2d)
 
 GitHub run 45821207262, portable-four job 139913980132: five CTest targets passed; sixteen actual singer renders (four engines, 0/10/25/100 ms) completed with no samples above full scale. Maximum peaks: TESTTUNE .896436, META .955656, CLASSIC .877820, CRYSTAL .878492. Callback p99 maxima on this runner: .051656, .037821, .079488, .098392 ms respectively. These are runner-specific measurements, not FL Studio CPU or listening scores. Full Windows validation was still in progress at the time of this record.
 
 ## Next improvement priorities
+
+New offline-only candidate uses aligned dry spectral envelopes to correct the three challengers’ wet vowel balance without adding latency; frozen references are excluded. Full CI renders baseline/candidate at four retune speeds. No promotion without measured and listening results.
 
 1. TESTTUNE: reduce note boundary chatter and preserve natural vowel spectrum; compare current boundary-hold behavior with independent vocal performances.
 2. META: refine hard-tune onset response and wet level stability, targeting sustained spectral fidelity rather than only pitch accuracy.

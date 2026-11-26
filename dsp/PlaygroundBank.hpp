@@ -43,6 +43,7 @@ class Bank {
 public:
     // Set before prepare. Offline A/B keeps the complete previous engine policy.
     // Preparation-time A/B: preserve legacy low latency paths and native IDs.
+    void setRecordingResponseEnabled(bool enabled) noexcept { recordingResponse_=enabled; }
     void setNativeQualityEnabled(bool enabled) noexcept { nativeQuality_=enabled; }
     void setOvershootBalanceEnabled(bool enabled) noexcept { overshootBalance_=enabled; }
     void setWetLevelRecoveryEnabled(bool enabled) noexcept { wetLevelRecovery_=enabled; }
@@ -58,6 +59,7 @@ public:
         snapMs_=profile_==0?2.5:requestedMs;
         regular_=std::make_unique<RealtimeTuner>();regular_->prepare(rate_,channels_,false,false,miniMs,extended);
         meta_=std::make_unique<MetaTest>();meta_->prepare(rate_,miniMs,extended);
+        meta_->setFastRatioResponseEnabled(recordingResponse_ && profile_>=1 && profile_<=3);
         snap_=std::make_unique<snap::Engine>();snap_->prepare(rate_,channels_);
         snap::Params sp;sp.latencyMs=snapMs_;snap_->setParams(sp);snap_->reset();
         native_[0]=native_[1]=regular_->latencySamples();native_[2]=meta_->latencySamples();
@@ -253,6 +255,12 @@ private:
         }
         autotune::Settings s;s.key=0;s.scale=autotune::Scale::Custom;s.customScale=mask;s.referenceHz=p.referenceA;s.retuneMs=p.speedMs;s.strength=p.amount;
         s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=10.;s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
+        // Restore consonants sooner at intermediate retune rates without
+        // changing hard tune, slow retune or the higher-latency quality path.
+        if(recordingResponse_ && profile_>=1 && profile_<=3){
+            const float weight=std::clamp(std::min((p.speedMs-5.f)/5.f,(50.f-p.speedMs)/25.f),0.f,1.f);
+            s.consonantReleaseMs=8.f-4.f*weight;
+        }
         inspired_->setSettings(s);inspired_->processChannels(io,channels,frames);
         const float midi=inspired_->getDetectedMidi();telemetry_={midi>0?p.referenceA*std::exp2((midi-69.f)/12.f):0.f,inspired_->getConfidence(),100.f*inspired_->getCorrectionSemitones(),inspired_->getTargetMidi(),false};
         std::fill_n(pitchValid,frames,telemetry_.hz>0?1:0);
@@ -266,6 +274,7 @@ private:
     std::unique_ptr<autotune::SkellyFusionEngine> inspired_;
 #endif
     int profile_=0,lockedMode_=-1;double snapMs_=2.5;
+    bool recordingResponse_=true;
     bool ogFormants_=true;
     bool challengers_=true;
     bool wetLevelRecovery_=true;

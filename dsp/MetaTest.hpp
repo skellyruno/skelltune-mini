@@ -80,6 +80,7 @@ public:
         entryAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.008));
         exitAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
         ratioAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.0025));
+        fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.001));
         baseAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.010));
         transientMeterAlpha_=1.0-std::exp(-1.0/(double(sr_)*0.030));
         transientRelease_=std::exp(-1.0/(double(sr_)*0.003));
@@ -160,6 +161,8 @@ public:
     double cumulativePhaseMismatchBefore() const noexcept { return phaseErrorBefore_; }
     double cumulativePhaseMismatchAfter() const noexcept { return phaseErrorAfter_; }
     void setPhaseAlignedGrainsEnabled(bool on) noexcept { phaseAlignedGrains_ = on; }
+    // Playground recording profiles only. Default standalone remains exact.
+    void setFastRatioResponseEnabled(bool on) noexcept { fastRatioResponse_=on; }
     // Pure deterministic comparison probe for the exact same alignment
     // routine used by the live engine; requires a valid PCM history.
     static double probeAlignedHead(const float* history, double previousHead,
@@ -249,7 +252,10 @@ public:
         // A few milliseconds of ratio slew avoid zippery resampler speed
         // changes when a new pitch frame or key arrives. The note decision
         // stays immediate, and the host's fixed 3ms PDC is unchanged.
-        const double ratioAlpha = ratioAlpha_;
+        // Preserve the user retune law: faster auxiliary slew only for quick
+        // correction, taper back to the original value for natural settings.
+        const double fastWeight=fastRatioResponse_?std::clamp((50.-speed_)/25.,0.,1.):0.;
+        const double ratioAlpha = ratioAlpha_+fastWeight*(fastRatioAlpha_-ratioAlpha_);
         const double baseAlpha = baseAlpha_;
         for (int i = 0; i < frames; ++i) {
             // No uint32 rollover at ~24h on long live sessions.
@@ -735,6 +741,8 @@ private:
     double entryAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.008));
     double exitAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.004));
     double ratioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.0025));
+    double fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.001));
+    bool fastRatioResponse_=false;
     double baseAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.010));
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;

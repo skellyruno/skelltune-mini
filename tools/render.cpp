@@ -102,6 +102,7 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         bank.setWetLevelRecoveryEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_LEVEL")==nullptr);
         bank.setNativeQualityEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_QUALITY")==nullptr);
         bank.setOvershootBalanceEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_OVERSHOOT")==nullptr);
+        bank.setRecordingResponseEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_RECORDING_RESPONSE")==nullptr);
         bank.prepare(w.rate,w.channels,128,profile,mode);
         bank.setOgFormants(std::getenv("SKELLY_OG_FORMANTS_OFF")==nullptr);
         Wav result=w;std::array<float,128> a{},b{};

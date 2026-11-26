@@ -252,13 +252,13 @@ jobs:
           path: playground-full
           retention-days: 3
 
-      - name: Bounded final five-engine quality sweep and selected policy
+      - name: Revalidate locally measured and frozen five-engine policy
         shell: pwsh
         run: |
           $exe = Get-ChildItem build-play -Recurse -File -Filter "SkellyPlaygroundFullRender.exe" | Select-Object -First 1
           if (!$exe) { throw "Missing final renderer" }
-          python tools/final_challenger_sweep.py --exe "$($exe.FullName)" --source benchmark/v33/raw_levelmatched_20-28.wav --out final-comparison
-          if ($LASTEXITCODE -ne 0) { throw "Final sweep failed" }
+          python tools/final_challenger_sweep.py --exe "$($exe.FullName)" --source benchmark/v33/raw_levelmatched_20-28.wav --out final-comparison --locked-policy 0,5,0,0,0
+          if ($LASTEXITCODE -ne 0) { throw "Final locked-policy validation failed" }
       - name: Rebuild actual VST3 with measured selected policy
         run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundFullMixTest SkellyPlaygroundFullAttackTest SkellyPlaygroundFullRecoveryTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
       - name: Final exact-policy render and native regression

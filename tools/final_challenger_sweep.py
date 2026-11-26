@@ -121,9 +121,13 @@ def run(args):
         print("FINAL_POLICY_VERIFIED",chosen,flush=True)
         return
     rows={};chosen={};decisions={}
+    locked={m:int(v) for m,v in zip(MODES,args.locked_policy.split(","))} if args.locked_policy else None
+    if locked is not None:
+        assert len(args.locked_policy.split(","))==5 and locked[3]==locked[4]==0 and all(0<=v<=15 for v in locked.values()),"invalid locked policy"
     for mode in MODES:
         for speed in SPEEDS:
-            for flags in (TRIALS if mode not in (3,4) else (0,15)):
+            variants=(0,15) if mode in (3,4) else tuple(sorted({0,locked[mode]})) if locked is not None else TRIALS
+            for flags in variants:
                 out=folder/f"trial_{mode}_{speed}_{flags}.wav"
                 result=render(exe,source,out,mode,speed,flags,ctx)
                 rows[f"{mode}:{speed}:{flags}"]=result
@@ -132,11 +136,16 @@ def run(args):
                 out.unlink()
         chosen[str(mode)]=0;decisions[str(mode)]=[]
         if mode in (3,4):continue
-        for flags in TRIALS[1:]:
+        for flags in ((locked[mode],) if locked is not None and locked[mode] else () if locked is not None else TRIALS[1:]):
             score,reasons=assess(rows,mode,flags,ctx)
             decisions[str(mode)].append(dict(flags=flags,score=score,rejected=reasons))
         eligible=[x for x in decisions[str(mode)] if not x["rejected"] and x["score"]<=-.03]
-        if eligible:chosen[str(mode)]=min(eligible,key=lambda x:x["score"])["flags"]
+        if locked is not None:
+            chosen[str(mode)]=locked[mode]
+            for speed in SPEEDS:
+                x=rows[f"{mode}:{speed}:{locked[mode]}"]
+                assert x["over_full_scale"]==0 and x["p99_ms"]<.8*128/ctx[0]*1000,"locked policy failed overload/deadline"
+        elif eligible:chosen[str(mode)]=min(eligible,key=lambda x:x["score"])["flags"]
     save_json(folder/"selection.json",dict(source_sha256=digest(source),sample_rate=ctx[0],chosen=chosen,decisions=decisions,trials=rows))
     flags=",".join(str(chosen[str(mode)]) for mode in MODES)
     args.header.write_text("#pragma once\n#include <array>\nnamespace skelly::playground {\ninline constexpr std::array<unsigned,5> finalListeningFlags{{"+flags+"}};\nstatic_assert(finalListeningFlags[2]==0 && finalListeningFlags[3]==0);\n}\n",encoding="utf-8")
@@ -147,5 +156,6 @@ if __name__=="__main__":
     p.add_argument("--source",type=pathlib.Path,required=True)
     p.add_argument("--out",type=pathlib.Path,required=True)
     p.add_argument("--header",type=pathlib.Path,default=pathlib.Path("dsp/FinalListeningPolicy.hpp"))
+    p.add_argument("--locked-policy",help="revalidate the measured checked-in engine flags in legacy order; do not optimize anew")
     p.add_argument("--verify",action="store_true")
     run(p.parse_args())

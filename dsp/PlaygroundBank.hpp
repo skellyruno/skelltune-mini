@@ -297,17 +297,21 @@ private:
     }
     void render(float* const* io,int channels,int frames,Parameters p,int manual,uint8_t* pitchValid) {
         const unsigned flags=finalFlags();
+        const bool finalFast=profile_==3&&(finalListeningPolicy_||finalTrial_>=0);
+        const double fastFade=std::clamp((25.-double(p.speedMs))/15.,0.,1.);
+        const double hardFade=std::clamp(1.-double(p.speedMs)/8.,0.,1.);
         const bool phase=phaseContinuityCandidate_||(flags&1u);
         const bool compact=synthesisCandidate_||(flags&2u);
         const float hostSpeed=p.speedMs;
         if(motionCandidate_&&active_!=2&&active_!=3)p.speedMs=skelly::challengerSpeed(p.speedMs,active_);
         else if(listeningPromotion_&&profile_==3)p.speedMs=skelly::listeningSpeed(p.speedMs,active_);
         if(flags&4u)p.speedMs=finalMotionSpeed(hostSpeed,p.speedMs,active_);
+        else if(finalFast&&active_==0&&fastFade>0.)p.speedMs=float(p.speedMs+fastFade*(finalMotionSpeed(hostSpeed,p.speedMs,active_)-p.speedMs));
         if(active_==0){p.testTune=true;p.mix=1.f;p.experimentalCycleSynthesis=false;
-            testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setCompactWrapCandidate(compact);testTune_->setPhaseContinuityCandidate(phase);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
+            testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setCompactWrapCandidate(compact);testTune_->setPhaseContinuityCandidate(phase);testTune_->setTrajectoryCandidate(finalFast?(.65+.65*hardFade)*fastFade:0.);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
             const float* in[2]={io[0],channels==2?io[1]:nullptr};testTune_->process(in,io,frames,channels,pitchValid);
             const auto e=testTune_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(testTune_->appliedCents()),testTune_->currentTargetNote(),testTune_->targetPending()};return;}
-        if(active_==1){meta_->setCompactGrainWeight(compact?1.:(measuredGrainPromotion_&&profile_==3?measuredMetaGrain(hostSpeed):0.));meta_->setPhaseContinuityCandidate(phase);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
+        if(active_==1){meta_->setCompactGrainWeight(compact?1.:(measuredGrainPromotion_&&profile_==3?measuredMetaGrain(hostSpeed):0.));meta_->setPhaseContinuityCandidate(phase);meta_->setTrajectoryCandidate(finalFast?1.3*hardFade:0.);meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
             const double target=meta_->targetHz();telemetry_={float(meta_->detectedHz()),float(meta_->lastConfidence()),float(meta_->estimatedOutputCorrectionCents()),target>0?int(std::lround(69+12*std::log2(target/p.referenceA))):-1,false};return;}
         if(active_<4){snap::Params s;s.mode=active_-2;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
             snap_->setParams(s);snap_->process(io,channels,frames);const auto t=snap_->telemetry();telemetry_={t.voiced?t.inHz:0.f,t.conf,float(1200*std::log2(std::max(1e-6,snap_->currentRatio()))),t.voiced?t.targetNote:-1,false};return;}
@@ -317,6 +321,7 @@ private:
         s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=motionCandidate_&&p.speedMs>2.f&&p.speedMs<45.f?5.f:10.f;
         if(!motionCandidate_&&listeningPromotion_&&profile_==3)s.noteConfirmMs=10.f-5.f*skelly::inspiredPromotionWeight(hostSpeed);
         if(compact&&profile_<=3)s.noteConfirmMs=std::min(s.noteConfirmMs,6.f);
+        if(finalFast&&active_==4)s.noteConfirmMs=std::min(s.noteConfirmMs,float(10.-4.*hardFade));
         // The pinned native adapter actually maps snapLive to its own
         // confidence and hysteresis controller. Its legacy follow field is ignored.
         if(phase&&profile_<=3)s.snapLive=true;

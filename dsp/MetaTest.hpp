@@ -100,6 +100,7 @@ public:
         attackMarks_.fill(0);
         smooth_ = log_ = std::log2(200.0);
         smoothedCorrectionLog_ = 0.0;
+        trajectory_.reset();
         raw_ = sel_ = conf_ = lastTrustedLag_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
         manualTargetMidi_ = -1;
         // Acquire from the first *detected* phrase, not a fixed 240Hz
@@ -167,6 +168,7 @@ public:
     void setCompactGrainCandidate(bool on) noexcept { compactGrain_=on?1.:0.; }
     void setCompactGrainWeight(double weight) noexcept { compactGrain_=std::clamp(weight,0.,1.); }
     void setPhaseContinuityCandidate(bool on) noexcept { phaseContinuityCandidate_=on; }
+    void setTrajectoryCandidate(double strength) noexcept {trajectoryStrength_=std::clamp(strength,0.,1.5);if(trajectoryStrength_==0.)trajectory_.reset();}
     // Pure deterministic comparison probe for the exact same alignment
     // routine used by the live engine; requires a valid PCM history.
     static double probeAlignedHead(const float* history, double previousHead,
@@ -629,6 +631,15 @@ private:
             sel_=std::exp2(sl);
             log_=target=sl;
         }
+        if(trajectoryStrength_>0.&&!fileDetector_){
+            if(lag>0.&&conf_>=.80){
+                const double f=double(sr_)/lag;
+                const double age=grainGeometryValid_?std::clamp(double(w_)-pos_[0],double(dryDelaySamples_),double(kRing)/2.):double(dryDelaySamples_);
+                const int note=int(std::lround(69.+12.*(std::log2(double(sr_)/reference_)-log_)));
+                const double delta=trajectory_.predict(69.+12.*std::log2(f/reference_),note,conf_,double(hop)/sr_,tracker_.observationAgeSeconds(f)-age/sr_,trajectoryStrength_);
+                detectedLog-=delta/12.;
+            }else trajectory_.reset();
+        }
         target_ = target;
         const double sm = smoothStep(smoothDetected_ ? detectedLog : target, hop);
         // Smooth the correction, not the detected pitch: changing input
@@ -767,6 +778,7 @@ private:
     double fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.001));
     bool fastRatioResponse_=false,phaseContinuityCandidate_=false;
     double compactGrain_=0.;
+    PitchTrajectory trajectory_;double trajectoryStrength_=0.;
     double baseAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.010));
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;

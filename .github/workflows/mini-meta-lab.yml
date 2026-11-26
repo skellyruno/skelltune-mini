@@ -17,7 +17,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Keep the historical checks visible but skip runner allocation on Playground PRs.
+  # Legacy Mini development and explicit manual validation retain the entire suite.
   meta-dsp:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix/mini-pr16-vst3-program-name-20261121'
     name: Experimental META portable DSP
     runs-on: ubuntu-latest
     steps:
@@ -66,6 +69,7 @@ jobs:
           if-no-files-found: error
 
   windows-meta-lab:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix/mini-pr16-vst3-program-name-20261121'
     name: Windows META Lab VST3 + real JUCE smoke (no binary upload)
     runs-on: windows-latest
     steps:

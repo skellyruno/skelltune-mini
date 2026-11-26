@@ -12,10 +12,10 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs on the same branch/event; preserve latest evidence.
+# Supersede PR validation only. Preserve push/manual/release evidence.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   linux-dsp:

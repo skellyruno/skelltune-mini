@@ -3,18 +3,14 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - dsp/PlaygroundBank.hpp
-      - dsp/RealtimeTuner.hpp
-      - dsp/NoteDecision.hpp
-      - dsp/DelayContract.hpp
-      - dsp/WetLevelGuard.hpp
-      - dsp/MetaTest.hpp
-      - dsp/FormantAudition.hpp
-      - dsp/shared/AlignedSpectralPitchFormant.h
+      # Shared detector, synthesis and helper changes must also validate all seven.
+      - dsp/**
       - tests/playground_*.cpp
       - tests/playground_*.hpp
       - tools/recover_snap_core.py
       - tools/render.cpp
+      - tools/normalize_vst3_moduleinfo.py
+      - cmake/**
       - Source/**
       - CMakeLists.txt
       - .github/workflows/pitch-playground.yml

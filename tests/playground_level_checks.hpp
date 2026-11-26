@@ -26,6 +26,27 @@ inline void run(int fs){
     const float recovered[2]={.3f,-.21f};
     for(int i=0;i<int(fs*.018);++i){wet[0]=recovered[0];wet[1]=recovered[1];g.process(dry,wet,2,true,1.,1.);}
     require(wet[0]>=.3f&&wet[0]<.305f,"gain release overshoot persisted");
+    // New bounded overshoot control only on eligible full-wet voiced output.
+    g.reset();
+    for(int i=0;i<fs/5;++i){wet[0]=.3f;wet[1]=-.21f;g.process(dry,wet,2,true,1.,1.,true);}
+    require(wet[0]>=.26399f&&wet[0]<.265f&&std::abs(wet[1]+.7f*wet[0])<1.e-6f,"bounded stereo overshoot attenuation");
+    for(double mix:{0.,.5,.95}){wet[0]=.3f;wet[1]=-.21f;g.process(dry,wet,2,true,mix,mix,true);require(wet[0]==.3f&&wet[1]==-.21f,"overshoot changed partial Mix");}
+    wet[0]=1.2f;wet[1]=-.84f;g.process(dry,wet,2,true,1.,1.,true);require(wet[0]==1.2f&&wet[1]==-.84f,"overshoot changed overloaded input");
+    // Explicit higher-delay profiles now spend their existing host budget
+    // on native synthesis instead of padding. All lower profiles are frozen.
+    for(int profile=0;profile<6;++profile){
+        skelly::playground::Bank legacy,quality;
+        legacy.setNativeQualityEnabled(false);
+        legacy.prepare(fs,2,127,profile,0);quality.prepare(fs,2,127,profile,0);
+        if(profile>=4){for(int mode:{0,1,2})require(quality.nativeLatency(mode)==int(std::lround(fs*skelly::playground::latencyTargets[size_t(profile)]*.001)),"Mini quality native latency");}
+        else for(int mode:{0,1,2})require(quality.nativeLatency(mode)==legacy.nativeLatency(mode),"low latency changed");
+        require(quality.latencySamples()==legacy.latencySamples(),"Mini host delay changed");
+    }
+#if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
+    {skelly::playground::Bank legacy,quality;legacy.setNativeQualityEnabled(false);
+     legacy.prepare(fs,2,127,5,6);quality.prepare(fs,2,127,5,6);
+     require(quality.nativeLatency(6)>legacy.nativeLatency(6)&&quality.latencySamples()==legacy.latencySamples(),"MetaTune quality must use existing 10ms budget");}
+#endif
     // Previously the entire wet block inherited its final pitch flag. Use
     // voice/silence transitions to check the exact same audio at odd sizes.
     for(int mode:{0,1,2})for(int profile:{1,3,5}){
@@ -39,7 +60,7 @@ inline void run(int fs){
     for(int mode:{3,4})for(int profile=0;profile<int(skelly::playground::latencyNames.size());++profile){
         const int n=fs/2;std::vector<float> src(n);double phase=0.;
         for(int i=0;i<n;++i){double t=double(i)/fs;phase+=2*skelly::kPi*(225.+17.*std::sin(2*skelly::kPi*4.*t))/fs;src[i]=float((.12+.08*std::sin(2*skelly::kPi*3.*t))*std::sin(phase));}
-        auto render=[&](bool enabled){skelly::playground::Bank b;b.setWetLevelRecoveryEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
+        auto render=[&](bool enabled){skelly::playground::Bank b;b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
         require(render(false)==render(true),"Classic/Crystal reference changed");
     }
     std::cout<<fs<<" PASS: bounded wet recovery and 12 frozen Classic/Crystal profile pairs\n";

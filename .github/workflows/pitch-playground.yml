@@ -6,6 +6,7 @@ on:
       - dsp/PlaygroundBank.hpp
       - dsp/RealtimeTuner.hpp
       - dsp/NoteDecision.hpp
+      - dsp/DelayContract.hpp
       - dsp/WetLevelGuard.hpp
       - dsp/MetaTest.hpp
       - dsp/FormantAudition.hpp
@@ -143,6 +144,27 @@ jobs:
                 $a = (Get-FileHash "playground-full/level_${mode}_legacy_${speed}ms.wav").Hash
                 $b = (Get-FileHash "playground-full/level_${mode}_candidate_${speed}ms.wav").Hash
                 if ($a -ne $b) { throw 'Frozen Classic/Crystal reference changed' }
+              }
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+          # Native quality A/B with the same 10ms host budget.
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '5'
+          foreach ($mode in 0..6) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,25)) {
+              $env:SKELLY_PLAYGROUND_LEGACY_QUALITY = '1'
+              $env:SKELLY_PLAYGROUND_LEGACY_OVERSHOOT = '1'
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/quality_${mode}_legacy_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Legacy quality $mode failed" }
+              Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_QUALITY
+              Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_OVERSHOOT
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/quality_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Native quality $mode failed" }
+              if ($mode -eq 3 -or $mode -eq 4) {
+                $a = (Get-FileHash "playground-full/quality_${mode}_legacy_${speed}ms.wav").Hash
+                $b = (Get-FileHash "playground-full/quality_${mode}_candidate_${speed}ms.wav").Hash
+                if ($a -ne $b) { throw 'Classic/Crystal quality reference changed' }
               }
             }
           }

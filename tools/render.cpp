@@ -100,6 +100,8 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         skelly::playground::Bank bank;
         bank.setChallengerExperiments(std::getenv("SKELLY_PLAYGROUND_LEGACY_CHALLENGERS")==nullptr);
         bank.setWetLevelRecoveryEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_LEVEL")==nullptr);
+        bank.setNativeQualityEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_QUALITY")==nullptr);
+        bank.setOvershootBalanceEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_OVERSHOOT")==nullptr);
         bank.prepare(w.rate,w.channels,128,profile,mode);
         bank.setOgFormants(std::getenv("SKELLY_OG_FORMANTS_OFF")==nullptr);
         Wav result=w;std::array<float,128> a{},b{};

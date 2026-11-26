@@ -30,14 +30,14 @@ inline DelayContract studioDelayContract(double sampleRate) noexcept {
     return {int(std::lround(fs*0.050)), true, true, false};
 }
 inline DelayContract delayContract(double sampleRate, bool /*experimentalCycle*/,
-                                   double realtimeLatencyMs = 3.0) noexcept {
+                                   double realtimeLatencyMs = 3.0, bool playgroundExtended = false) noexcept {
     const double fs = std::clamp(std::isfinite(sampleRate) ? sampleRate : 48000.0,
                                  8000.0, 192000.0);
     // Explicit preparation-time realtime latency. Old DSP callers keep the
     // 3ms compatibility default; Mini instances request 1.5ms from JUCE.
     // Grain source age is nonlinear and must never be advertised as PDC.
     const double ms = std::clamp(
-        std::isfinite(realtimeLatencyMs) ? realtimeLatencyMs : 3.0, 1.5, 3.0);
+        std::isfinite(realtimeLatencyMs) ? realtimeLatencyMs : 3.0, 1.5, playgroundExtended ? 10.0 : 3.0);
     return {int(std::lround(fs * (ms * 0.001))), true, true, false};
 }
 } // namespace skelly

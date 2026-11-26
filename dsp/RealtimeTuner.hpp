@@ -625,7 +625,7 @@ public:
     // Existing calls preserve the original realtime/50ms profiles. Fast Studio
     // must be chosen before preparing; it is never an automatable mode.
     void prepare(double sampleRate, int maxChannels = 2, bool studioClock = false,
-                 bool fastStudio = false, double realtimeLatencyMs = 3.0) {
+                 bool fastStudio = false, double realtimeLatencyMs = 3.0, bool playgroundExtended = false) {
         rate_ = std::clamp(std::isfinite(sampleRate) ? sampleRate : 48000.0,
                            8000.0, 192000.0);
         channels_ = std::clamp(maxChannels, 1, 2);
@@ -635,7 +635,7 @@ public:
         fastStudio_ = studioClock && fastStudio;
         latency_ = studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_).reportedSamples
                                               : studioDelayContract(rate_).reportedSamples)
-                                 : delayContract(rate_, false, realtimeLatencyMs).reportedSamples;
+                                 : delayContract(rate_, false, realtimeLatencyMs, playgroundExtended).reportedSamples;
         int capacity = 1;
         while (capacity < int(rate_ * 0.20) + 8192) capacity <<= 1;
         mask_ = capacity - 1;

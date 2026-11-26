@@ -56,14 +56,14 @@ public:
 
     MetaTest() { reset(); }
 
-    void prepare(double sampleRate, double dryLatencyMs = 3.0) {
+    void prepare(double sampleRate, double dryLatencyMs = 3.0, bool playgroundExtended = false) {
         // Reject NaN, infinity, negative and out-of-engine sample rates
         // before converting to an unsigned integer or preparing the tracker.
         const double safeRate=std::clamp(
             std::isfinite(sampleRate)?sampleRate:48000.0,kSrMin,kSrMax);
         sr_ = static_cast<uint32_t>(std::lround(safeRate));
         dryLatencyMs_ = std::clamp(
-            std::isfinite(dryLatencyMs) ? dryLatencyMs : 3.0, 1.5, 3.0);
+            std::isfinite(dryLatencyMs) ? dryLatencyMs : 3.0, 1.5, playgroundExtended ? 10.0 : 3.0);
         hop_ = std::max<uint32_t>(32, static_cast<uint32_t>(double(sr_) * 0.0027));
         // Preparing detector FIR coefficients is expensive; do it only
         // from prepareToPlay, NEVER from the audio callback's mode switch.

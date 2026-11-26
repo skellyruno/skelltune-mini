@@ -42,6 +42,9 @@ struct Telemetry { float hz=0, confidence=0, cents=0; int target=-1; bool pendin
 class Bank {
 public:
     // Set before prepare. Offline A/B keeps the complete previous engine policy.
+    // Preparation-time A/B: preserve legacy low latency paths and native IDs.
+    void setNativeQualityEnabled(bool enabled) noexcept { nativeQuality_=enabled; }
+    void setOvershootBalanceEnabled(bool enabled) noexcept { overshootBalance_=enabled; }
     void setWetLevelRecoveryEnabled(bool enabled) noexcept { wetLevelRecovery_=enabled; }
     void setChallengerExperiments(bool enabled) noexcept { challengers_=enabled; }
     void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
@@ -50,10 +53,11 @@ public:
         profile_=std::clamp(profile,0,int(latencyNames.size())-1);
         lockedMode_=profile_==0?-1:std::clamp(selectedEngine,0,modeCount-1);
         const double requestedMs=latencyTargets[size_t(profile_)];
-        const double miniMs=profile_==0?1.5:std::clamp(requestedMs,1.5,3.0);
+        const bool extended=nativeQuality_ && profile_>=4;
+        const double miniMs=profile_==0?1.5:std::clamp(requestedMs,1.5,extended?10.0:3.0);
         snapMs_=profile_==0?2.5:requestedMs;
-        regular_=std::make_unique<RealtimeTuner>();regular_->prepare(rate_,channels_,false,false,miniMs);
-        meta_=std::make_unique<MetaTest>();meta_->prepare(rate_,miniMs);
+        regular_=std::make_unique<RealtimeTuner>();regular_->prepare(rate_,channels_,false,false,miniMs,extended);
+        meta_=std::make_unique<MetaTest>();meta_->prepare(rate_,miniMs,extended);
         snap_=std::make_unique<snap::Engine>();snap_->prepare(rate_,channels_);
         snap::Params sp;sp.latencyMs=snapMs_;snap_->setParams(sp);snap_->reset();
         native_[0]=native_[1]=regular_->latencySamples();native_[2]=meta_->latencySamples();
@@ -66,7 +70,8 @@ public:
         og_->setVoiceRange(challengers_ && profile_==4?5:1);og_->setFormantPreserve(true);
         native_[5]=og_->getLatencySamples();
         inspired_=std::make_unique<autotune::SkellyFusionEngine>();inspired_->prepare(rate_,70.f,1000.f);
-        autotune::Settings ms;ms.lowLatency=true;ms.ultraLowLatency=true;ms.strictRealtime=true;
+        inspiredQuality_=nativeQuality_ && profile_==5 && lockedMode_==6;
+        autotune::Settings ms;ms.lowLatency=!inspiredQuality_;ms.ultraLowLatency=ms.lowLatency;ms.strictRealtime=true;
         inspired_->setSettings(ms);inspired_->reset();native_[6]=inspired_->latencySamples();
 #else
         (void)maxBlockSize;
@@ -174,7 +179,7 @@ public:
                 // Classic and Crystal are immutable listening references.
                 if(wetLevelRecovery_ && active_!=3 && active_!=4){
                     pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
-                    wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend);
+                    wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend,overshootBalance_ && (active_==2 || active_==5));
                 }
                 // Keep the compensation envelope alive through a protected
                 // attack. Previously it reset to unity at the first marker,
@@ -247,7 +252,7 @@ private:
             std::fill_n(pitchValid,frames,telemetry_.hz>0?1:0);return;
         }
         autotune::Settings s;s.key=0;s.scale=autotune::Scale::Custom;s.customScale=mask;s.referenceHz=p.referenceA;s.retuneMs=p.speedMs;s.strength=p.amount;
-        s.lowLatency=true;s.ultraLowLatency=true;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=10.;s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
+        s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=10.;s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
         inspired_->setSettings(s);inspired_->processChannels(io,channels,frames);
         const float midi=inspired_->getDetectedMidi();telemetry_={midi>0?p.referenceA*std::exp2((midi-69.f)/12.f):0.f,inspired_->getConfidence(),100.f*inspired_->getCorrectionSemitones(),inspired_->getTargetMidi(),false};
         std::fill_n(pitchValid,frames,telemetry_.hz>0?1:0);
@@ -264,6 +269,7 @@ private:
     bool ogFormants_=true;
     bool challengers_=true;
     bool wetLevelRecovery_=true;
+    bool nativeQuality_=true,overshootBalance_=true,inspiredQuality_=false;
     WetLevelGuard wetLevelGuard_;
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;

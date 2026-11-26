@@ -220,7 +220,7 @@ public:
     }
     int tableCount() const { return count_; }
 
-    void process(float* const* io, int lanes, int frames, bool bypass = false) {
+    void process(float* const* io, int lanes, int frames, bool bypass = false, uint8_t* pitchValid=nullptr) {
         // A host can probe an unprepared instance with zero frames or
         // channels. Reject missing planar pointers before dereferencing.
         if(frames<=0 || lanes<=0 || io==nullptr)return;
@@ -253,6 +253,7 @@ public:
         const double baseAlpha = baseAlpha_;
         for (int i = 0; i < frames; ++i) {
             // No uint32 rollover at ~24h on long live sessions.
+            if(pitchValid) pitchValid[i]=0;
             const uint64_t w = w_;
             const float input0 = lanes > 0 ? io[0][i] : 0.0f;
             // Host audio is untrusted: one NaN in the grain ring can poison
@@ -315,6 +316,7 @@ public:
             }
             ++fresh_;
             analyse();
+            if(pitchValid) pitchValid[i]=raw_>0.0 || (detectedVoiced_ && lastTrustedLag_>0.0);
 
             const double pin = period_;
             const double pt = sel_ > 0.0 ? sel_ : pin;

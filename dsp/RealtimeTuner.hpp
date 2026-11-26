@@ -864,7 +864,7 @@ public:
     }
     // in/out may alias: each sample is captured before writing any output channels.
     // Planar buffers; sample-count and channel count may vary per audio callback.
-    void process(const float* const* input, float* const* output, int frames, int numChannels) noexcept {
+    void process(const float* const* input, float* const* output, int frames, int numChannels, uint8_t* pitchValid=nullptr) noexcept {
         if (!input || !output || frames <= 0 || history_.empty() ||
             numChannels <= 0) return;
         numChannels = std::min(numChannels, channels_);
@@ -1498,6 +1498,7 @@ public:
             if (jumping && ++jumpPosition_ == jumpLength_) {
                 readDelay_ = jumpTo_;
             }
+            if(pitchValid) pitchValid[i]=tracker_.last().valid && tracker_.last().hertz>0.f;
             write_ = (write_ + 1) & mask_;
         }
     }

@@ -81,6 +81,7 @@ public:
         wetLevelGuard_.prepare(rate_);
         mixGuard_.prepare(rate_);partialBlend_=false;
         attackMarks_.assign(size_t(capacity_),0);
+        pitchValidHistory_.assign(size_t(capacity_),0);
         attackPrevious_.fill(0.);attackPower_=attackDiffPower_=attackBlend_=0.;attackHold_=0;
         attackHoldSamples_=std::max(1,int(std::lround(rate_*.002)));
         attackAdvance_=std::min(common_,std::max(1,int(std::lround(rate_*.00075))));
@@ -121,7 +122,8 @@ public:
             const double protection=std::clamp(std::isfinite(p.transientProtection)?double(p.transientProtection):1.,0.,1.);
             const bool manualHere=graphEditsSupported(active_)&&manual>=24&&manual<=107;
             const bool dryOnly=bypass||p.amount==0.f||p.mix==0.f||(!p.pitchClasses&&!manualHere);
-            render(q,channels,n,p,manualHere?manual:-1);
+            std::array<uint8_t,128> pitchValid{};
+            render(q,channels,n,p,manualHere?manual:-1,pitchValid.data());
             const int pad=common_-native_[size_t(active_)];
             for(int i=0;i<n;++i){
                 if(requested!=active_||warm_>0)fadePosition_=std::max(0,fadePosition_-1);
@@ -170,8 +172,10 @@ public:
                     alignedDry[c]=dry_[c][size_t(dr)];alignedWet[c]=wet_[c][size_t(wr)];
                 }
                 // Classic and Crystal are immutable listening references.
-                if(wetLevelRecovery_ && active_!=3 && active_!=4)
-                    wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&telemetry_.hz>0,mixGain_,blend);
+                if(wetLevelRecovery_ && active_!=3 && active_!=4){
+                    pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
+                    wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend);
+                }
                 // Keep the compensation envelope alive through a protected
                 // attack. Previously it reset to unity at the first marker,
                 // then took the full release plus reacquisition to recover.
@@ -210,6 +214,7 @@ public:
 private:
     void activate(int mode) {
         wetLevelGuard_.reset();
+        std::fill(pitchValidHistory_.begin(),pitchValidHistory_.end(),0);
         mixGuard_.reset();partialBlend_=false;
         active_=mode;fadePosition_=0;warm_=common_+int(rate_*.04);telemetry_={};
         for(auto& v:wet_)std::fill(v.begin(),v.end(),0.f);
@@ -220,12 +225,12 @@ private:
         else inspired_->reset();
 #endif
     }
-    void render(float* const* io,int channels,int frames,Parameters p,int manual) {
+    void render(float* const* io,int channels,int frames,Parameters p,int manual,uint8_t* pitchValid) {
         if(active_<2){p.testTune=active_==1;p.mix=1.f;p.experimentalCycleSynthesis=false;
             regular_->setPlaygroundTransitionExperiment(challengers_);regular_->setParameters(p);regular_->setManualTargetMidi(manual);
-            const float* in[2]={io[0],channels==2?io[1]:nullptr};regular_->process(in,io,frames,channels);
+            const float* in[2]={io[0],channels==2?io[1]:nullptr};regular_->process(in,io,frames,channels,pitchValid);
             const auto e=regular_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(regular_->appliedCents()),regular_->currentTargetNote(),regular_->targetPending()};return;}
-        if(active_==2){meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames);
+        if(active_==2){meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
             const double target=meta_->targetHz();telemetry_={float(meta_->detectedHz()),float(meta_->lastConfidence()),float(meta_->estimatedOutputCorrectionCents()),target>0?int(std::lround(69+12*std::log2(target/p.referenceA))):-1,false};return;}
         if(active_<5){snap::Params s;s.mode=active_-3;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
             snap_->setParams(s);snap_->process(io,channels,frames);const auto t=snap_->telemetry();telemetry_={t.voiced?t.inHz:0.f,t.conf,float(1200*std::log2(std::max(1e-6,snap_->currentRatio()))),t.voiced?t.targetNote:-1,false};return;}
@@ -238,12 +243,14 @@ private:
             const float native=ms<.35f?0.f:ms<3.f?.099f:ms<25.5f?std::clamp((ms-.5f)/50.f,.1f,.4999f):ms<42.f?.4999f:std::clamp((ms-20.f)/80.f,.5f,1.f);
             og_->setRetuneSpeed(native);og_->setAmount(p.amount);og_->setReferenceFreq(p.referenceA);og_->setCustomScale(mask);og_->setHumanize(0);og_->setNoteStabilizer(false);og_->setFormantPreserve(ogFormants_);
             juce::AudioBuffer<float> view(io,channels,frames);og_->process(view);
-            telemetry_={og_->getDetectedHz(),og_->getConfidence(),float(1200*std::log2(std::max(1e-6f,og_->getAppliedPitchRatio()))),og_->getTargetMidiNote(),false};return;
+            telemetry_={og_->getDetectedHz(),og_->getConfidence(),float(1200*std::log2(std::max(1e-6f,og_->getAppliedPitchRatio()))),og_->getTargetMidiNote(),false};
+            std::fill_n(pitchValid,frames,telemetry_.hz>0?1:0);return;
         }
         autotune::Settings s;s.key=0;s.scale=autotune::Scale::Custom;s.customScale=mask;s.referenceHz=p.referenceA;s.retuneMs=p.speedMs;s.strength=p.amount;
         s.lowLatency=true;s.ultraLowLatency=true;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=10.;s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
         inspired_->setSettings(s);inspired_->processChannels(io,channels,frames);
         const float midi=inspired_->getDetectedMidi();telemetry_={midi>0?p.referenceA*std::exp2((midi-69.f)/12.f):0.f,inspired_->getConfidence(),100.f*inspired_->getCorrectionSemitones(),inspired_->getTargetMidi(),false};
+        std::fill_n(pitchValid,frames,telemetry_.hz>0?1:0);
 #endif
     }
     std::unique_ptr<RealtimeTuner> regular_;
@@ -261,7 +268,7 @@ private:
     std::array<int,7> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;
-    std::vector<uint8_t> attackMarks_;
+    std::vector<uint8_t> attackMarks_,pitchValidHistory_;
     std::array<double,2> attackPrevious_{};
     double attackPower_=0.,attackDiffPower_=0.,attackBlend_=0.;
     double attackMeter_=0.,attackEntry_=0.,attackRelease_=0.;

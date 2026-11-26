@@ -7,6 +7,9 @@ on:
       - dsp/RealtimeTuner.hpp
       - dsp/NoteDecision.hpp
       - dsp/WetLevelGuard.hpp
+      - dsp/MetaTest.hpp
+      - dsp/FormantAudition.hpp
+      - dsp/shared/AlignedSpectralPitchFormant.h
       - tests/playground_*.cpp
       - tests/playground_*.hpp
       - tools/recover_snap_core.py

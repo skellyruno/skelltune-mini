@@ -28,6 +28,12 @@ def source_context(path):
     # Non-overlapping 0.8-second blocks, not randomly interleaved frames.
     fold=(np.arange(len(dr))//80)%2
     return fs,delay,len(d),dr,de,voiced,fold
+def pitch_error_cents(hz):
+    pcs=np.array([i for i in range(12) if 2773&(1<<i)])
+    midi=69+12*np.log2(np.maximum(hz,1)/440.)
+    delta=midi[:,None]-pcs[None,:]
+    return np.min(np.abs(delta-12*np.round(delta/12)),axis=1)*100
+
 def measure(path,ctx):
     fs,delay,length,dr,de,voiced,fold=ctx
     sr,x=read(path)
@@ -35,10 +41,7 @@ def measure(path,ctx):
     rms,env,f0=analyze(x[delay:],fs)
     n=min(len(dr),len(rms));mask=voiced[:n]
     valid=np.isfinite(f0[:n])
-    pcs=np.array([i for i in range(12) if 2773&(1<<i)])
-    midi=69+12*np.log2(np.maximum(f0[:n],1))
-    delta=midi[:,None]-pcs[None,:]
-    cents=np.min(np.abs(delta-12*np.round(delta/12)),axis=1)*100
+    cents=pitch_error_cents(f0[:n])
     level=20*np.log10(np.maximum(rms[:n],1e-8)/np.maximum(dr[:n],1e-8))
     spec=np.mean(np.abs(env[:n]-de[:n]),axis=1)
     def metrics(sel):
@@ -95,6 +98,10 @@ def assess(rows,mode,flags,ctx):
     return float(np.mean(scores)),reasons
 def run(args):
     source=args.source.resolve();exe=args.exe.resolve();folder=args.out.resolve();folder.mkdir(parents=True,exist_ok=True)
+    # Independent sanity anchors: A440 is zero error, A+25c is 25 cents,
+    # A#4 is not in the G-major mask, and G4 belongs to it.
+    known=pitch_error_cents(np.array([440.,440.*2**(25/1200),440.*2**(1/12),440.*2**(-2/12)]))
+    assert np.allclose(known,[0.,25.,100.,0.],atol=1.e-7),known
     ctx=source_context(source)
     if args.verify:
         old=json.loads((folder/"selection.json").read_text(encoding="utf-8"))

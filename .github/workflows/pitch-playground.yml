@@ -1,0 +1,369 @@
+name: Verify Pitch Playground (research only)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      # Shared detector, synthesis and helper changes must also validate all five.
+      - dsp/**
+      - tests/playground_*.cpp
+      - tests/playground_*.hpp
+      - tools/recover_snap_core.py
+      - tools/render.cpp
+      - tools/score_playground.py
+      - tools/normalize_vst3_moduleinfo.py
+      - cmake/**
+      - Source/**
+      - CMakeLists.txt
+      - .github/workflows/pitch-playground.yml
+permissions:
+  contents: read
+concurrency:
+  group: pitch-playground-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  portable-four:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: skellyruno/skell-snap
+          ref: 8a4876259ebf30dd100204be1cf9beae2c3b5f03
+          path: external/snap
+          persist-credentials: false
+      - run: python3 tools/recover_snap_core.py external/snap recovered/SnapCore.h
+      - run: cmake -S . -B build-play -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON -DSKELLY_SNAP_HEADER="$PWD/recovered/SnapCore.h" -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_attack_test playground_recovery_test playground_formant_test playground_causal_formant_test playground_render --parallel 2
+      - run: ctest --test-dir build-play -R '^playground_(bank|mix|attack|recovery|formant|causal_formant)_test$' --output-on-failure
+      - name: Render actual four-engine singer comparisons
+        run: |
+          mkdir -p playground-audio
+          cp benchmark/v33/raw_levelmatched_20-28.wav playground-audio/DRY.wav
+          for mode in 1 2 3 4; do
+            for speed in 0 10 25 100; do
+              SKELLY_PLAYGROUND_MODE=$mode ./build-play/playground_render playground-audio/DRY.wav "playground-audio/engine_${mode}_${speed}ms.wav" "$speed" 100 100 0 0 2773
+            done
+          done
+      - name: Score portable challengers at equal 2.5ms transport
+        run: |
+          for mode in 1 2 3 4; do
+            for speed in 0 10 25 100; do
+              export SKELLY_PLAYGROUND_MODE=$mode SKELLY_PLAYGROUND_LATENCY_PROFILE=3
+              ./build-play/playground_render playground-audio/DRY.wav "playground-audio/envelope_${mode}_base_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/envelope_${mode}_candidate_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              for strength in 0.35 0.65; do
+                SKELLY_PLAYGROUND_ADAPTIVE_VOWEL=$strength ./build-play/playground_render playground-audio/DRY.wav "playground-audio/adaptive_${mode}_${strength}_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              done
+            done
+          done
+          # Isolated motion, dynamics and combined trials; reference modes included.
+          for mode in 1 2 3 4; do
+            for speed in 0 10 25 100; do
+              export SKELLY_PLAYGROUND_MODE=$mode SKELLY_PLAYGROUND_LATENCY_PROFILE=3
+              SKELLY_PLAYGROUND_MOTION_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_motion_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_dynamics_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_MOTION_CANDIDATE=1 SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_combined_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_promoted_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_synthesis_${speed}ms.wav" "$speed" 100 100 0 0 2773
+            done
+          done
+          python -m pip install numpy scipy
+          python tools/score_playground.py playground-audio/DRY.wav playground-audio
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pitch-Playground-four-engine-audio
+          path: playground-audio
+          retention-days: 1
+  windows-full:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: skellyruno/skell-snap
+          ref: 8a4876259ebf30dd100204be1cf9beae2c3b5f03
+          path: external/snap
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: skellyruno/MetaTuneInspiredvst
+          ref: 73d759307ce9536e522b2cf78dc1da943afc8f3d
+          path: external/meta
+          persist-credentials: false
+      - run: python tools/recover_snap_core.py external/snap recovered/SnapCore.h
+      - name: Configure five-engine native research build
+        shell: pwsh
+        run: >
+          cmake -S . -B build-play -A x64
+          -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON
+          -DSKELLY_PLAYGROUND_FULL=ON -DSKELLY_BUILD_PLUGIN=ON -DSKELLY_BUILD_DSP_TESTS=OFF
+          "-DSKELLY_SNAP_HEADER=$PWD/recovered/SnapCore.h"
+          "-DSKELLY_META_SOURCE=$PWD/external/meta"
+      - name: Compile actual native VST3 and direct DSP / editor QA
+        run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundFullMixTest SkellyPlaygroundFullAttackTest SkellyPlaygroundFullRecoveryTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
+      - name: Verify all five algorithms and real editor
+        shell: pwsh
+        run: |
+          foreach ($target in @('SkellyPlaygroundFullBankTest.exe','SkellyPlaygroundFullMixTest.exe','SkellyPlaygroundFullAttackTest.exe','SkellyPlaygroundFullRecoveryTest.exe','SkellyPlaygroundSmoke.exe')) {
+            $exe = Get-ChildItem build-play -Recurse -File -Filter $target | Select-Object -First 1
+            if (!$exe) { throw "Missing $target" }
+            & $exe.FullName
+            if ($LASTEXITCODE -ne 0) { throw "$target failed: $LASTEXITCODE" }
+          }
+      - name: Render all five real engines on same singer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build-play -Recurse -File -Filter 'SkellyPlaygroundFullRender.exe' | Select-Object -First 1
+          if (!$exe) { throw "Missing full renderer" }
+          New-Item -ItemType Directory -Force playground-full | Out-Null
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/engine_$($mode)_$($speed)ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Engine $mode render failed" }
+            }
+          }
+          # Direct A/B of TESTTUNE at 2.5ms.
+          foreach ($mode in @(1)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
+            foreach ($speed in @(0,10,25,100)) {
+              $env:SKELLY_PLAYGROUND_LEGACY_CHALLENGERS = '1'
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/challenger_${mode}_legacy_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Legacy challenger $mode failed" }
+              Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_CHALLENGERS
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/challenger_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Candidate challenger $mode failed" }
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+          # Causal envelope restoration candidate: all three challengers, protected references as hash controls.
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/envelope_${mode}_base_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Envelope baseline failed" }
+              $env:SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE = '1'
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/envelope_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Envelope candidate failed" }
+              Remove-Item Env:SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE
+              if ($mode -eq 3 -or $mode -eq 4) {
+                if ((Get-FileHash "playground-full/envelope_${mode}_base_${speed}ms.wav").Hash -ne (Get-FileHash "playground-full/envelope_${mode}_candidate_${speed}ms.wav").Hash) { throw "Protected reference changed" }
+              }
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+          # Adaptive candidate: compare two strengths with the previous envelope path, no default changes.
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              foreach ($strength in @('0.35','0.65')) {
+                $env:SKELLY_PLAYGROUND_ADAPTIVE_VOWEL = $strength
+                & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/adaptive_${mode}_${strength}_${speed}ms.wav" $speed 100 100 0 0 2773
+                if ($LASTEXITCODE -ne 0) { throw "Adaptive candidate failed" }
+                if ($mode -eq 3 -or $mode -eq 4) {
+                  if ((Get-FileHash "playground-full/envelope_${mode}_base_${speed}ms.wav").Hash -ne (Get-FileHash "playground-full/adaptive_${mode}_${strength}_${speed}ms.wav").Hash) { throw "Frozen reference changed" }
+                }
+              }
+              Remove-Item Env:SKELLY_PLAYGROUND_ADAPTIVE_VOWEL
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+          # Level A/B isolates only the new wet recovery, including both references.
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              $env:SKELLY_PLAYGROUND_LEGACY_LEVEL = '1'
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/level_${mode}_legacy_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Legacy level $mode failed" }
+              Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_LEVEL
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/level_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Candidate level $mode failed" }
+              if ($mode -eq 3 -or $mode -eq 4) {
+                $a = (Get-FileHash "playground-full/level_${mode}_legacy_${speed}ms.wav").Hash
+                $b = (Get-FileHash "playground-full/level_${mode}_candidate_${speed}ms.wav").Hash
+                if ($a -ne $b) { throw 'Frozen Classic/Crystal reference changed' }
+              }
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+          # Native quality A/B with the same 10ms host budget.
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '5'
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,25)) {
+              $env:SKELLY_PLAYGROUND_LEGACY_QUALITY = '1'
+              $env:SKELLY_PLAYGROUND_LEGACY_OVERSHOOT = '1'
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/quality_${mode}_legacy_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Legacy quality $mode failed" }
+              Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_QUALITY
+              Remove-Item Env:SKELLY_PLAYGROUND_LEGACY_OVERSHOOT
+              & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/quality_${mode}_candidate_${speed}ms.wav" $speed 100 100 0 0 2773
+              if ($LASTEXITCODE -ne 0) { throw "Native quality $mode failed" }
+              if ($mode -eq 3 -or $mode -eq 4) {
+                $a = (Get-FileHash "playground-full/quality_${mode}_legacy_${speed}ms.wav").Hash
+                $b = (Get-FileHash "playground-full/quality_${mode}_candidate_${speed}ms.wav").Hash
+                if ($a -ne $b) { throw 'Classic/Crystal quality reference changed' }
+              }
+            }
+          }
+          Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+      - name: Render targeted motion and dynamics trials
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build-play -Recurse -File -Filter "SkellyPlaygroundFullRender.exe" | Select-Object -First 1
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = "3"
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              foreach ($trial in @("motion","dynamics","combined","promoted","synthesis")) {
+                if ($trial -eq "motion" -or $trial -eq "combined") { $env:SKELLY_PLAYGROUND_MOTION_CANDIDATE = "1" }
+                if ($trial -eq "dynamics" -or $trial -eq "combined") { $env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE = "1" }
+                if ($trial -eq "promoted" -or $trial -eq "synthesis") { $env:SKELLY_PLAYGROUND_LISTENING_PROMOTION = "1" }
+                if ($trial -eq "synthesis") { $env:SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE = "1" }
+                & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/next_${mode}_${trial}_${speed}ms.wav" $speed 100 100 0 0 2773
+                if ($LASTEXITCODE -ne 0) { throw "Targeted candidate failed" }
+                Remove-Item Env:SKELLY_PLAYGROUND_MOTION_CANDIDATE -ErrorAction SilentlyContinue
+                Remove-Item Env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE -ErrorAction SilentlyContinue
+                Remove-Item Env:SKELLY_PLAYGROUND_LISTENING_PROMOTION -ErrorAction SilentlyContinue
+                Remove-Item Env:SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE -ErrorAction SilentlyContinue
+              }
+            }
+          }
+      - name: Score real-vocal pitch, envelope and level against frozen references
+        run: |
+          python -m pip install numpy scipy
+          python tools/score_playground.py benchmark/v33/raw_levelmatched_20-28.wav playground-full
+      # Audio is retained for research. The binary is staged only after
+      # all validation passes, on the owner's same-repository research branch.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pitch-Playground-five-engine-audio
+          path: playground-full
+          retention-days: 3
+
+      - name: Strict Playground identity and metadata
+        shell: pwsh
+        run: |
+          $bundles = @(Get-ChildItem -LiteralPath build-play -Recurse -Directory -Filter 'SkellyTune Playground.vst3')
+          if ($bundles.Count -ne 1) { throw 'Expected exactly one Playground bundle' }
+          $module = Join-Path $bundles[0].FullName 'Contents/Resources/moduleinfo.json'
+          python tools/normalize_vst3_moduleinfo.py --path "$module" --cmake-file CMakeLists.txt --expected-name "SkellyTune Playground"
+          if ($LASTEXITCODE -ne 0) { throw 'Metadata validation failed' }
+      - name: Download pinned pluginval 2.0.0-beta3 for five-engine Playground
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip'
+          Invoke-WebRequest -Uri 'https://github.com/Tracktion/pluginval/releases/download/v2.0.0-beta3/pluginval_Windows.zip' -OutFile $archive
+          $expectedSha256 = 'da158e918b60430c6a5223cd99cc2e746bda604e583258c400898caf4e95c523'
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) { throw "Pinned pluginval hash mismatch: $actualSha256" }
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'skelly-meta-pluginval'
+          Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot -Force
+          $validator = Get-ChildItem -LiteralPath $toolRoot -Recurse -File -Filter 'pluginval.exe' | Select-Object -First 1
+          if (!$validator) { throw 'Verified pluginval executable missing' }
+          "PLUGINVAL_EXE=$($validator.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Validate actual five-engine Playground VST3 with pluginval strictness 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundles = @(Get-ChildItem -LiteralPath build-play -Recurse -Directory -Filter 'SkellyTune Playground.vst3')
+          if ($bundles.Count -ne 1) { throw "Expected one Lab VST3; got $($bundles.Count)" }
+          $stdout = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stdout'
+          $stderr = Join-Path $env:RUNNER_TEMP 'meta-pluginval.stderr'
+          $argumentLine = '--strictness-level 5 "' + $bundles[0].FullName + '"'
+          $process = Start-Process -FilePath $env:PLUGINVAL_EXE -ArgumentList $argumentLine `
+            -WorkingDirectory $PWD.Path -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+          if ($null -eq $process.ExitCode -or $process.ExitCode -ne 0) {
+            throw "Playground pluginval strictness 5 failed: exit=$($process.ExitCode)"
+          }
+
+      - name: Stage owner research listening VST3
+        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/skellytune-pitch-playground-20261123'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundles = @(Get-ChildItem -LiteralPath build-play -Recurse -Directory -Filter 'SkellyTune Playground.vst3')
+          if ($bundles.Count -ne 1) { throw 'Expected exactly one Playground bundle' }
+          $stage = Join-Path $PWD 'PLAYGROUND-RESEARCH-LISTENING'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item -LiteralPath $bundles[0].FullName -Destination $stage -Recurse
+          Copy-Item -LiteralPath docs/PITCH_PLAYGROUND.md -Destination $stage
+          Copy-Item -LiteralPath external/meta/LICENSE -Destination (Join-Path $stage 'MetaTune-AGPL-LICENSE.txt')
+          Copy-Item -LiteralPath external/meta/THIRD_PARTY_NOTICES.md -Destination $stage
+          @'
+          SKELLYTUNE PLAYGROUND — OWNER-AUTHORIZED RESEARCH TEST BUILD
+          All five engines. Experimental; no warranty or production readiness.
+          The combined linked test work is provided under AGPL-3.0 terms.
+          Preserve original component notices and license terms. The independent
+          source repositories retain their existing licenses.
+          Exact source and dependency revisions: SOURCE-REVISIONS.txt.
+          The complete corresponding source archive accompanies this bundle.
+          Install the complete VST3 bundle in a backup FL Studio project.
+          0ms retune = fast; 100ms retune = slow. Select latency directly;
+          actual engine minimum and host delay are reported. Graph editing is
+          supported by TESTTUNE and META. Legacy host choice slots map to surviving engines.
+          '@ | Set-Content -LiteralPath (Join-Path $stage 'README-RESEARCH-LISTENING.txt') -Encoding utf8
+          git rev-parse HEAD | Set-Content -LiteralPath (Join-Path $stage 'BUILD-COMMIT.txt')
+          # The complete linked-build source, excluding unrelated benchmark
+          # recordings and standalone artwork. Preserve every license and notice.
+          $sourceRoot = Join-Path $env:RUNNER_TEMP 'playground-corresponding-source'
+          New-Item -ItemType Directory -Force $sourceRoot | Out-Null
+          $parts = @(
+            @{ Repo='.'; Name='playground'; Paths=@('CMakeLists.txt','Source','dsp','cmake','tools','tests','docs','third_party','release/THIRD_PARTY_NOTICES.md','LICENSE','AGENTS.md') },
+            @{ Repo='external/meta'; Name='meta'; Paths=@('Source','CMakeLists.txt','LICENSE','THIRD_PARTY_NOTICES.md') },
+            @{ Repo='external/snap'; Name='snap'; Paths=@('source-overlay','audition','README.md') },
+            @{ Repo='build-play/_deps/skellcoreshared-src'; Name='skellcore'; Paths=@('SkellCore') },
+            @{ Repo='build-play/_deps/juce-src'; Name='juce'; Paths=@('CMakeLists.txt','modules','extras','LICENSE.md') }
+          )
+          $revisions = foreach ($part in $parts) {
+            $dest = Join-Path $sourceRoot $part.Name
+            New-Item -ItemType Directory -Force $dest | Out-Null
+            $sourceRev = git -C $part.Repo rev-parse HEAD
+            if ($LASTEXITCODE -ne 0) { throw "Cannot resolve $($part.Name) source" }
+            "$($part.Name) $sourceRev $(git -C $part.Repo remote get-url origin)"
+            foreach ($relative in $part.Paths) {
+              $source = Join-Path $part.Repo $relative
+              if (!(Test-Path -LiteralPath $source)) { throw "Missing corresponding source: $source" }
+              Copy-Item -LiteralPath $source -Destination $dest -Recurse -Force
+            }
+          }
+          $revisions | Set-Content -LiteralPath (Join-Path $stage 'SOURCE-REVISIONS.txt') -Encoding utf8
+          Copy-Item -LiteralPath (Join-Path $stage 'SOURCE-REVISIONS.txt') -Destination $sourceRoot
+          Copy-Item -LiteralPath recovered/SnapCore.h -Destination (Join-Path $sourceRoot 'snap')
+          Copy-Item -LiteralPath recovered/SnapCore.audition.h -Destination (Join-Path $sourceRoot 'snap')
+          Copy-Item -LiteralPath external/meta/LICENSE -Destination (Join-Path $sourceRoot 'AGPL-3.0.txt')
+          Copy-Item -LiteralPath 'build-play/_deps/juce-src/LICENSE.md' -Destination (Join-Path $stage 'JUCE-LICENSE.md')
+          @'
+          For an offline rebuild, use the playground directory as the CMake root.
+          Set SKELLY_META_TEST=ON, SKELLY_BUILD_PITCH_PLAYGROUND=ON,
+          SKELLY_PLAYGROUND_FULL=ON, SKELLY_BUILD_PLUGIN=ON.
+          Point SKELLY_SNAP_HEADER at snap/SnapCore.h,
+          SKELLY_META_SOURCE at meta, JUCE_PATH at juce, and
+          FETCHCONTENT_SOURCE_DIR_SKELLCORESHARED at skellcore.
+          Build target SkellyTunePlayground_VST3 in Release, Windows x64.
+          '@ | Set-Content -LiteralPath (Join-Path $sourceRoot 'BUILD-CORRESPONDING-SOURCE.txt')
+          Compress-Archive -Path "$sourceRoot/*" -DestinationPath (Join-Path $stage 'Corresponding-Source.zip') -CompressionLevel Optimal
+          $relativePaths = @('SkellyTune Playground.vst3/Contents/x86_64-win/SkellyTune Playground.vst3','SkellyTune Playground.vst3/Contents/Resources/moduleinfo.json')
+          $manifest = foreach ($relative in $relativePaths) {
+            $file = Join-Path $stage $relative
+            if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing $relative" }
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            "$hash *$relative"
+          }
+          $manifest | Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding utf8
+      - name: Upload owner research listening build
+        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/skellytune-pitch-playground-20261123'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkellyTune-Playground-TEST-5-ENGINE-LISTENING
+          path: PLAYGROUND-RESEARCH-LISTENING/
+          if-no-files-found: error
+          retention-days: 3

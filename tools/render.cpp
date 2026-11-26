@@ -1,4 +1,7 @@
 #include "RealtimeTuner.hpp"
+#if defined(SKELLY_PLAYGROUND_RENDER) && SKELLY_PLAYGROUND_RENDER
+#include "PlaygroundBank.hpp"
+#endif
 #ifdef SKELLY_META_TEST
 #include "MetaTest.hpp"   // TEST-ONLY engine, see dsp/MetaTest.hpp
 #endif
@@ -11,6 +14,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 struct Wav {
@@ -86,6 +90,49 @@ static Wav demo() {
     return w;
 }
 static Wav process(const Wav& w, const skelly::Parameters& p) {
+#if defined(SKELLY_PLAYGROUND_RENDER) && SKELLY_PLAYGROUND_RENDER
+    if(const char* selected=std::getenv("SKELLY_PLAYGROUND_MODE")){
+        const int slot=std::atoi(selected);
+        const int mode=skelly::playground::fromLegacySlot(slot);
+        if(slot!=skelly::playground::toLegacySlot(mode))throw std::runtime_error("Unavailable or retired playground engine");
+        const char* latency=std::getenv("SKELLY_PLAYGROUND_LATENCY_PROFILE");
+        const int profile=latency?std::atoi(latency):0;
+        if(profile<0||profile>=int(skelly::playground::latencyNames.size()))throw std::runtime_error("Unavailable latency profile");
+        skelly::playground::Bank bank;
+        if(const char* strength=std::getenv("SKELLY_PLAYGROUND_ADAPTIVE_VOWEL"))bank.setAdaptiveVowelCandidate(std::atof(strength));
+        bank.setSynthesisCandidate(std::getenv("SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE")!=nullptr);
+        bank.setListeningPromotion(std::getenv("SKELLY_PLAYGROUND_LISTENING_PROMOTION")!=nullptr);
+        bank.setMotionCandidate(std::getenv("SKELLY_PLAYGROUND_MOTION_CANDIDATE")!=nullptr);
+        bank.setDynamicsCandidate(std::getenv("SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE")!=nullptr);
+        bank.setEnvelopeCandidate(std::getenv("SKELLY_PLAYGROUND_ENVELOPE_CANDIDATE")!=nullptr);
+        bank.setChallengerExperiments(std::getenv("SKELLY_PLAYGROUND_LEGACY_CHALLENGERS")==nullptr);
+        bank.setWetLevelRecoveryEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_LEVEL")==nullptr);
+        bank.setNativeQualityEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_QUALITY")==nullptr);
+        bank.setOvershootBalanceEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_OVERSHOOT")==nullptr);
+        bank.setRecordingResponseEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_RECORDING_RESPONSE")==nullptr);
+        bank.prepare(w.rate,w.channels,128,profile,mode);
+        Wav result=w;std::array<float,128> a{},b{};
+        const size_t n=w.samples.size()/size_t(w.channels);
+        float peak=0.f;size_t clipped=0;std::vector<double> timings;
+        for(size_t offset=0;offset<n;offset+=128){
+            const int len=int(std::min<size_t>(128,n-offset));
+            for(int i=0;i<len;++i){a[size_t(i)]=w.samples[(offset+i)*w.channels];if(w.channels==2)b[size_t(i)]=w.samples[(offset+i)*w.channels+1];}
+            float* io[2]={a.data(),b.data()};
+            const auto start=std::chrono::steady_clock::now();bank.process(io,w.channels,len,p,mode);
+            timings.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count());
+            for(int i=0;i<len;++i)for(int c=0;c<w.channels;++c){
+                const float sample=io[c][i];if(!std::isfinite(sample))throw std::runtime_error("Nonfinite playground sample");
+                peak=std::max(peak,std::abs(sample));clipped+=std::abs(sample)>1.f;
+                result.samples[(offset+i)*w.channels+c]=sample;
+            }
+        }
+        std::sort(timings.begin(),timings.end());
+        std::cout<<"PLAYGROUND "<<skelly::playground::names[size_t(mode)]<<" native_samples="<<bank.nativeLatency(mode)
+                 <<" profile="<<profile<<" common_samples="<<bank.latencySamples()<<" peak="<<peak<<" over_full_scale="<<clipped
+                 <<" p99_ms="<<(timings.empty()?0.:timings[std::min(timings.size()-1,size_t(.99*timings.size()))])<<"\n";
+        return result;
+    }
+#endif
     Wav output;output.rate=w.rate;output.channels=w.channels;output.samples.resize(w.samples.size());
     const double latencyMs = std::getenv("SKELLY_MINI_PDC") ? 1.5 : 3.0;
     skelly::RealtimeTuner dsp;dsp.prepare(w.rate,w.channels,false,false,latencyMs);dsp.setParameters(p);

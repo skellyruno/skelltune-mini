@@ -56,14 +56,14 @@ public:
 
     MetaTest() { reset(); }
 
-    void prepare(double sampleRate, double dryLatencyMs = 3.0) {
+    void prepare(double sampleRate, double dryLatencyMs = 3.0, bool playgroundExtended = false) {
         // Reject NaN, infinity, negative and out-of-engine sample rates
         // before converting to an unsigned integer or preparing the tracker.
         const double safeRate=std::clamp(
             std::isfinite(sampleRate)?sampleRate:48000.0,kSrMin,kSrMax);
         sr_ = static_cast<uint32_t>(std::lround(safeRate));
         dryLatencyMs_ = std::clamp(
-            std::isfinite(dryLatencyMs) ? dryLatencyMs : 3.0, 1.5, 3.0);
+            std::isfinite(dryLatencyMs) ? dryLatencyMs : 3.0, 1.5, playgroundExtended ? 10.0 : 3.0);
         hop_ = std::max<uint32_t>(32, static_cast<uint32_t>(double(sr_) * 0.0027));
         // Preparing detector FIR coefficients is expensive; do it only
         // from prepareToPlay, NEVER from the audio callback's mode switch.
@@ -80,6 +80,7 @@ public:
         entryAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.008));
         exitAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.004));
         ratioAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.0025));
+        fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.001));
         baseAlpha_ = 1.0 - std::exp(-1.0 / (double(sr_) * 0.010));
         transientMeterAlpha_=1.0-std::exp(-1.0/(double(sr_)*0.030));
         transientRelease_=std::exp(-1.0/(double(sr_)*0.003));
@@ -160,6 +161,9 @@ public:
     double cumulativePhaseMismatchBefore() const noexcept { return phaseErrorBefore_; }
     double cumulativePhaseMismatchAfter() const noexcept { return phaseErrorAfter_; }
     void setPhaseAlignedGrainsEnabled(bool on) noexcept { phaseAlignedGrains_ = on; }
+    // Playground recording profiles only. Default standalone remains exact.
+    void setFastRatioResponseEnabled(bool on) noexcept { fastRatioResponse_=on; }
+    void setCompactGrainCandidate(bool on) noexcept { compactGrain_=on; }
     // Pure deterministic comparison probe for the exact same alignment
     // routine used by the live engine; requires a valid PCM history.
     static double probeAlignedHead(const float* history, double previousHead,
@@ -220,7 +224,7 @@ public:
     }
     int tableCount() const { return count_; }
 
-    void process(float* const* io, int lanes, int frames, bool bypass = false) {
+    void process(float* const* io, int lanes, int frames, bool bypass = false, uint8_t* pitchValid=nullptr) {
         // A host can probe an unprepared instance with zero frames or
         // channels. Reject missing planar pointers before dereferencing.
         if(frames<=0 || lanes<=0 || io==nullptr)return;
@@ -240,7 +244,7 @@ public:
         }
         wasBypassed_=bypass;
         if (!bypass && tableDirty_) buildTable();
-        const double grain = std::max(1.0, 2.0 - lowLatency_);
+        const double grain = std::max(1.0, (compactGrain_?1.15:2.0) - lowLatency_);
         // The grain's source age varies with pitch. Use the existing ring's
         // exact host-aligned 3ms dry tap for silence/consonants, with smooth
         // voiced-entry/exit transitions and no realtime allocations.
@@ -249,10 +253,14 @@ public:
         // A few milliseconds of ratio slew avoid zippery resampler speed
         // changes when a new pitch frame or key arrives. The note decision
         // stays immediate, and the host's fixed 3ms PDC is unchanged.
-        const double ratioAlpha = ratioAlpha_;
+        // Preserve the user retune law: faster auxiliary slew only for quick
+        // correction, taper back to the original value for natural settings.
+        const double fastWeight=fastRatioResponse_?std::clamp((50.-speed_)/25.,0.,1.):0.;
+        const double ratioAlpha = ratioAlpha_+fastWeight*(fastRatioAlpha_-ratioAlpha_);
         const double baseAlpha = baseAlpha_;
         for (int i = 0; i < frames; ++i) {
             // No uint32 rollover at ~24h on long live sessions.
+            if(pitchValid) pitchValid[i]=0;
             const uint64_t w = w_;
             const float input0 = lanes > 0 ? io[0][i] : 0.0f;
             // Host audio is untrusted: one NaN in the grain ring can poison
@@ -315,6 +323,7 @@ public:
             }
             ++fresh_;
             analyse();
+            if(pitchValid) pitchValid[i]=raw_>0.0 || (detectedVoiced_ && lastTrustedLag_>0.0);
 
             const double pin = period_;
             const double pt = sel_ > 0.0 ? sel_ : pin;
@@ -402,7 +411,7 @@ public:
                     ++grainJumps_;
                     if (jumpCrossfadeEnabled_) {
                         const uint32_t length = uint32_t(std::clamp(
-                            std::lround(pt), 16l, 512l));
+                            std::lround(pt*(compactGrain_?.55:1.)), 16l, 512l));
                         flen_[l] = fade_[l] = length;
                         ++grainJumpCrossfades_;
                     } else {
@@ -733,6 +742,8 @@ private:
     double entryAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.008));
     double exitAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.004));
     double ratioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.0025));
+    double fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.001));
+    bool fastRatioResponse_=false,compactGrain_=false;
     double baseAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.010));
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;

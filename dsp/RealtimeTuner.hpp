@@ -625,7 +625,7 @@ public:
     // Existing calls preserve the original realtime/50ms profiles. Fast Studio
     // must be chosen before preparing; it is never an automatable mode.
     void prepare(double sampleRate, int maxChannels = 2, bool studioClock = false,
-                 bool fastStudio = false, double realtimeLatencyMs = 3.0) {
+                 bool fastStudio = false, double realtimeLatencyMs = 3.0, bool playgroundExtended = false) {
         rate_ = std::clamp(std::isfinite(sampleRate) ? sampleRate : 48000.0,
                            8000.0, 192000.0);
         channels_ = std::clamp(maxChannels, 1, 2);
@@ -635,7 +635,7 @@ public:
         fastStudio_ = studioClock && fastStudio;
         latency_ = studioClock_ ? (fastStudio_ ? studioFastDelayContract(rate_).reportedSamples
                                               : studioDelayContract(rate_).reportedSamples)
-                                 : delayContract(rate_, false, realtimeLatencyMs).reportedSamples;
+                                 : delayContract(rate_, false, realtimeLatencyMs, playgroundExtended).reportedSamples;
         int capacity = 1;
         while (capacity < int(rate_ * 0.20) + 8192) capacity <<= 1;
         mask_ = capacity - 1;
@@ -755,6 +755,14 @@ public:
     void setHarmonicAwareWetGateEnabled(bool enabled) noexcept { harmonicWetGateEnabled_ = enabled; }
     // Experimental A/B only. Enable only after real-vocal benchmarking.
     void setProvisionalTransitionEnabled(bool enabled) noexcept { provisionalTransitionEnabled_ = enabled; }
+    void setPlaygroundTransitionExperiment(bool enabled) noexcept { playgroundTransitionExperiment_=enabled; }
+    void setCompactWrapCandidate(bool enabled) noexcept { compactWrapCandidate_=enabled; }
+    static bool holdTestTuneBoundary(int previous,int candidate,uint16_t mask,double midi,double onset) noexcept {
+        return previous>=0 && previous<128 && candidate>=0 && candidate<128 && previous!=candidate &&
+            (mask & (1u<<(previous%12))) && (mask & (1u<<(candidate%12))) &&
+            std::abs(candidate-previous)<=2 && std::isfinite(midi) && std::isfinite(onset) && onset<.72 &&
+            std::abs(midi-previous)-std::abs(midi-candidate)<.24;
+    }
     // When a new note is still being confirmed, keep tuning toward the note that is
     // currently held (provided the singer is still near it) instead of dropping to
     // uncorrected dry audio. Disable only for A/B comparison.
@@ -857,7 +865,7 @@ public:
     }
     // in/out may alias: each sample is captured before writing any output channels.
     // Planar buffers; sample-count and channel count may vary per audio callback.
-    void process(const float* const* input, float* const* output, int frames, int numChannels) noexcept {
+    void process(const float* const* input, float* const* output, int frames, int numChannels, uint8_t* pitchValid=nullptr) noexcept {
         if (!input || !output || frames <= 0 || history_.empty() ||
             numChannels <= 0) return;
         numChannels = std::min(numChannels, channels_);
@@ -951,6 +959,7 @@ public:
                     e.valid && e.confidence >= 0.85f && onsetHoldSamples_ > 0 &&
                     onsetCue_.score() < 0.72f;
                 const int priorTarget = targetNote_;
+                notes_.setFastStableTransitions(playgroundTransitionExperiment_ && !params_.testTune && params_.speedMs<=25.f);
                 auto result = notes_.update(e.valid ? e.hertz : 0.0,
                     e.valid ? e.confidence : 0.0,
                     rememberedOnset ? 0.72 : double(onsetCue_.score()),
@@ -1016,8 +1025,13 @@ public:
                         else { testCandidateMidi_ = note; testCandidateHops_ = 1; }
                         const bool octaveCandidate = priorTarget >= 0 &&
                             std::abs(note-priorTarget) >= 10;
-                        const bool hold = uncertain &&
-                            testCandidateHops_ < (octaveCandidate ? 4 : 2);
+                        // At natural retune speeds, suppress small boundary reversals
+                        // without changing the hard-tune TestTune response.
+                        const bool boundaryHold=playgroundTransitionExperiment_ && params_.speedMs>=25.f &&
+                            holdTestTuneBoundary(priorTarget,note,params_.pitchClasses,
+                                69.0+12.0*std::log2(e.hertz/params_.referenceA),onsetCue_.score());
+                        const bool hold = boundaryHold || (uncertain &&
+                            testCandidateHops_ < (octaveCandidate ? 4 : 2));
                         // Holding the old MIDI target is NOT permission to
                         // calculate a new ratio from an incompatible period.
                         // A weak octave-down detector frame previously steered
@@ -1257,7 +1271,8 @@ public:
             // Cubic interpolation uses one younger tap, hence a safety margin.
             const double lowDelay = double(latency_) + 5.0;
             const double highDelay = lowDelay + period;
-            const int nextJumpLength = std::clamp(int(std::round(period * 0.48)), 16, 768);
+            const double wrapFraction=compactWrapCandidate_ ? std::clamp(.48-.32*std::abs(slope),.24,.48):.48;
+            const int nextJumpLength = std::clamp(int(std::round(period * wrapFraction)), 16, 768);
             if (jumpPosition_ < jumpLength_) {
                 jumpFrom_ += slope;
                 jumpTo_ += slope;
@@ -1318,7 +1333,7 @@ public:
                 + jumpBlend*jumpBlend + 2.0*jumpCorrelation_*jumpBlend*(1.0-jumpBlend);
             const double overlapGain = jumping ?
                 (1.0 + params_.cycleLevelStabilization *
-                    (std::min(1.28, 1.0 / std::sqrt(std::max(0.15, weightsPower))) - 1.0)) : 1.0;
+                    (std::min(compactWrapCandidate_?1.42:1.28, 1.0 / std::sqrt(std::max(0.15, weightsPower))) - 1.0)) : 1.0;
             maxOverlapGain_ = std::max(maxOverlapGain_, overlapGain);
             if (effectiveMix_ > 0.0005) {
                 const double minRead = jumping ? std::min(jumpFrom_, jumpTo_) : readDelay_;
@@ -1485,6 +1500,7 @@ public:
             if (jumping && ++jumpPosition_ == jumpLength_) {
                 readDelay_ = jumpTo_;
             }
+            if(pitchValid) pitchValid[i]=tracker_.last().valid && tracker_.last().hertz>0.f;
             write_ = (write_ + 1) & mask_;
         }
     }
@@ -1591,6 +1607,8 @@ private:
     std::array<double,2> dryLow_{}, wetLow_{}, cycleLow_{};
     bool harmonicWetGateEnabled_ = true;
     bool provisionalTransitionEnabled_ = false;
+    bool playgroundTransitionExperiment_=false;
+    bool compactWrapCandidate_=false;
     bool holdActiveWhilePending_ = true;
     PeriodTable periodTable_;
     int nearZeroSamples_ = 0;

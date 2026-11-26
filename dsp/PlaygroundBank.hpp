@@ -9,6 +9,7 @@
 #include "WetLevelGuard.hpp"
 #include "FormantEnvelopeGuard.hpp"
 #include "AdaptiveVowelGuard.hpp"
+#include "ChallengerDynamics.hpp"
 #include "SnapCore.h"
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
 #include "SkellyFusionEngine.h"
@@ -60,6 +61,8 @@ public:
     void setChallengerExperiments(bool enabled) noexcept { challengers_=enabled; }
     void setEnvelopeCandidate(bool enabled) noexcept { envelopeCandidate_=enabled; }
     void setAdaptiveVowelCandidate(double strength) noexcept { adaptiveStrength_=std::clamp(strength,0.,1.); }
+    void setMotionCandidate(bool enabled) noexcept { motionCandidate_=enabled; }
+    void setDynamicsCandidate(bool enabled) noexcept { dynamicsCandidate_=enabled; }
     void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
         rate_=std::clamp(std::isfinite(rate)?rate:48000.,8000.,192000.);
         channels_=std::clamp(channels,1,2);
@@ -95,6 +98,7 @@ public:
         wetLevelGuard_.prepare(rate_);
         envelopeGuard_.prepare(rate_,channels_);
         adaptiveVowel_.prepare(rate_);
+        challengerDynamics_.prepare(rate_);
         mixGuard_.prepare(rate_);partialBlend_=false;
         attackMarks_.assign(size_t(capacity_),0);
         pitchValidHistory_.assign(size_t(capacity_),0);
@@ -188,7 +192,10 @@ public:
                 }
                 // Classic and Crystal are immutable listening references.
                 if(active_!=2 && active_!=3) pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
-                if(wetLevelRecovery_ && active_!=2 && active_!=3){
+                if(dynamicsCandidate_ && active_!=2 && active_!=3){
+                    const double strength=active_==1?1.:.75;
+                    challengerDynamics_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,blend,strength);
+                }else if(wetLevelRecovery_ && active_!=2 && active_!=3){
                     wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend,overshootBalance_ && (active_==1));
                 }
                 // Candidate only: aligned dry envelope guides the corrected wet signal.
@@ -197,7 +204,10 @@ public:
                     float corrected[2]{};
                     const double strength=!dryOnly && pitchValidHistory_[size_t(wr)]!=0 ? .65 : 0.;
                     envelopeGuard_.process(alignedDry,alignedWet,corrected,channels,strength,strength>0.);
-                    for(int c=0;c<channels;++c)alignedWet[c]=corrected[c];
+                    // Preserve the old experimental shape but prohibit new overload.
+                    double peak=0.,original=0.;for(int c=0;c<channels;++c){peak=std::max(peak,std::abs(double(corrected[c])));original=std::max(original,std::abs(double(alignedWet[c])));}
+                    const double cap=std::max(1.,original),safe=peak>cap?cap/peak:1.;
+                    for(int c=0;c<channels;++c)alignedWet[c]=float(corrected[c]*safe);
                 }
                 if(adaptiveStrength_>0. && active_!=2 && active_!=3){
                     const double voiced=!dryOnly&&pitchValidHistory_[size_t(wr)]!=0?1.:0.;
@@ -244,6 +254,7 @@ private:
         wetLevelGuard_.reset();
         envelopeGuard_.reset();
         adaptiveVowel_.reset();
+        challengerDynamics_.reset();
         std::fill(pitchValidHistory_.begin(),pitchValidHistory_.end(),uint8_t(0));
         mixGuard_.reset();partialBlend_=false;
         active_=mode;fadePosition_=0;warm_=common_+int(rate_*.04);telemetry_={};
@@ -255,6 +266,7 @@ private:
 #endif
     }
     void render(float* const* io,int channels,int frames,Parameters p,int manual,uint8_t* pitchValid) {
+        if(motionCandidate_&&active_!=2&&active_!=3)p.speedMs=skelly::challengerSpeed(p.speedMs,active_);
         if(active_==0){p.testTune=true;p.mix=1.f;p.experimentalCycleSynthesis=false;
             testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
             const float* in[2]={io[0],channels==2?io[1]:nullptr};testTune_->process(in,io,frames,channels,pitchValid);
@@ -266,7 +278,7 @@ private:
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
         std::array<bool,12> mask{};for(int i=0;i<12;++i)mask[size_t(i)]=(p.pitchClasses&(1u<<i))!=0;
         autotune::Settings s;s.key=0;s.scale=autotune::Scale::Custom;s.customScale=mask;s.referenceHz=p.referenceA;s.retuneMs=p.speedMs;s.strength=p.amount;
-        s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=10.;s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
+        s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=motionCandidate_&&p.speedMs>2.f&&p.speedMs<45.f?5.f:10.f;s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
         // Restore consonants sooner at intermediate retune rates without
         // changing hard tune, slow retune or the higher-latency quality path.
         if(recordingResponse_ && profile_>=1 && profile_<=3){
@@ -294,6 +306,8 @@ private:
     bool envelopeCandidate_=false;
     skelly::AdaptiveVowelGuard adaptiveVowel_;
     double adaptiveStrength_=0.;
+    skelly::ChallengerDynamics challengerDynamics_;
+    bool motionCandidate_=false,dynamicsCandidate_=false;
     std::array<int,modeCount> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

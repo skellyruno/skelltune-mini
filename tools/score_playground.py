@@ -60,7 +60,7 @@ def main():
     pcs=np.array([i for i in range(12) if 2773&(1<<i)])
     rows=[]
     for p in sorted(folder.glob("*.wav")):
-        if not p.name.startswith(("adaptive_","envelope_")):continue
+        if not p.name.startswith(("adaptive_","envelope_","next_")):continue
         rate,x=read(p);assert rate==fs and len(x)==len(dry)+delay,p
         rms,env,f0=analyze(x[delay:],fs);n=min(len(dr),len(rms))
         voiced=active[:n]&np.isfinite(df[:n]);valid=voiced&np.isfinite(f0[:n])
@@ -77,12 +77,20 @@ def main():
                  level_mae_db=round(float(np.median(np.abs(level[voiced]))),3),
                  peak=round(float(np.max(np.abs(x))),6),over_full_scale=int(np.count_nonzero(np.abs(x)>1)))
         rows.append(row);print("VOCAL_SCORE",row,flush=True)
+        if p.name.startswith("next_"):assert row["over_full_scale"]==0,("targeted candidate clipped",p)
         # All protected-reference candidate WAVs must match same-profile base.
         bits=p.stem.split("_")
         if bits[1] in ("3","4"):
             base=folder/f"envelope_{bits[1]}_base_{bits[-1]}.wav"
             if base.exists():assert hashlib.sha256(p.read_bytes()).digest()==hashlib.sha256(base.read_bytes()).digest(),p
     assert rows,"missing vocal scores"
+    lookup={r["file"]:r for r in rows}
+    for r in rows:
+        bits=pathlib.Path(r["file"]).stem.split("_")
+        if bits[0]!="next" or bits[1] in ("3","4"):continue
+        baseline=lookup[f"envelope_{bits[1]}_base_{bits[-1]}.wav"]
+        refs=[lookup[f"envelope_{m}_base_{bits[-1]}.wav"] for m in ("3","4")]
+        print("CHALLENGER_DELTA",r["file"],{k:round(r[k]-baseline[k],3) for k in ("median_cents","envelope_mae_db","level_mae_db","voiced_coverage")}, "beats_both_pitch",r["median_cents"]<min(x["median_cents"] for x in refs),flush=True)
     with (folder/"vocal_scores.csv").open("w",newline="") as out:
         writer=csv.DictWriter(out,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
 

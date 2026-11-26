@@ -56,6 +56,15 @@ jobs:
               done
             done
           done
+          # Isolated motion, dynamics and combined trials; reference modes included.
+          for mode in 1 2 3 4; do
+            for speed in 0 10 25 100; do
+              export SKELLY_PLAYGROUND_MODE=$mode SKELLY_PLAYGROUND_LATENCY_PROFILE=3
+              SKELLY_PLAYGROUND_MOTION_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_motion_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_dynamics_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_MOTION_CANDIDATE=1 SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_combined_${speed}ms.wav" "$speed" 100 100 0 0 2773
+            done
+          done
           python -m pip install numpy scipy
           python tools/score_playground.py playground-audio/DRY.wav playground-audio
       - uses: actions/upload-artifact@v4
@@ -200,6 +209,24 @@ jobs:
             }
           }
           Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
+      - name: Render targeted motion and dynamics trials
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build-play -Recurse -File -Filter "SkellyPlaygroundFullRender.exe" | Select-Object -First 1
+          $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = "3"
+          foreach ($mode in @(1,2,3,4,6)) {
+            $env:SKELLY_PLAYGROUND_MODE = "$mode"
+            foreach ($speed in @(0,10,25,100)) {
+              foreach ($trial in @("motion","dynamics","combined")) {
+                if ($trial -ne "dynamics") { $env:SKELLY_PLAYGROUND_MOTION_CANDIDATE = "1" }
+                if ($trial -ne "motion") { $env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE = "1" }
+                & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/next_${mode}_${trial}_${speed}ms.wav" $speed 100 100 0 0 2773
+                if ($LASTEXITCODE -ne 0) { throw "Targeted candidate failed" }
+                Remove-Item Env:SKELLY_PLAYGROUND_MOTION_CANDIDATE -ErrorAction SilentlyContinue
+                Remove-Item Env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE -ErrorAction SilentlyContinue
+              }
+            }
+          }
       - name: Score real-vocal pitch, envelope and level against frozen references
         run: |
           python -m pip install numpy scipy

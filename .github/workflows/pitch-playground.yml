@@ -63,6 +63,7 @@ jobs:
               SKELLY_PLAYGROUND_MOTION_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_motion_${speed}ms.wav" "$speed" 100 100 0 0 2773
               SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_dynamics_${speed}ms.wav" "$speed" 100 100 0 0 2773
               SKELLY_PLAYGROUND_MOTION_CANDIDATE=1 SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_combined_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_promoted_${speed}ms.wav" "$speed" 100 100 0 0 2773
             done
           done
           python -m pip install numpy scipy
@@ -217,13 +218,15 @@ jobs:
           foreach ($mode in @(1,2,3,4,6)) {
             $env:SKELLY_PLAYGROUND_MODE = "$mode"
             foreach ($speed in @(0,10,25,100)) {
-              foreach ($trial in @("motion","dynamics","combined")) {
-                if ($trial -ne "dynamics") { $env:SKELLY_PLAYGROUND_MOTION_CANDIDATE = "1" }
-                if ($trial -ne "motion") { $env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE = "1" }
+              foreach ($trial in @("motion","dynamics","combined","promoted")) {
+                if ($trial -eq "motion" -or $trial -eq "combined") { $env:SKELLY_PLAYGROUND_MOTION_CANDIDATE = "1" }
+                if ($trial -eq "dynamics" -or $trial -eq "combined") { $env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE = "1" }
+                if ($trial -eq "promoted") { $env:SKELLY_PLAYGROUND_LISTENING_PROMOTION = "1" }
                 & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/next_${mode}_${trial}_${speed}ms.wav" $speed 100 100 0 0 2773
                 if ($LASTEXITCODE -ne 0) { throw "Targeted candidate failed" }
                 Remove-Item Env:SKELLY_PLAYGROUND_MOTION_CANDIDATE -ErrorAction SilentlyContinue
                 Remove-Item Env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE -ErrorAction SilentlyContinue
+                Remove-Item Env:SKELLY_PLAYGROUND_LISTENING_PROMOTION -ErrorAction SilentlyContinue
               }
             }
           }

@@ -84,6 +84,15 @@ def main():
             base=folder/f"envelope_{bits[1]}_base_{bits[-1]}.wav"
             if base.exists():assert hashlib.sha256(p.read_bytes()).digest()==hashlib.sha256(base.read_bytes()).digest(),p
     assert rows,"missing vocal scores"
+    # Verify the real plugin policy exactly matches previously measured trial
+    # settings (including the retained TESTTUNE 25ms motion and frozen engines).
+    for path in folder.glob("next_*_promoted_*ms.wav"):
+        _,mode,_,speed=path.stem.split("_")
+        if mode in ("1","2"):
+            variant="dynamics" if mode=="1" and speed=="25ms" else "combined"
+            expected=folder/f"next_{mode}_{variant}_{speed}.wav"
+        else:expected=folder/f"envelope_{mode}_base_{speed}.wav"
+        assert expected.exists() and hashlib.sha256(path.read_bytes()).digest()==hashlib.sha256(expected.read_bytes()).digest(),("promoted audio differs",path,expected)
     lookup={r["file"]:r for r in rows}
     for r in rows:
         bits=pathlib.Path(r["file"]).stem.split("_")

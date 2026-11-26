@@ -61,6 +61,9 @@ public:
     void setChallengerExperiments(bool enabled) noexcept { challengers_=enabled; }
     void setEnvelopeCandidate(bool enabled) noexcept { envelopeCandidate_=enabled; }
     void setAdaptiveVowelCandidate(double strength) noexcept { adaptiveStrength_=std::clamp(strength,0.,1.); }
+    // The real plugin always enables the measured listening policy. Offline
+    // reference renders can deliberately leave it off for reproducible A/B.
+    void setListeningPromotion(bool enabled) noexcept { listeningPromotion_=enabled; }
     void setMotionCandidate(bool enabled) noexcept { motionCandidate_=enabled; }
     void setDynamicsCandidate(bool enabled) noexcept { dynamicsCandidate_=enabled; }
     void prepare(double rate,int channels,int maxBlockSize=128,int profile=0,int selectedEngine=0) {
@@ -192,7 +195,7 @@ public:
                 }
                 // Classic and Crystal are immutable listening references.
                 if(active_!=2 && active_!=3) pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
-                if(dynamicsCandidate_ && active_!=2 && active_!=3){
+                if((dynamicsCandidate_ || (listeningPromotion_ && profile_==3 && (active_==0||active_==1))) && active_!=2 && active_!=3){
                     const double strength=active_==1?1.:.75;
                     challengerDynamics_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,blend,strength);
                 }else if(wetLevelRecovery_ && active_!=2 && active_!=3){
@@ -267,6 +270,7 @@ private:
     }
     void render(float* const* io,int channels,int frames,Parameters p,int manual,uint8_t* pitchValid) {
         if(motionCandidate_&&active_!=2&&active_!=3)p.speedMs=skelly::challengerSpeed(p.speedMs,active_);
+        else if(listeningPromotion_&&profile_==3)p.speedMs=skelly::listeningSpeed(p.speedMs,active_);
         if(active_==0){p.testTune=true;p.mix=1.f;p.experimentalCycleSynthesis=false;
             testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
             const float* in[2]={io[0],channels==2?io[1]:nullptr};testTune_->process(in,io,frames,channels,pitchValid);
@@ -307,7 +311,7 @@ private:
     skelly::AdaptiveVowelGuard adaptiveVowel_;
     double adaptiveStrength_=0.;
     skelly::ChallengerDynamics challengerDynamics_;
-    bool motionCandidate_=false,dynamicsCandidate_=false;
+    bool motionCandidate_=false,dynamicsCandidate_=false,listeningPromotion_=false;
     std::array<int,modeCount> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;

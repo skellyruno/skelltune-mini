@@ -176,6 +176,7 @@ void SkellyTuneRealtimeProcessor::prepareToPlay(double sampleRate, int maxBlockS
         sampleRate : 0.0;
     doubleScratch_.setSize(2, juce::jlimit(1, 16384, maxBlockSize), false, true, false);
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
+    playground_.setListeningPromotion(true);
     playground_.prepare(sampleRate,std::max(1,getTotalNumInputChannels()),maxBlockSize,playgroundProfile(),playgroundMode());
     playgroundFormant_.prepare(sampleRate,true);
     playgroundPlaying_.store(false);
@@ -241,6 +242,7 @@ bool SkellyTuneRealtimeProcessor::applyPlaygroundLatency() {
     // publishPlaygroundConfig announces actual latency through JUCE to the host.
     // A transport change is not a reason to reject the selection.
     skelly::playground::Bank next;
+    next.setListeningPromotion(true);
     try { next.prepare(rate,channels,block,profile,mode); }
     catch(...) { return false; }
     {

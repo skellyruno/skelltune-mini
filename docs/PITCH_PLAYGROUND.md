@@ -26,3 +26,7 @@ New offline-only candidate uses aligned dry spectral envelopes to correct the th
 4. Keep Classic and Crystal unchanged; reject contenders that only improve pitch statistics while worsening vocal envelope, transients or listening preference.
 
 Historical results are in Git history, not in the active source tree. Do not reintroduce the retired engines.
+
+## Measured listening promotion
+
+The native editor/processor automatically enables the 2.5ms listening policy. TESTTUNE and META use the new wet dynamics and the measured retune calibration. TESTTUNE motion returns to baseline at 25ms because the earlier trial lost envelope accuracy and coverage. At other profiles, and for MetaTune 2.5, the prior defaults remain until matching results are available. Classic/Crystal stay bit-identical. No new parameter or user experiment selection. Render with SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 to match the real plugin. This is a listening build, not a production release.

@@ -1,5 +1,6 @@
 // Real JUCE processor/editor startup and seven/five-mode state/graph smoke.
 #include "../Source/PluginProcessor.h"
+#include "../dsp/ScaleMask.hpp"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <iostream>
@@ -128,6 +129,46 @@ int main(){
     juce::MemoryBlock legacyFormant;juce::AudioProcessor::copyXmlToBinary(*legacy,legacyFormant);
     p->setStateInformation(legacyFormant.getData(),int(legacyFormant.getSize()));
     if(p->getLatencySamples()!=basePdc||p->playgroundFormantRequested())return 36;
+#if defined(_WIN32)
+    // Real same-session IPC: the sender repeats its complete packet as Skell Key
+    // does. Change controls on the actual editor while the sender is active.
+    skellcore::world::WorldLink sender("skell.key","Playground IPC smoke");
+    if(!sender.join()||!p->joinWorld()||!sender.online())return 37;
+    auto* keyBox=dynamic_cast<juce::ComboBox*>(editor->findChildWithID("skelly.key"));
+    auto* scaleBox=dynamic_cast<juce::ComboBox*>(editor->findChildWithID("skelly.scale"));
+    auto* a4Box=dynamic_cast<juce::Slider*>(editor->findChildWithID("skelly.a4"));
+    if(!keyBox||!scaleBox||!a4Box)return 38;
+    auto pump=[](){juce::Thread::sleep(250);juce::Timer::callPendingTimersSynchronously();};
+    auto matches=[&](int root,int scale,float a4){
+        return std::abs(p->parameters().getRawParameterValue("key")->load()-root)<.01f&&
+            std::abs(p->parameters().getRawParameterValue("scale")->load()-scale)<.01f&&
+            std::abs(p->parameters().getRawParameterValue("a4")->load()-a4)<.06f;
+    };
+    const auto sent=skellcore::world::makeMusicalTuning(4,1,432.5);
+    if(!sender.publishMusicalTuning(sent))return 39;
+    for(int i=0;i<8&&!matches(4,2,432.5f);++i)pump();
+    if(!matches(4,2,432.5f))return 40;
+    keyBox->setSelectedId(8,juce::sendNotificationSync);
+    scaleBox->setSelectedId(2,juce::sendNotificationSync);
+    a4Box->setValue(445.,juce::sendNotificationSync);
+    if(!matches(7,1,445.f))return 41;
+    for(int i=0;i<5;++i){if(!sender.publishMusicalTuning(sent))return 42;pump();if(!matches(7,1,445.f))return 43;}
+    frame.clear();p->processBlock(frame,midi);pump();
+    if(std::abs(p->displayedReferenceA()-445.f)>.06f||keyBox->getSelectedId()!=8||scaleBox->getSelectedId()!=2)return 44;
+    for(int i=0;i<12;++i){auto* note=dynamic_cast<juce::Button*>(editor->findChildWithID("skelly.note."+juce::String(i)));if(!note||note->getToggleState()!=bool(skelly::scaleMask(7,1)&(1u<<i)))return 45;}
+    juce::MemoryBlock manualState;p->getStateInformation(manualState);
+    if(!sender.publishMusicalTuning(skellycore::world::makeMusicalTuning(9,0,440.)))return 46;
+    for(int i=0;i<8&&!matches(9,1,440.f);++i)pump();
+    if(!matches(9,1,440.f))return 47;
+    p->setStateInformation(manualState.getData(),int(manualState.getSize()));pump();
+    if(!matches(7,1,445.f))return 48;
+    sender.leave();pump();pump();
+    if(!sender.join()||!sender.publishMusicalTuning(skellycore::world::makeMusicalTuning(9,0,440.)))return 49;
+    for(int i=0;i<8&&!matches(9,1,440.f);++i)pump();
+    if(!matches(9,1,440.f))return 50;
+    sender.leave();
+    std::cout<<"PASS: actual Send to Tune, manual key/scale/A4, repeated heartbeat, new tuning, state recall and resend\n";
+#endif
     p->removeListener(&listener);
     if(p->pitchEdits().targetAt(150)!=57)return 27;
     p->setPlayHead(nullptr);

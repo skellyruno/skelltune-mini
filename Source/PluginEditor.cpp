@@ -1276,13 +1276,9 @@ void SkellyTuneEditor::mouseDoubleClick(const juce::MouseEvent& e) {
     repaint();
 }
 void SkellyTuneEditor::togglePitchClass(int index) {
-    // Match the same externally followed scale displayed by refreshNotes().
-    const auto linked=processor_.linkedMusicalKey();
-    const bool follow=processor_.followingSkellKey() && linked.valid();
-    const int root=follow?linked.root:
-        juce::roundToInt(parameters_.getRawParameterValue("key")->load());
-    const int scale=follow?(linked.mode==0?1:2):
-        juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
+    // Read the same saved/automatable parameters used by DSP.
+    const int root=juce::roundToInt(parameters_.getRawParameterValue("key")->load());
+    const int scale=juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
     const int savedMask=juce::roundToInt(parameters_.getRawParameterValue("noteMask")->load());
     const auto previous = skelly::effectiveMask(root,scale,savedMask);
     const auto next = skelly::toggleNote(previous,index);
@@ -1305,12 +1301,8 @@ void SkellyTuneEditor::resetManualNotes() {
     refreshNotes();
 }
 void SkellyTuneEditor::refreshNotes() {
-    const auto linked = processor_.linkedMusicalKey();
-    const bool useLinked = processor_.followingSkellKey() && linked.valid();
-    const int root = useLinked ? linked.root :
-        juce::roundToInt(parameters_.getRawParameterValue("key")->load());
-    const int scale = useLinked ? (linked.mode == 0 ? 1 : 2) :
-        juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
+    const int root=juce::roundToInt(parameters_.getRawParameterValue("key")->load());
+    const int scale=juce::roundToInt(parameters_.getRawParameterValue("scale")->load());
     const int raw = juce::roundToInt(parameters_.getRawParameterValue("noteMask")->load());
     const int mask = skelly::effectiveMask(root,scale,raw);
     const bool custom = raw != 0;

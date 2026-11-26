@@ -4,12 +4,28 @@
 #include "playground_amount_checks.hpp"
 #include "playground_challenger_checks.hpp"
 #include "playground_level_checks.hpp"
+#include "TuningAnnouncement.hpp"
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <cstdlib>
 static void check(bool v,const char* s){if(!v){std::cerr<<"FAIL: "<<s<<"\n";std::exit(1);}}
-int main(){challenger_checks::run();using namespace skelly::playground; for(int fs:{44100,48000,96000}){
+static void tuningAnnouncementChecks(){
+    skelly::TuningAnnouncement inbox;
+    check(!inbox.acceptFull(0,7)&&!inbox.acceptKey(0),"invalid tuning announcement");
+    check(inbox.acceptFull(1234,7),"first tuning send");
+    for(int i=0;i<30;++i)check(!inbox.acceptFull(1234,7),"heartbeat reapplied");
+    check(!inbox.acceptKey(7),"legacy mirror reapplied");
+    check(!inbox.acceptFull(1234,7),"complete packet reapplied after mirror");
+    check(inbox.acceptFull(1235,7),"new A4 ignored");
+    check(inbox.acceptKey(9),"new legacy key ignored");
+    check(!inbox.acceptKey(9),"legacy heartbeat reapplied");
+    check(inbox.acceptFull(1236,9),"full tuning upgrade ignored");
+    check(inbox.acceptFull(1234,7),"return to prior tuning ignored");
+    inbox.reset();check(inbox.acceptFull(1234,7),"resend after withdrawal ignored");
+    std::cout<<"PASS: tuning announcement deduplication\n";
+}
+int main(){tuningAnnouncementChecks();challenger_checks::run();using namespace skelly::playground; for(int fs:{44100,48000,96000}){
     level_checks::run(fs);
     playgroundStereoChecks(fs);
     playgroundLatencyChecks(fs);

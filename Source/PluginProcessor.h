@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../dsp/RealtimeTuner.hpp"
 #include "../dsp/PitchEditTimeline.hpp"
+#include "../dsp/TuningAnnouncement.hpp"
 #include <SkellCore/WorldLink.h>
 #include <SkellCore/SkullTheme.h>
 #include <juce_events/juce_events.h>
@@ -68,7 +69,7 @@ public:
     void leaveWorld() {
         stopTimer();
         linkedKey_.store(0, std::memory_order_release);
-        linkedTuning_.store(0, std::memory_order_release);
+        tuningInbox_.reset();
         worldLink.leave();
     }
     bool followingSkellKey() const noexcept { return worldLink.requested(); }
@@ -94,8 +95,7 @@ public:
     int displayedTargetNote() const noexcept { return displayedTargetNote_.load(std::memory_order_relaxed); }
     bool displayedTargetPending() const noexcept { return displayedTargetPending_.load(std::memory_order_relaxed); }
     float displayedCorrectionCents() const noexcept { return displayedCorrectionCents_.load(std::memory_order_relaxed); }
-    // Displays follow the SAME transient A4 as DSP, including SkellKey linked
-    // concert-pitch overrides (without mutating the saved APVTS A4 value).
+    // Display and DSP use the same saved/automatable A4 value.
     float displayedReferenceA() const noexcept { return displayedReferenceA_.load(std::memory_order_relaxed); }
     int64_t displayedHostMs() const noexcept {
         return displayedHostMs_.load(std::memory_order_relaxed);
@@ -158,7 +158,7 @@ private:
     // atomics and never touches a socket, mutex, GUI component or host params.
     std::atomic<int> skinIndex_{1};
     std::atomic<int> linkedKey_{0};
-    std::atomic<std::uint64_t> linkedTuning_{0}; // all of scale + A4 + key in one atomic
+    skelly::TuningAnnouncement tuningInbox_; // message thread only
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     skelly::Parameters currentParameters() const noexcept;
     // JUCE standalone GUI smoke invokes prepareToPlay directly; JUCE's

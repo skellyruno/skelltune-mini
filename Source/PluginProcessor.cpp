@@ -42,9 +42,12 @@ bool SkellyTuneRealtimeProcessor::applySkellKeyTuning(
     syncParameter("scale", float(tuning.mode + 1)); // major=1, natural minor=2
     syncParameter("a4", float(std::round(tuning.a4Hz() * 10.0) / 10.0));
 
-    // Publish a coherent 64-bit snapshot for the realtime audio callback.
-    linkedTuning_.store(skellcore::world::packMusicalTuning(tuning,1),
-                        std::memory_order_release);
+    // Preserve local custom masks. A non-diatonic remote mask can be
+    // persisted only when there is no existing local custom selection.
+    if (tuning.mask != skellcore::world::diatonicMask(tuning.root,tuning.mode) &&
+        state_.getRawParameterValue("noteMask")->load() == 0.f)
+        syncParameter("noteMask", float(tuning.mask));
+    // Linked key is informational only; APVTS is the tuning source of truth.
     linkedKey_.store(skellcore::world::MusicalKey{tuning.root,tuning.mode}.packed(),
                      std::memory_order_release);
     return true;
@@ -61,22 +64,26 @@ void SkellyTuneRealtimeProcessor::timerCallback() {
     if (!joinWorld()) return;
     if (!worldLink.online()) {
         linkedKey_.store(0, std::memory_order_release);
-        linkedTuning_.store(0, std::memory_order_release);
+        tuningInbox_.reset();
         return;
     }
     skellcore::world::MusicalTuning tuning;
     std::uint32_t tuningVersion = 0;
     // Full tuning packet takes priority so Key, Scale and A4 arrive together.
     if (worldLink.latestMusicalTuning(tuning, tuningVersion)) {
-        applySkellKeyTuning(tuning);
+        const auto key = skellcore::world::MusicalKey{tuning.root,tuning.mode}.packed();
+        // Ignore timestamp changes for an unchanged payload. Manual edits,
+        // automation and preset recall must not be overwritten by heartbeats.
+        if (tuningInbox_.acceptFull(skellcore::world::packMusicalTuning(tuning,1),key))
+            applySkellKeyTuning(tuning);
         return;
     }
-    linkedTuning_.store(0, std::memory_order_release);
     // Older SkellKey builds may send only musical.key. A4 stays manual.
     skellcore::world::MusicalKey key;
     std::uint64_t version = 0;
     if (worldLink.latestMusicalKey(key, version)) {
         linkedKey_.store(key.packed(), std::memory_order_release);
+        if (!tuningInbox_.acceptKey(key.packed())) return;
         const auto sync = [this](const char* id, float value) {
             auto* p = state_.getParameter(id);
             auto* current = state_.getRawParameterValue(id);
@@ -91,6 +98,7 @@ void SkellyTuneRealtimeProcessor::timerCallback() {
         sync("scale", float(key.mode + 1));
     } else {
         linkedKey_.store(0, std::memory_order_release);
+        tuningInbox_.reset(); // observed withdrawal permits a fresh Send
     }
 }
 juce::AudioProcessorValueTreeState::ParameterLayout SkellyTuneRealtimeProcessor::createLayout() {
@@ -293,28 +301,8 @@ skelly::Parameters SkellyTuneRealtimeProcessor::currentParameters() const noexce
     int key = juce::jlimit(0, 11, int(std::lround(state_.getRawParameterValue("key")->load())));
     int scale = juce::jlimit(0, 2, int(std::lround(state_.getRawParameterValue("scale")->load())));
     const int manualMask = juce::jlimit(0, 4095, int(std::lround(state_.getRawParameterValue("noteMask")->load())));
-    // One atomic read; no socket, locks, host notifications or allocations.
-    // An explicit user opt-in temporarily overrides tuning scale only.
-    // Saved key/scale parameters and any custom note mask remain untouched.
-    if (followingSkellKey() && manualMask==0) {
-        const auto world=skellcore::world::unpackMusicalKey(linkedKey_.load(std::memory_order_relaxed));
-        if(world.valid()) {
-            key=world.root;
-            scale=world.mode==0 ? 1 : 2;
-        }
-    }
+    // Send to Tune updates APVTS once; manual controls and DSP share it.
     p.pitchClasses = skelly::effectiveMask(key, scale, manualMask);
-    if (followingSkellKey() && manualMask == 0) {
-        skellcore::world::MusicalTuning tuning;
-        std::uint32_t version=0;
-        const auto snapshot=linkedTuning_.load(std::memory_order_acquire);
-        if (skellcore::world::unpackMusicalTuning(snapshot,tuning,version)) {
-            // Never alter host-automatable A4/key/scale. Override only the
-            // DSP's transient effective values, after explicit user opt-in.
-            p.pitchClasses = int(tuning.mask);
-            p.referenceA = static_cast<float>(tuning.a4Hz());
-        }
-    }
     // The engine's dry path retains the plugin's declared latency. Bypass
     // smoothly drops the wet mix while the detector remains warmed up.
     if (state_.getRawParameterValue("bypass")->load() > 0.5f) p.mix = 0.0f;

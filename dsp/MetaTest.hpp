@@ -163,6 +163,7 @@ public:
     void setPhaseAlignedGrainsEnabled(bool on) noexcept { phaseAlignedGrains_ = on; }
     // Playground recording profiles only. Default standalone remains exact.
     void setFastRatioResponseEnabled(bool on) noexcept { fastRatioResponse_=on; }
+    void setCompactGrainCandidate(bool on) noexcept { compactGrain_=on; }
     // Pure deterministic comparison probe for the exact same alignment
     // routine used by the live engine; requires a valid PCM history.
     static double probeAlignedHead(const float* history, double previousHead,
@@ -243,7 +244,7 @@ public:
         }
         wasBypassed_=bypass;
         if (!bypass && tableDirty_) buildTable();
-        const double grain = std::max(1.0, 2.0 - lowLatency_);
+        const double grain = std::max(1.0, (compactGrain_?1.15:2.0) - lowLatency_);
         // The grain's source age varies with pitch. Use the existing ring's
         // exact host-aligned 3ms dry tap for silence/consonants, with smooth
         // voiced-entry/exit transitions and no realtime allocations.
@@ -410,7 +411,7 @@ public:
                     ++grainJumps_;
                     if (jumpCrossfadeEnabled_) {
                         const uint32_t length = uint32_t(std::clamp(
-                            std::lround(pt), 16l, 512l));
+                            std::lround(pt*(compactGrain_?.55:1.)), 16l, 512l));
                         flen_[l] = fade_[l] = length;
                         ++grainJumpCrossfades_;
                     } else {
@@ -742,7 +743,7 @@ private:
     double exitAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.004));
     double ratioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.0025));
     double fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.001));
-    bool fastRatioResponse_=false;
+    bool fastRatioResponse_=false,compactGrain_=false;
     double baseAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.010));
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;

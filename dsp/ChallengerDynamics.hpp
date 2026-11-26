@@ -51,8 +51,10 @@ inline float challengerSpeed(float ms,int mode) noexcept {
 }
 // Promote the measured 2.5ms results. TESTTUNE at 25ms lost envelope
 // accuracy and voiced coverage, so return to its old motion there.
+inline float inspiredPromotionWeight(float ms) noexcept {return std::clamp(1.f-std::abs(ms-25.f)/10.f,0.f,1.f);}
 inline float listeningSpeed(float ms,int mode) noexcept {
     if(mode==1)return challengerSpeed(ms,mode);
+    if(mode==4){const float weight=std::clamp(1.f-std::abs(ms-25.f)/10.f,0.f,1.f);return ms+weight*(challengerSpeed(ms,mode)-ms);}
     if(mode!=0)return ms;
     const float weight=std::clamp((25.f-ms)/15.f,0.f,1.f);
     return ms+weight*(challengerSpeed(ms,mode)-ms);

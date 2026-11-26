@@ -756,6 +756,7 @@ public:
     // Experimental A/B only. Enable only after real-vocal benchmarking.
     void setProvisionalTransitionEnabled(bool enabled) noexcept { provisionalTransitionEnabled_ = enabled; }
     void setPlaygroundTransitionExperiment(bool enabled) noexcept { playgroundTransitionExperiment_=enabled; }
+    void setCompactWrapCandidate(bool enabled) noexcept { compactWrapCandidate_=enabled; }
     static bool holdTestTuneBoundary(int previous,int candidate,uint16_t mask,double midi,double onset) noexcept {
         return previous>=0 && previous<128 && candidate>=0 && candidate<128 && previous!=candidate &&
             (mask & (1u<<(previous%12))) && (mask & (1u<<(candidate%12))) &&
@@ -1270,7 +1271,8 @@ public:
             // Cubic interpolation uses one younger tap, hence a safety margin.
             const double lowDelay = double(latency_) + 5.0;
             const double highDelay = lowDelay + period;
-            const int nextJumpLength = std::clamp(int(std::round(period * 0.48)), 16, 768);
+            const double wrapFraction=compactWrapCandidate_ ? std::clamp(.48-.32*std::abs(slope),.24,.48):.48;
+            const int nextJumpLength = std::clamp(int(std::round(period * wrapFraction)), 16, 768);
             if (jumpPosition_ < jumpLength_) {
                 jumpFrom_ += slope;
                 jumpTo_ += slope;
@@ -1331,7 +1333,7 @@ public:
                 + jumpBlend*jumpBlend + 2.0*jumpCorrelation_*jumpBlend*(1.0-jumpBlend);
             const double overlapGain = jumping ?
                 (1.0 + params_.cycleLevelStabilization *
-                    (std::min(1.28, 1.0 / std::sqrt(std::max(0.15, weightsPower))) - 1.0)) : 1.0;
+                    (std::min(compactWrapCandidate_?1.42:1.28, 1.0 / std::sqrt(std::max(0.15, weightsPower))) - 1.0)) : 1.0;
             maxOverlapGain_ = std::max(maxOverlapGain_, overlapGain);
             if (effectiveMix_ > 0.0005) {
                 const double minRead = jumping ? std::min(jumpFrom_, jumpTo_) : readDelay_;
@@ -1606,6 +1608,7 @@ private:
     bool harmonicWetGateEnabled_ = true;
     bool provisionalTransitionEnabled_ = false;
     bool playgroundTransitionExperiment_=false;
+    bool compactWrapCandidate_=false;
     bool holdActiveWhilePending_ = true;
     PeriodTable periodTable_;
     int nearZeroSamples_ = 0;

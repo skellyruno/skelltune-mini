@@ -30,3 +30,5 @@ Historical results are in Git history, not in the active source tree. Do not rei
 ## Measured listening promotion
 
 The native editor/processor automatically enables the 2.5ms listening policy. TESTTUNE and META use the new wet dynamics and the measured retune calibration. TESTTUNE motion returns to baseline at 25ms because the earlier trial lost envelope accuracy and coverage. At other profiles, and for MetaTune 2.5, the prior defaults remain until matching results are available. Classic/Crystal stay bit-identical. No new parameter or user experiment selection. Render with SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 to match the real plugin. This is a listening build, not a production release.
+
+MetaTune 2.5's measured 25ms combined improvement is now enabled in the 2.5ms native listening policy, tapered back to baseline outside 15–35ms. 10ms behavior remains baseline. Native synthesis experiments are still compared offline before promotion.

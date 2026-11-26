@@ -72,6 +72,9 @@ def main():
         spec=np.mean(np.abs(env[:n]-de[:n]),axis=1)
         row=dict(file=p.name,voiced_coverage=round(float(valid.sum()/max(1,voiced.sum())),4),
                  median_cents=round(float(np.nanmedian(cents)),3),
+                 pitch_p90_cents=round(float(np.nanpercentile(cents,90)),3),
+                 within_10c_coverage=round(float(np.sum(cents<=10)/max(1,voiced.sum())),4),
+                 within_25c_coverage=round(float(np.sum(cents<=25)/max(1,voiced.sum())),4),
                  envelope_mae_db=round(float(np.median(spec[voiced])),3),
                  level_p10_db=round(float(np.percentile(level[voiced],10)),3),
                  level_mae_db=round(float(np.median(np.abs(level[voiced]))),3),
@@ -91,6 +94,7 @@ def main():
         if mode in ("1","2"):
             variant="dynamics" if mode=="1" and speed=="25ms" else "combined"
             expected=folder/f"next_{mode}_{variant}_{speed}.wav"
+        elif mode=="6" and speed=="25ms":expected=folder/f"next_{mode}_combined_{speed}.wav"
         else:expected=folder/f"envelope_{mode}_base_{speed}.wav"
         assert expected.exists() and hashlib.sha256(path.read_bytes()).digest()==hashlib.sha256(expected.read_bytes()).digest(),("promoted audio differs",path,expected)
     lookup={r["file"]:r for r in rows}

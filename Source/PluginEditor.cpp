@@ -529,7 +529,7 @@ SkellyTuneEditor::SkellyTuneEditor(SkellyTuneRealtimeProcessor& p)
     playgroundSelector_.setTooltip("Select an engine. Its actual latency and host compensation update automatically.");
     playgroundEngineAttachment_=std::make_unique<juce::ParameterAttachment>(
         *parameters_.getParameter("playgroundEngine"),[this](float value){
-            playgroundSelector_.setSelectedId(int(std::lround(value))+1,juce::dontSendNotification);
+            playgroundSelector_.setSelectedId(skelly::playground::fromLegacySlot(int(std::lround(value)))+1,juce::dontSendNotification);
         });
     playgroundSelector_.onChange=[this]{chooseAlgorithm(playgroundSelector_.getSelectedId()-1);};
     addAndMakeVisible(playgroundSelector_);
@@ -1329,7 +1329,7 @@ int SkellyTuneEditor::currentAlgorithm() const {
 void SkellyTuneEditor::chooseAlgorithm(int index) {
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     if(index>=0&&index<skelly::playground::modeCount){
-        playgroundEngineAttachment_->setValueAsCompleteGesture(float(index));
+        playgroundEngineAttachment_->setValueAsCompleteGesture(float(skelly::playground::toLegacySlot(index)));
         processor_.applyPlaygroundLatency();
     }
     return;

@@ -38,18 +38,18 @@ inline void run(int fs){
         skelly::playground::Bank legacy,quality;
         legacy.setNativeQualityEnabled(false);
         legacy.prepare(fs,2,127,profile,0);quality.prepare(fs,2,127,profile,0);
-        if(profile>=4){for(int mode:{0,1,2})require(quality.nativeLatency(mode)==int(std::lround(fs*skelly::playground::latencyTargets[size_t(profile)]*.001)),"Mini quality native latency");}
-        else for(int mode:{0,1,2})require(quality.nativeLatency(mode)==legacy.nativeLatency(mode),"low latency changed");
+        if(profile>=4){for(int mode:{0,1})require(quality.nativeLatency(mode)==int(std::lround(fs*skelly::playground::latencyTargets[size_t(profile)]*.001)),"Mini quality native latency");}
+        else for(int mode:{0,1})require(quality.nativeLatency(mode)==legacy.nativeLatency(mode),"low latency changed");
         require(quality.latencySamples()==legacy.latencySamples(),"Mini host delay changed");
     }
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
     {skelly::playground::Bank legacy,quality;legacy.setNativeQualityEnabled(false);
-     legacy.prepare(fs,2,127,5,6);quality.prepare(fs,2,127,5,6);
-     require(quality.nativeLatency(6)>legacy.nativeLatency(6)&&quality.latencySamples()==legacy.latencySamples(),"MetaTune quality must use existing 10ms budget");}
+     legacy.prepare(fs,2,127,5,4);quality.prepare(fs,2,127,5,4);
+     require(quality.nativeLatency(4)>legacy.nativeLatency(4)&&quality.latencySamples()==legacy.latencySamples(),"MetaTune quality must use existing 10ms budget");}
 #endif
     // Previously the entire wet block inherited its final pitch flag. Use
     // voice/silence transitions to check the exact same audio at odd sizes.
-    for(int mode:{0,1,2})for(int profile:{1,3,5}){
+    for(int mode:{0,1})for(int profile:{1,3,5}){
         const int n=fs;std::vector<float> src(n);double phase=0.;
         for(int i=0;i<n;++i){double t=double(i)/fs;phase+=2*skelly::kPi*(225.+15.*std::sin(2*skelly::kPi*5.*t))/fs;double v=std::fmod(t,.25);double env=std::clamp(std::min((v-.025)*120.,(.19-v)*120.),0.,1.);src[i]=float(env*(.13*std::sin(phase)+.035*std::sin(2*phase+.2)));}
         auto render=[&](int block){skelly::playground::Bank b;b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=block){float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(block,n-i),p,mode);}return std::make_pair(l,r);};
@@ -58,7 +58,7 @@ inline void run(int fs){
     // Recording response is opt-in for A/B, profile-limited, and has no
     // transport delay or standalone parameter changes. Check the actual
     // wet output on a moving pitch with silence and stereo polarity.
-    for(int mode:{2,6}){
+    for(int mode:{1,4}){
         if(mode>=skelly::playground::modeCount)continue;
         for(int profile:{1,3,5})for(float speed:{0.f,10.f,100.f}){
             const int n=fs/2;std::vector<float> src(n);double phase=0.;
@@ -73,13 +73,13 @@ inline void run(int fs){
                 for(int i=0;i<n;++i)require(std::isfinite(l[i])&&std::isfinite(r[i])&&std::abs(l[i])<1.f&&std::abs(r[i])<1.f,"recording response invalid output");
                 return std::make_pair(l,r);};
             const bool changed=render(false)!=render(true);
-            if(profile==5||speed>=50.f||(mode==6&&speed==0.f))require(!changed,"recording response changed protected setting");
-            else if(mode==2)require(changed,"META recording response did not activate");
+            if(profile==5||speed>=50.f||(mode==4&&speed==0.f))require(!changed,"recording response changed protected setting");
+            else if(mode==1)require(changed,"META recording response did not activate");
         }
     }
     // Freeze Classic/Crystal: exact paired output at every supported profile,
     // including non-unity Mix, polarity and moving note/level input.
-    for(int mode:{3,4})for(int profile=0;profile<int(skelly::playground::latencyNames.size());++profile){
+    for(int mode:{2,3})for(int profile=0;profile<int(skelly::playground::latencyNames.size());++profile){
         const int n=fs/2;std::vector<float> src(n);double phase=0.;
         for(int i=0;i<n;++i){double t=double(i)/fs;phase+=2*skelly::kPi*(225.+17.*std::sin(2*skelly::kPi*4.*t))/fs;src[i]=float((.12+.08*std::sin(2*skelly::kPi*3.*t))*std::sin(phase));}
         auto render=[&](bool enabled){skelly::playground::Bank b;b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.setRecordingResponseEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};

@@ -9,7 +9,6 @@
 #include "WetLevelGuard.hpp"
 #include "SnapCore.h"
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
-#include "AutoTuneEngine.h"
 #include "SkellyFusionEngine.h"
 #endif
 #include <memory>
@@ -19,13 +18,22 @@
 #include <cmath>
 
 namespace skelly::playground {
-// Stable IDs: do not reorder. META is not MetaTune Inspired.
-inline constexpr std::array<const char*,7> names{{"REGULAR", "TESTTUNE", "META", "CLASSIC", "CRYSTAL", "OG SKELLYTUNE", "METATUNE 2.5"}};
+// Exactly five active engines (four in the portable build). Keep the old host
+// choice range for automation/state compatibility; retired slots are aliases only.
+inline constexpr std::array<const char*,5> names{{"TESTTUNE", "META", "CLASSIC", "CRYSTAL", "METATUNE 2.5"}};
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
-inline constexpr int modeCount=7;
+inline constexpr int modeCount=5, legacySlotCount=7;
 #else
-inline constexpr int modeCount=5;
+inline constexpr int modeCount=4, legacySlotCount=5;
 #endif
+inline constexpr std::array<int,5> legacySlots{{1,2,3,4,6}};
+inline constexpr std::array<const char*,7> legacyLabels{{"TESTTUNE (legacy slot)", "TESTTUNE", "META", "CLASSIC", "CRYSTAL", "CLASSIC (legacy slot)", "METATUNE 2.5"}};
+inline constexpr int fromLegacySlot(int slot) noexcept {
+    return slot==2?1:slot==3||slot==5?2:slot==4?3:slot==6&&modeCount==5?4:0;
+}
+inline constexpr int toLegacySlot(int mode) noexcept {
+    return mode>=0&&mode<modeCount?legacySlots[size_t(mode)]:1;
+}
 // Matched mode is the old common-delay comparison. Other profiles lock the
 // prepared engine and report its real minimum plus any requested padding.
 // Zero is a requested minimum, NOT a claim of zero physical delay.
@@ -36,7 +44,7 @@ inline constexpr int interactiveLatencyProfile(int value) noexcept {
     return value<=0?3:std::min(value,int(latencyNames.size())-1);
 }
 inline constexpr std::array<double,6> latencyTargets{{-1.,0.,1.,2.5,5.,10.}};
-inline bool graphEditsSupported(int mode) noexcept { return mode>=0 && mode<3; }
+inline bool graphEditsSupported(int mode) noexcept { return mode>=0 && mode<2; }
 struct Telemetry { float hz=0, confidence=0, cents=0; int target=-1; bool pending=false; };
 
 class Bank {
@@ -57,24 +65,19 @@ public:
         const bool extended=nativeQuality_ && profile_>=4;
         const double miniMs=profile_==0?1.5:std::clamp(requestedMs,1.5,extended?10.0:3.0);
         snapMs_=profile_==0?2.5:requestedMs;
-        regular_=std::make_unique<RealtimeTuner>();regular_->prepare(rate_,channels_,false,false,miniMs,extended);
+        testTune_=std::make_unique<RealtimeTuner>();testTune_->prepare(rate_,channels_,false,false,miniMs,extended);
         meta_=std::make_unique<MetaTest>();meta_->prepare(rate_,miniMs,extended);
         meta_->setFastRatioResponseEnabled(recordingResponse_ && profile_>=1 && profile_<=3);
         snap_=std::make_unique<snap::Engine>();snap_->prepare(rate_,channels_);
         snap::Params sp;sp.latencyMs=snapMs_;snap_->setParams(sp);snap_->reset();
-        native_[0]=native_[1]=regular_->latencySamples();native_[2]=meta_->latencySamples();
-        native_[3]=native_[4]=snap_->actualDelaySamples();
+        native_[0]=testTune_->latencySamples();native_[1]=meta_->latencySamples();
+        native_[2]=native_[3]=snap_->actualDelaySamples();
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
-        og_=std::make_unique<humtune::AutoTuneEngine>();og_->prepare(rate_,std::max(128,maxBlockSize));
-        og_->setLowLatencyMode(profile_!=0);
-        // The explicitly named Bass / Baritone profile gets the native sub-bass
-        // analysis range. Keep all other profiles (including Matched) unchanged.
-        og_->setVoiceRange(challengers_ && profile_==4?5:1);og_->setFormantPreserve(true);
-        native_[5]=og_->getLatencySamples();
+        (void)maxBlockSize;
         inspired_=std::make_unique<autotune::SkellyFusionEngine>();inspired_->prepare(rate_,70.f,1000.f);
-        inspiredQuality_=nativeQuality_ && profile_==5 && lockedMode_==6;
+        inspiredQuality_=nativeQuality_ && profile_==5 && lockedMode_==4;
         autotune::Settings ms;ms.lowLatency=!inspiredQuality_;ms.ultraLowLatency=ms.lowLatency;ms.strictRealtime=true;
-        inspired_->setSettings(ms);inspired_->reset();native_[6]=inspired_->latencySamples();
+        inspired_->setSettings(ms);inspired_->reset();native_[4]=inspired_->latencySamples();
 #else
         (void)maxBlockSize;
 #endif
@@ -96,7 +99,6 @@ public:
         attackEntry_=1.-std::exp(-1./(rate_*.00012));
         attackRelease_=std::exp(-1./(rate_*.003));
     }
-    void setOgFormants(bool enabled) noexcept {ogFormants_=enabled;}
     int latencySamples() const noexcept {return common_;}
     int latencyProfile() const noexcept {return profile_;}
     int lockedMode() const noexcept {return lockedMode_;}
@@ -108,7 +110,7 @@ public:
     // buffer resize on the callback, and no dynamic host PDC notifications.
     void process(float* const* io,int channels,int frames,const Parameters& input,
                  int requested,int manual=-1,bool bypass=false) {
-        if(!regular_||!io||frames<=0||channels<1||channels>channels_)return;
+        if(!testTune_||!io||frames<=0||channels<1||channels>channels_)return;
         for(int c=0;c<channels;++c)if(!io[c])return;
         requested=lockedMode_>=0?lockedMode_:std::clamp(requested,0,modeCount-1);
         for(int off=0;off<frames;){
@@ -179,9 +181,9 @@ public:
                     alignedDry[c]=dry_[c][size_t(dr)];alignedWet[c]=wet_[c][size_t(wr)];
                 }
                 // Classic and Crystal are immutable listening references.
-                if(wetLevelRecovery_ && active_!=3 && active_!=4){
+                if(wetLevelRecovery_ && active_!=2 && active_!=3){
                     pitchValidHistory_[size_t(cursor_)]=pitchValid[size_t(i)];
-                    wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend,overshootBalance_ && (active_==2 || active_==5));
+                    wetLevelGuard_.process(alignedDry,alignedWet,channels,!dryOnly&&pitchValidHistory_[size_t(wr)]!=0,mixGain_,blend,overshootBalance_ && (active_==1));
                 }
                 // Keep the compensation envelope alive through a protected
                 // attack. Previously it reset to unity at the first marker,
@@ -225,34 +227,23 @@ private:
         mixGuard_.reset();partialBlend_=false;
         active_=mode;fadePosition_=0;warm_=common_+int(rate_*.04);telemetry_={};
         for(auto& v:wet_)std::fill(v.begin(),v.end(),0.f);
-        if(mode<2)regular_->reset();else if(mode==2)meta_->reset();
-        else if(mode<5)snap_->reset();
+        if(mode==0)testTune_->reset();else if(mode==1)meta_->reset();
+        else if(mode<4)snap_->reset();
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
-        else if(mode==5){og_->setEnabled(false);og_->setEnabled(true);}
         else inspired_->reset();
 #endif
     }
     void render(float* const* io,int channels,int frames,Parameters p,int manual,uint8_t* pitchValid) {
-        if(active_<2){p.testTune=active_==1;p.mix=1.f;p.experimentalCycleSynthesis=false;
-            regular_->setPlaygroundTransitionExperiment(challengers_);regular_->setParameters(p);regular_->setManualTargetMidi(manual);
-            const float* in[2]={io[0],channels==2?io[1]:nullptr};regular_->process(in,io,frames,channels,pitchValid);
-            const auto e=regular_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(regular_->appliedCents()),regular_->currentTargetNote(),regular_->targetPending()};return;}
-        if(active_==2){meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
+        if(active_==0){p.testTune=true;p.mix=1.f;p.experimentalCycleSynthesis=false;
+            testTune_->setPlaygroundTransitionExperiment(challengers_);testTune_->setParameters(p);testTune_->setManualTargetMidi(manual);
+            const float* in[2]={io[0],channels==2?io[1]:nullptr};testTune_->process(in,io,frames,channels,pitchValid);
+            const auto e=testTune_->lastPitch();telemetry_={e.valid?e.hertz:0.f,e.valid?e.confidence:0.f,float(testTune_->appliedCents()),testTune_->currentTargetNote(),testTune_->targetPending()};return;}
+        if(active_==1){meta_->setParameters(p.pitchClasses,p.referenceA,p.amount,p.speedMs,0.,1.);meta_->setManualTargetMidi(manual);meta_->process(io,channels,frames,false,pitchValid);
             const double target=meta_->targetHz();telemetry_={float(meta_->detectedHz()),float(meta_->lastConfidence()),float(meta_->estimatedOutputCorrectionCents()),target>0?int(std::lround(69+12*std::log2(target/p.referenceA))):-1,false};return;}
-        if(active_<5){snap::Params s;s.mode=active_-3;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
+        if(active_<4){snap::Params s;s.mode=active_-2;s.latencyMs=snapMs_;s.mask=p.pitchClasses;s.refHz=p.referenceA;s.amount=p.amount;s.retuneMs=p.speedMs;s.minHz=80.;
             snap_->setParams(s);snap_->process(io,channels,frames);const auto t=snap_->telemetry();telemetry_={t.voiced?t.inHz:0.f,t.conf,float(1200*std::log2(std::max(1e-6,snap_->currentRatio()))),t.voiced?t.targetNote:-1,false};return;}
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
         std::array<bool,12> mask{};for(int i=0;i<12;++i)mask[size_t(i)]=(p.pitchClasses&(1u<<i))!=0;
-        if(active_==5){
-            // OG's native speed is nonlinear, not a literal millisecond control.
-            // Map to its nearest supported time constant; >100ms saturates.
-            const float ms=p.speedMs;
-            const float native=ms<.35f?0.f:ms<3.f?.099f:ms<25.5f?std::clamp((ms-.5f)/50.f,.1f,.4999f):ms<42.f?.4999f:std::clamp((ms-20.f)/80.f,.5f,1.f);
-            og_->setRetuneSpeed(native);og_->setAmount(p.amount);og_->setReferenceFreq(p.referenceA);og_->setCustomScale(mask);og_->setHumanize(0);og_->setNoteStabilizer(false);og_->setFormantPreserve(ogFormants_);
-            juce::AudioBuffer<float> view(io,channels,frames);og_->process(view);
-            telemetry_={og_->getDetectedHz(),og_->getConfidence(),float(1200*std::log2(std::max(1e-6f,og_->getAppliedPitchRatio()))),og_->getTargetMidiNote(),false};
-            std::fill_n(pitchValid,frames,telemetry_.hz>0?1:0);return;
-        }
         autotune::Settings s;s.key=0;s.scale=autotune::Scale::Custom;s.customScale=mask;s.referenceHz=p.referenceA;s.retuneMs=p.speedMs;s.strength=p.amount;
         s.lowLatency=!inspiredQuality_;s.ultraLowLatency=s.lowLatency;s.strictRealtime=true;s.snapLive=false;s.noteConfirmMs=10.;s.noteStabilizerMs=0.;s.follow=.85f;s.voicingThreshold=.68f;
         // Restore consonants sooner at intermediate retune rates without
@@ -266,21 +257,19 @@ private:
         std::fill_n(pitchValid,frames,telemetry_.hz>0?1:0);
 #endif
     }
-    std::unique_ptr<RealtimeTuner> regular_;
+    std::unique_ptr<RealtimeTuner> testTune_;
     std::unique_ptr<MetaTest> meta_;
     std::unique_ptr<snap::Engine> snap_;
 #if defined(SKELLY_PLAYGROUND_FULL) && SKELLY_PLAYGROUND_FULL
-    std::unique_ptr<humtune::AutoTuneEngine> og_;
     std::unique_ptr<autotune::SkellyFusionEngine> inspired_;
 #endif
     int profile_=0,lockedMode_=-1;double snapMs_=2.5;
     bool recordingResponse_=true;
-    bool ogFormants_=true;
     bool challengers_=true;
     bool wetLevelRecovery_=true;
     bool nativeQuality_=true,overshootBalance_=true,inspiredQuality_=false;
     WetLevelGuard wetLevelGuard_;
-    std::array<int,7> native_{};
+    std::array<int,modeCount> native_{};
     std::array<std::vector<float>,2> dry_,wet_;
     CoherentMixGuard mixGuard_;bool partialBlend_=false;
     std::vector<uint8_t> attackMarks_,pitchValidHistory_;

@@ -20,7 +20,7 @@ concurrency:
   group: pitch-playground-${{ github.event_name }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  portable-five:
+  portable-four:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -34,18 +34,18 @@ jobs:
       - run: cmake -S . -B build-play -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON -DSKELLY_SNAP_HEADER="$PWD/recovered/SnapCore.h" -DSKELLY_BUILD_PLUGIN=OFF -DSKELLY_BUILD_DSP_TESTS=ON -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build-play --target playground_bank_test playground_mix_test playground_attack_test playground_recovery_test playground_formant_test playground_render --parallel 2
       - run: ctest --test-dir build-play -R '^playground_(bank|mix|attack|recovery|formant)_test$' --output-on-failure
-      - name: Render actual five-engine singer comparisons
+      - name: Render actual four-engine singer comparisons
         run: |
           mkdir -p playground-audio
           cp benchmark/v33/raw_levelmatched_20-28.wav playground-audio/DRY.wav
-          for mode in 0 1 2 3 4; do
+          for mode in 1 2 3 4; do
             for speed in 0 10 25 100; do
               SKELLY_PLAYGROUND_MODE=$mode ./build-play/playground_render playground-audio/DRY.wav "playground-audio/engine_${mode}_${speed}ms.wav" "$speed" 100 100 0 0 2773
             done
           done
       - uses: actions/upload-artifact@v4
         with:
-          name: Pitch-Playground-five-engine-audio
+          name: Pitch-Playground-four-engine-audio
           path: playground-audio
           retention-days: 1
   windows-full:
@@ -60,29 +60,22 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          repository: skellyruno/skell-autotune-vst
-          ref: 99e419a164e736e50e9cc4b1e0d751338f6f5019
-          path: external/og
-          persist-credentials: false
-      - uses: actions/checkout@v6
-        with:
           repository: skellyruno/MetaTuneInspiredvst
           ref: 73d759307ce9536e522b2cf78dc1da943afc8f3d
           path: external/meta
           persist-credentials: false
       - run: python tools/recover_snap_core.py external/snap recovered/SnapCore.h
-      - name: Configure seven-engine native research build
+      - name: Configure five-engine native research build
         shell: pwsh
         run: >
           cmake -S . -B build-play -A x64
           -DSKELLY_META_TEST=ON -DSKELLY_BUILD_PITCH_PLAYGROUND=ON
           -DSKELLY_PLAYGROUND_FULL=ON -DSKELLY_BUILD_PLUGIN=ON -DSKELLY_BUILD_DSP_TESTS=OFF
           "-DSKELLY_SNAP_HEADER=$PWD/recovered/SnapCore.h"
-          "-DSKELLY_OG_SOURCE=$PWD/external/og"
           "-DSKELLY_META_SOURCE=$PWD/external/meta"
       - name: Compile actual native VST3 and direct DSP / editor QA
         run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundFullMixTest SkellyPlaygroundFullAttackTest SkellyPlaygroundFullRecoveryTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
-      - name: Verify all seven algorithms and real editor
+      - name: Verify all five algorithms and real editor
         shell: pwsh
         run: |
           foreach ($target in @('SkellyPlaygroundFullBankTest.exe','SkellyPlaygroundFullMixTest.exe','SkellyPlaygroundFullAttackTest.exe','SkellyPlaygroundFullRecoveryTest.exe','SkellyPlaygroundSmoke.exe')) {
@@ -91,30 +84,23 @@ jobs:
             & $exe.FullName
             if ($LASTEXITCODE -ne 0) { throw "$target failed: $LASTEXITCODE" }
           }
-      - name: Render all seven real engines on same singer
+      - name: Render all five real engines on same singer
         shell: pwsh
         run: |
           $exe = Get-ChildItem build-play -Recurse -File -Filter 'SkellyPlaygroundFullRender.exe' | Select-Object -First 1
           if (!$exe) { throw "Missing full renderer" }
           New-Item -ItemType Directory -Force playground-full | Out-Null
-          foreach ($mode in 0..6) {
+          foreach ($mode in @(1,2,3,4,6)) {
             $env:SKELLY_PLAYGROUND_MODE = "$mode"
             foreach ($speed in @(0,10,25,100)) {
               & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/engine_$($mode)_$($speed)ms.wav" $speed 100 100 0 0 2773
               if ($LASTEXITCODE -ne 0) { throw "Engine $mode render failed" }
             }
           }
-          $env:SKELLY_PLAYGROUND_MODE = '5'
-          $env:SKELLY_OG_FORMANTS_OFF = '1'
-          foreach ($speed in @(0,10,25,100)) {
-            & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/og_formants_off_$($speed)ms.wav" $speed 100 100 0 0 2773
-            if ($LASTEXITCODE -ne 0) { throw 'OG formant A/B render failed' }
-          }
-          Remove-Item Env:SKELLY_OG_FORMANTS_OFF
-          # Direct A/B of the three challengers; OG explicit bass, Mini 2.5ms.
-          foreach ($mode in @(0,1,5)) {
+          # Direct A/B of TESTTUNE at 2.5ms.
+          foreach ($mode in @(1)) {
             $env:SKELLY_PLAYGROUND_MODE = "$mode"
-            $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = if ($mode -eq 5) {'4'} else {'3'}
+            $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
             foreach ($speed in @(0,10,25,100)) {
               $env:SKELLY_PLAYGROUND_LEGACY_CHALLENGERS = '1'
               & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/challenger_${mode}_legacy_${speed}ms.wav" $speed 100 100 0 0 2773
@@ -127,7 +113,7 @@ jobs:
           Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
           # Level A/B isolates only the new wet recovery, including both references.
           $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '3'
-          foreach ($mode in 0..6) {
+          foreach ($mode in @(1,2,3,4,6)) {
             $env:SKELLY_PLAYGROUND_MODE = "$mode"
             foreach ($speed in @(0,10,25,100)) {
               $env:SKELLY_PLAYGROUND_LEGACY_LEVEL = '1'
@@ -146,7 +132,7 @@ jobs:
           Remove-Item Env:SKELLY_PLAYGROUND_LATENCY_PROFILE
           # Native quality A/B with the same 10ms host budget.
           $env:SKELLY_PLAYGROUND_LATENCY_PROFILE = '5'
-          foreach ($mode in 0..6) {
+          foreach ($mode in @(1,2,3,4,6)) {
             $env:SKELLY_PLAYGROUND_MODE = "$mode"
             foreach ($speed in @(0,25)) {
               $env:SKELLY_PLAYGROUND_LEGACY_QUALITY = '1'
@@ -169,7 +155,7 @@ jobs:
       # all validation passes, on the owner's same-repository research branch.
       - uses: actions/upload-artifact@v4
         with:
-          name: Pitch-Playground-seven-engine-audio
+          name: Pitch-Playground-five-engine-audio
           path: playground-full
           retention-days: 3
 
@@ -181,7 +167,7 @@ jobs:
           $module = Join-Path $bundles[0].FullName 'Contents/Resources/moduleinfo.json'
           python tools/normalize_vst3_moduleinfo.py --path "$module" --cmake-file CMakeLists.txt --expected-name "SkellyTune Playground"
           if ($LASTEXITCODE -ne 0) { throw 'Metadata validation failed' }
-      - name: Download pinned pluginval 2.0.0-beta3 for seven-engine Playground
+      - name: Download pinned pluginval 2.0.0-beta3 for five-engine Playground
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -195,7 +181,7 @@ jobs:
           $validator = Get-ChildItem -LiteralPath $toolRoot -Recurse -File -Filter 'pluginval.exe' | Select-Object -First 1
           if (!$validator) { throw 'Verified pluginval executable missing' }
           "PLUGINVAL_EXE=$($validator.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Validate actual seven-engine Playground VST3 with pluginval strictness 5
+      - name: Validate actual five-engine Playground VST3 with pluginval strictness 5
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -228,7 +214,7 @@ jobs:
           Copy-Item -LiteralPath external/meta/THIRD_PARTY_NOTICES.md -Destination $stage
           @'
           SKELLYTUNE PLAYGROUND — OWNER-AUTHORIZED RESEARCH TEST BUILD
-          All seven engines. Experimental; no warranty or production readiness.
+          All five engines. Experimental; no warranty or production readiness.
           The combined linked test work is provided under AGPL-3.0 terms.
           Preserve original component notices and license terms. The independent
           source repositories retain their existing licenses.
@@ -237,8 +223,7 @@ jobs:
           Install the complete VST3 bundle in a backup FL Studio project.
           0ms retune = fast; 100ms retune = slow. Select latency directly;
           actual engine minimum and host delay are reported. Graph editing is
-          supported by Mini modes 0–2. All seven stable engine IDs are retained.
-          OG Formant Preserve (A/B) host parameter defaults ON; OFF is diagnostic.
+          supported by TESTTUNE and META. Legacy host choice slots map to surviving engines.
           '@ | Set-Content -LiteralPath (Join-Path $stage 'README-RESEARCH-LISTENING.txt') -Encoding utf8
           git rev-parse HEAD | Set-Content -LiteralPath (Join-Path $stage 'BUILD-COMMIT.txt')
           # The complete linked-build source, excluding unrelated benchmark
@@ -247,7 +232,6 @@ jobs:
           New-Item -ItemType Directory -Force $sourceRoot | Out-Null
           $parts = @(
             @{ Repo='.'; Name='playground'; Paths=@('CMakeLists.txt','Source','dsp','cmake','tools','tests','docs','third_party','release/THIRD_PARTY_NOTICES.md','LICENSE','AGENTS.md') },
-            @{ Repo='external/og'; Name='og'; Paths=@('Source','CMakeLists.txt','AGENTS.md','INCOMING-ONSET-NOTICES.md') },
             @{ Repo='external/meta'; Name='meta'; Paths=@('Source','CMakeLists.txt','LICENSE','THIRD_PARTY_NOTICES.md') },
             @{ Repo='external/snap'; Name='snap'; Paths=@('source-overlay','audition','README.md') },
             @{ Repo='build-play/_deps/skellcoreshared-src'; Name='skellcore'; Paths=@('SkellCore') },
@@ -275,7 +259,7 @@ jobs:
           For an offline rebuild, use the playground directory as the CMake root.
           Set SKELLY_META_TEST=ON, SKELLY_BUILD_PITCH_PLAYGROUND=ON,
           SKELLY_PLAYGROUND_FULL=ON, SKELLY_BUILD_PLUGIN=ON.
-          Point SKELLY_SNAP_HEADER at snap/SnapCore.h, SKELLY_OG_SOURCE at og,
+          Point SKELLY_SNAP_HEADER at snap/SnapCore.h,
           SKELLY_META_SOURCE at meta, JUCE_PATH at juce, and
           FETCHCONTENT_SOURCE_DIR_SKELLCORESHARED at skellcore.
           Build target SkellyTunePlayground_VST3 in Release, Windows x64.
@@ -293,7 +277,7 @@ jobs:
         if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/skellytune-pitch-playground-20261123'
         uses: actions/upload-artifact@v4
         with:
-          name: SkellyTune-Playground-TEST-7-ENGINE-LISTENING
+          name: SkellyTune-Playground-TEST-5-ENGINE-LISTENING
           path: PLAYGROUND-RESEARCH-LISTENING/
           if-no-files-found: error
           retention-days: 3

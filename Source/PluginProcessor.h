@@ -30,7 +30,7 @@ public:
     bool hasEditor() const override { return true; }
     const juce::String getName() const override {
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
-        return skelly::playground::modeCount==7?"SkellyTune Playground":"SkellyTune Playground 5";
+        return skelly::playground::modeCount==5?"SkellyTune Playground":"SkellyTune Playground 5";
 #elif defined(SKELLY_META_TEST) && SKELLY_META_TEST
         return "SkellyTune META Lab";
 #elif defined(SKELLY_STUDIO_FAST_PROFILE) && SKELLY_STUDIO_FAST_PROFILE
@@ -109,8 +109,7 @@ public:
     }
 #if defined(SKELLY_PITCH_PLAYGROUND) && SKELLY_PITCH_PLAYGROUND
     int playgroundMode() const noexcept {
-        return juce::jlimit(0,skelly::playground::modeCount-1,
-            int(std::lround(state_.getRawParameterValue("playgroundEngine")->load())));
+        return skelly::playground::fromLegacySlot(int(std::lround(state_.getRawParameterValue("playgroundEngine")->load())));
     }
     int playgroundProfile() const noexcept {
         return skelly::playground::interactiveLatencyProfile(

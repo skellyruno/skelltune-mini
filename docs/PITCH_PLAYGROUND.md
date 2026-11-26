@@ -1,3 +1,13 @@
+# SkellyTune Playground — active five-engine lineup
+
+Active full build: TESTTUNE, META, CLASSIC, CRYSTAL, METATUNE 2.5. Portable build contains the first four. Regular and OG SkellyTune are retired from the Playground, including their comparison routes and OG build dependency. Do not restore them. Shared Mini DSP remains because TESTTUNE and separate Mini products use it.
+
+CLASSIC and CRYSTAL are frozen listening references; do not modify their pinned SnapCore or processing policy. The old host choice range is intentionally unchanged: stable slots 1, 2, 3, 4, 6 select the five engines. Retired slot 0 maps to TESTTUNE; retired slot 5 maps to CLASSIC. The actual editor exposes only five choices. Old saved sessions canonicalize aliases. Offline renderer rejects the retired slots; use 1, 2, 3, 4, 6. Portable build accepts 1–4. No history rewrite or backup branch is created.
+
+Research only. CI must build the actual Windows VST3, run portable and native DSP/GUI tests, pluginval and real-vocal renders before packaging. Classic/Crystal reference tests compare identical candidate and legacy processing at each profile. FL Studio validation remains separate.
+
+## Historical development notes (prior seven-engine builds, not current instructions)
+
 # SkellyTune Playground — research only
 
 Purpose: one test host for every distinct Skelly pitch correction engine. Keep Mini Round 2D, Snap, OG and MetaTune Inspired standalone products intact. Never silently substitute a different engine. Stable mode numbers 0–6.

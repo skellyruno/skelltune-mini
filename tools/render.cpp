@@ -92,8 +92,9 @@ static Wav demo() {
 static Wav process(const Wav& w, const skelly::Parameters& p) {
 #if defined(SKELLY_PLAYGROUND_RENDER) && SKELLY_PLAYGROUND_RENDER
     if(const char* selected=std::getenv("SKELLY_PLAYGROUND_MODE")){
-        const int mode=std::atoi(selected);
-        if(mode<0||mode>=skelly::playground::modeCount)throw std::runtime_error("Unavailable playground engine");
+        const int slot=std::atoi(selected);
+        const int mode=skelly::playground::fromLegacySlot(slot);
+        if(slot!=skelly::playground::toLegacySlot(mode))throw std::runtime_error("Unavailable or retired playground engine");
         const char* latency=std::getenv("SKELLY_PLAYGROUND_LATENCY_PROFILE");
         const int profile=latency?std::atoi(latency):0;
         if(profile<0||profile>=int(skelly::playground::latencyNames.size()))throw std::runtime_error("Unavailable latency profile");
@@ -104,7 +105,6 @@ static Wav process(const Wav& w, const skelly::Parameters& p) {
         bank.setOvershootBalanceEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_OVERSHOOT")==nullptr);
         bank.setRecordingResponseEnabled(std::getenv("SKELLY_PLAYGROUND_LEGACY_RECORDING_RESPONSE")==nullptr);
         bank.prepare(w.rate,w.channels,128,profile,mode);
-        bank.setOgFormants(std::getenv("SKELLY_OG_FORMANTS_OFF")==nullptr);
         Wav result=w;std::array<float,128> a{},b{};
         const size_t n=w.samples.size()/size_t(w.channels);
         float peak=0.f;size_t clipped=0;std::vector<double> timings;

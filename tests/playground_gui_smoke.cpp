@@ -31,11 +31,13 @@ int main(){
     if(!selector||selector->getNumItems()!=skelly::playground::modeCount)return 3;
     auto* param=p->parameters().getParameter("playgroundEngine");
     if(!param)return 4;
+    if(skelly::playground::fromLegacySlot(0)!=0||skelly::playground::fromLegacySlot(5)!=2)return 51;
+    for(int i=0;i<skelly::playground::modeCount;++i)if(skelly::playground::fromLegacySlot(skelly::playground::toLegacySlot(i))!=i)return 52;
     juce::MidiBuffer midi;
     double phase=0;
     for(int mode=0;mode<skelly::playground::modeCount;++mode){
         selector->setSelectedId(mode+1,juce::sendNotificationSync);
-        if(p->playgroundMode()!=mode||p->playgroundRenderMode()!=mode||p->graphEditsSupported()!=(mode<3))return 5;
+        if(p->playgroundMode()!=mode||p->playgroundRenderMode()!=mode||p->graphEditsSupported()!=(mode<2))return 5;
         for(int k=0;k<400;++k){
             juce::AudioBuffer<float> b(2,128);
             for(int i=0;i<128;++i){phase+=2*skelly::kPi*225./48000.;const float x=float(.18*std::sin(phase)+.04*std::sin(2*phase));b.setSample(0,i,x);b.setSample(1,i,.8f*x);}

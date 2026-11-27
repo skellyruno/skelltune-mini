@@ -10,6 +10,7 @@ on:
       - tools/recover_snap_core.py
       - tools/render.cpp
       - tools/score_playground.py
+      - tools/final_challenger_sweep.py
       - tools/normalize_vst3_moduleinfo.py
       - cmake/**
       - Source/**
@@ -65,6 +66,8 @@ jobs:
               SKELLY_PLAYGROUND_MOTION_CANDIDATE=1 SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_combined_${speed}ms.wav" "$speed" 100 100 0 0 2773
               SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_promoted_${speed}ms.wav" "$speed" 100 100 0 0 2773
               SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_synthesis_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 SKELLY_PLAYGROUND_PHASE_CONTINUITY=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_phase_${speed}ms.wav" "$speed" 100 100 0 0 2773
+              SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 SKELLY_PLAYGROUND_MEASURED_GRAIN=1 ./build-play/playground_render playground-audio/DRY.wav "playground-audio/next_${mode}_listening_${speed}ms.wav" "$speed" 100 100 0 0 2773
             done
           done
           python -m pip install numpy scipy
@@ -219,17 +222,21 @@ jobs:
           foreach ($mode in @(1,2,3,4,6)) {
             $env:SKELLY_PLAYGROUND_MODE = "$mode"
             foreach ($speed in @(0,10,25,100)) {
-              foreach ($trial in @("motion","dynamics","combined","promoted","synthesis")) {
+              foreach ($trial in @("motion","dynamics","combined","promoted","synthesis","phase","listening")) {
                 if ($trial -eq "motion" -or $trial -eq "combined") { $env:SKELLY_PLAYGROUND_MOTION_CANDIDATE = "1" }
                 if ($trial -eq "dynamics" -or $trial -eq "combined") { $env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE = "1" }
-                if ($trial -eq "promoted" -or $trial -eq "synthesis") { $env:SKELLY_PLAYGROUND_LISTENING_PROMOTION = "1" }
+                if ($trial -eq "promoted" -or $trial -eq "synthesis" -or  $trial -eq "phase" -or $trial -eq "listening") { $env:SKELLY_PLAYGROUND_LISTENING_PROMOTION = "1" }
                 if ($trial -eq "synthesis") { $env:SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE = "1" }
+                if ($trial -eq "phase") { $env:SKELLY_PLAYGROUND_PHASE_CONTINUITY = "1" }
+                if ($trial -eq "listening") { $env:SKELLY_PLAYGROUND_MEASURED_GRAIN = "1" }
                 & $exe.FullName benchmark/v33/raw_levelmatched_20-28.wav "playground-full/next_${mode}_${trial}_${speed}ms.wav" $speed 100 100 0 0 2773
                 if ($LASTEXITCODE -ne 0) { throw "Targeted candidate failed" }
                 Remove-Item Env:SKELLY_PLAYGROUND_MOTION_CANDIDATE -ErrorAction SilentlyContinue
                 Remove-Item Env:SKELLY_PLAYGROUND_DYNAMICS_CANDIDATE -ErrorAction SilentlyContinue
                 Remove-Item Env:SKELLY_PLAYGROUND_LISTENING_PROMOTION -ErrorAction SilentlyContinue
                 Remove-Item Env:SKELLY_PLAYGROUND_SYNTHESIS_CANDIDATE -ErrorAction SilentlyContinue
+                Remove-Item Env:SKELLY_PLAYGROUND_PHASE_CONTINUITY -ErrorAction SilentlyContinue
+                Remove-Item Env:SKELLY_PLAYGROUND_MEASURED_GRAIN -ErrorAction SilentlyContinue
               }
             }
           }
@@ -245,6 +252,32 @@ jobs:
           path: playground-full
           retention-days: 3
 
+      - name: Revalidate locally measured and frozen five-engine policy
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build-play -Recurse -File -Filter "SkellyPlaygroundFullRender.exe" | Select-Object -First 1
+          if (!$exe) { throw "Missing final renderer" }
+          python tools/final_challenger_sweep.py --exe "$($exe.FullName)" --source benchmark/v33/raw_levelmatched_20-28.wav --out final-comparison --locked-policy 0,5,0,0,0
+          if ($LASTEXITCODE -ne 0) { throw "Final locked-policy validation failed" }
+      - name: Rebuild actual VST3 with measured selected policy
+        run: cmake --build build-play --config Release --target SkellyTunePlayground_VST3 SkellyPlaygroundFullBankTest SkellyPlaygroundFullMixTest SkellyPlaygroundFullAttackTest SkellyPlaygroundFullRecoveryTest SkellyPlaygroundSmoke SkellyPlaygroundFullRender --parallel 2
+      - name: Final exact-policy render and native regression
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build-play -Recurse -File -Filter "SkellyPlaygroundFullRender.exe" | Select-Object -First 1
+          python tools/final_challenger_sweep.py --verify --exe "$($exe.FullName)" --source benchmark/v33/raw_levelmatched_20-28.wav --out final-comparison
+          if ($LASTEXITCODE -ne 0) { throw "Final listening policy hash mismatch" }
+          foreach ($target in @("SkellyPlaygroundFullBankTest.exe","SkellyPlaygroundFullMixTest.exe","SkellyPlaygroundFullAttackTest.exe","SkellyPlaygroundFullRecoveryTest.exe","SkellyPlaygroundSmoke.exe")) {
+            $test = Get-ChildItem build-play -Recurse -File -Filter $target | Select-Object -First 1
+            if (!$test) { throw "Missing $target" }
+            & $test.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Final $target failed" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FINAL-five-engine-comparison
+          path: final-comparison
+          retention-days: 3
       - name: Strict Playground identity and metadata
         shell: pwsh
         run: |
@@ -286,7 +319,7 @@ jobs:
           }
 
       - name: Stage owner research listening VST3
-        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/skellytune-pitch-playground-20261123'
+        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/skellytune-pitch-playground-20261123' || github.head_ref == 'research/challenger-phase-continuity-20261126')
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -296,6 +329,10 @@ jobs:
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item -LiteralPath $bundles[0].FullName -Destination $stage -Recurse
           Copy-Item -LiteralPath docs/PITCH_PLAYGROUND.md -Destination $stage
+          Copy-Item -LiteralPath final-comparison/FINAL-NUMBERS.csv -Destination $stage
+          Copy-Item -LiteralPath final-comparison/FINAL-NUMBERS.json -Destination $stage
+          Copy-Item -LiteralPath final-comparison/selection.json -Destination $stage
+          Copy-Item -LiteralPath dsp/FinalListeningPolicy.hpp -Destination $stage
           Copy-Item -LiteralPath external/meta/LICENSE -Destination (Join-Path $stage 'MetaTune-AGPL-LICENSE.txt')
           Copy-Item -LiteralPath external/meta/THIRD_PARTY_NOTICES.md -Destination $stage
           @'
@@ -360,7 +397,7 @@ jobs:
           }
           $manifest | Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding utf8
       - name: Upload owner research listening build
-        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/skellytune-pitch-playground-20261123'
+        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/skellytune-pitch-playground-20261123' || github.head_ref == 'research/challenger-phase-continuity-20261126')
         uses: actions/upload-artifact@v4
         with:
           name: SkellyTune-Playground-TEST-5-ENGINE-LISTENING

@@ -29,6 +29,7 @@
 
 #include "RealtimeTuner.hpp"   // CausalPitchTracker (optional working detector)
 #include "PhaseCrossfadeLut.hpp"
+#include "PhaseContinuity.hpp"
 #include <algorithm>
 #include <array>
 #include <cfloat>
@@ -99,6 +100,7 @@ public:
         attackMarks_.fill(0);
         smooth_ = log_ = std::log2(200.0);
         smoothedCorrectionLog_ = 0.0;
+        trajectory_.reset();
         raw_ = sel_ = conf_ = lastTrustedLag_ = 0.0; period_ = 200.0; ratio_ = 1.0; target_ = 0.0;
         manualTargetMidi_ = -1;
         // Acquire from the first *detected* phrase, not a fixed 240Hz
@@ -163,7 +165,10 @@ public:
     void setPhaseAlignedGrainsEnabled(bool on) noexcept { phaseAlignedGrains_ = on; }
     // Playground recording profiles only. Default standalone remains exact.
     void setFastRatioResponseEnabled(bool on) noexcept { fastRatioResponse_=on; }
-    void setCompactGrainCandidate(bool on) noexcept { compactGrain_=on; }
+    void setCompactGrainCandidate(bool on) noexcept { compactGrain_=on?1.:0.; }
+    void setCompactGrainWeight(double weight) noexcept { compactGrain_=std::clamp(weight,0.,1.); }
+    void setPhaseContinuityCandidate(bool on) noexcept { phaseContinuityCandidate_=on; }
+    void setTrajectoryCandidate(double strength) noexcept {trajectoryStrength_=std::clamp(strength,0.,1.5);if(trajectoryStrength_==0.)trajectory_.reset();}
     // Pure deterministic comparison probe for the exact same alignment
     // routine used by the live engine; requires a valid PCM history.
     static double probeAlignedHead(const float* history, double previousHead,
@@ -244,7 +249,7 @@ public:
         }
         wasBypassed_=bypass;
         if (!bypass && tableDirty_) buildTable();
-        const double grain = std::max(1.0, (compactGrain_?1.15:2.0) - lowLatency_);
+        const double grain = std::max(1.0, (2.-.85*compactGrain_) - lowLatency_);
         // The grain's source age varies with pitch. Use the existing ring's
         // exact host-aligned 3ms dry tap for silence/consonants, with smooth
         // voiced-entry/exit transitions and no realtime allocations.
@@ -397,7 +402,7 @@ public:
                         double before=0.0, after=0.0;
                         const double selected = alignHead(ring_[0].data(),
                             oldHead, proposed, radius, limit,&before,&after,
-                            lanes == 2 ? ring_[1].data() : nullptr);
+                            lanes == 2 ? ring_[1].data() : nullptr,phaseContinuityCandidate_,cycle);
                         sharedPhaseAdjustment = selected - proposed;
                         // Reuse identical phase comparisons from alignment.
                         phaseErrorBefore_ += before;
@@ -411,7 +416,7 @@ public:
                     ++grainJumps_;
                     if (jumpCrossfadeEnabled_) {
                         const uint32_t length = uint32_t(std::clamp(
-                            std::lround(pt*(compactGrain_?.55:1.)), 16l, 512l));
+                            std::lround(pt*(1.-.45*compactGrain_)), 16l, 512l));
                         flen_[l] = fade_[l] = length;
                         ++grainJumpCrossfades_;
                     } else {
@@ -626,6 +631,15 @@ private:
             sel_=std::exp2(sl);
             log_=target=sl;
         }
+        if(trajectoryStrength_>0.&&!fileDetector_){
+            if(lag>0.&&conf_>=.80){
+                const double f=double(sr_)/lag;
+                const double age=grainGeometryValid_?std::clamp(double(w_)-pos_[0],double(dryDelaySamples_),double(kRing)/2.):double(dryDelaySamples_);
+                const int note=int(std::lround(69.+12.*(std::log2(double(sr_)/reference_)-log_)));
+                const double delta=trajectory_.predict(69.+12.*std::log2(f/reference_),note,conf_,double(hop)/sr_,tracker_.observationAgeSeconds(f)-age/sr_,trajectoryStrength_);
+                detectedLog-=delta/12.;
+            }else trajectory_.reset();
+        }
         target_ = target;
         const double sm = smoothStep(smoothDetected_ ? detectedLog : target, hop);
         // Smooth the correction, not the detected pitch: changing input
@@ -661,10 +675,29 @@ private:
                             double proposed, int radius,
                             double youngestSafe,
                             double* before=nullptr,double* after=nullptr,
-                            const float* right=nullptr) noexcept {
+                            const float* right=nullptr,bool continuity=false,double cycle=0.) noexcept {
         // Cache the outgoing grain's exact cubic samples once. All
         // candidate offsets share them, including stereo phase scoring.
         // The arithmetic order and mono/stereo weights stay identical.
+        if(continuity){
+            const int lanes=right?2:1;
+            const float* histories[2]={r,right};
+            const int count=std::clamp(int(std::lround(cycle*.20)),12,48);
+            std::array<std::array<float,2>,48> source{};
+            for(int i=0;i<count;++i)for(int l=0;l<lanes;++l)source[size_t(i)][size_t(l)]=tap(histories[l],previous-double(i)*2.,true);
+            const auto score=[&](double head) noexcept {
+                skelly::PhaseContinuity metric;
+                for(int i=0;i<count;++i)for(int l=0;l<lanes;++l)metric.add(l,source[size_t(i)][size_t(l)],tap(histories[l],head-double(i)*2.,true));
+                return metric.cost();
+            };
+            const double original=score(proposed);if(before)*before=original;if(after)*after=original;
+            if(proposed>youngestSafe)return proposed;
+            const int span=std::clamp(radius,0,16);double best=proposed,bestCost=original;
+            const auto penalized=[&](double h) noexcept {return score(h)+.002*std::abs(h-proposed);};
+            for(int off=-span;off<=span;++off){const double h=proposed+off;if(h<30.||h>youngestSafe)continue;const double v=penalized(h);if(v<bestCost){best=h;bestCost=v;}}
+            if(bestCost<original*.94){best=skelly::refinePhase(best,proposed,std::max(30.,proposed-span),std::min(youngestSafe,proposed+span),penalized);if(after)*after=score(best);return best;}
+            return proposed;
+        }
         std::array<std::array<float,2>,12> outgoing{};
         const int lanes=right?2:1;
         const float* histories[2]={r,right};
@@ -743,7 +776,9 @@ private:
     double exitAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.004));
     double ratioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.0025));
     double fastRatioAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.001));
-    bool fastRatioResponse_=false,compactGrain_=false;
+    bool fastRatioResponse_=false,phaseContinuityCandidate_=false;
+    double compactGrain_=0.;
+    PitchTrajectory trajectory_;double trajectoryStrength_=0.;
     double baseAlpha_ = 1.0 - std::exp(-1.0 / (48000.0 * 0.010));
     bool jumpCrossfadeEnabled_ = true;
     bool highQualityInterpolation_ = true;

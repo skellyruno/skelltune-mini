@@ -10,6 +10,8 @@
 #include "HarmonicAirGuard.hpp"
 #include "WetRumbleGuard.hpp"
 #include "PhaseCrossfadeLut.hpp"
+#include "PhaseContinuity.hpp"
+#include "PitchTrajectory.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -287,6 +289,7 @@ public:
         return true;
     }
     int hopHostSamples() const noexcept { return factor_ * hop_; }
+    double observationAgeSeconds(double hz) const noexcept {return (.5*window_+16./factor_)/reducedRate_+.5/std::max(50.,hz);}
     PitchEstimate last() const noexcept { return estimate_; }
     double reducedRate() const noexcept { return reducedRate_; }
 
@@ -671,6 +674,7 @@ public:
         jumpCorrelation_ = 1.0; minActiveSourceDelay_ = 1.0e30; maxActiveSourceDelay_ = 0.0; maxOverlapGain_ = 1.0;
         cents_ = 0.0;
         desiredCents_ = 0.0;
+        trajectory_.reset();
         voiceMix_ = 0.0;
         effectiveMix_ = 0.0;
         dryCenteredSamples_ = 0;
@@ -757,6 +761,8 @@ public:
     void setProvisionalTransitionEnabled(bool enabled) noexcept { provisionalTransitionEnabled_ = enabled; }
     void setPlaygroundTransitionExperiment(bool enabled) noexcept { playgroundTransitionExperiment_=enabled; }
     void setCompactWrapCandidate(bool enabled) noexcept { compactWrapCandidate_=enabled; }
+    void setPhaseContinuityCandidate(bool enabled) noexcept { phaseContinuityCandidate_=enabled; }
+    void setTrajectoryCandidate(double strength) noexcept {trajectoryStrength_=std::clamp(strength,0.,1.5);if(trajectoryStrength_==0.)trajectory_.reset();}
     static bool holdTestTuneBoundary(int previous,int candidate,uint16_t mask,double midi,double onset) noexcept {
         return previous>=0 && previous<128 && candidate>=0 && candidate<128 && previous!=candidate &&
             (mask & (1u<<(previous%12))) && (mask & (1u<<(candidate%12))) &&
@@ -1136,7 +1142,12 @@ public:
                             (rate_ * trajectorySeconds));
                         slowInputMidi_ += k * (rawMidi - slowInputMidi_);
                     }
-                    const double error = std::clamp(1200.0 * std::log2(targetHz / f0_), -1200.0, 1200.0);
+                    double predictedDelta=0.;
+                    if(trajectoryStrength_>0.){
+                        const double age=jumpPosition_<jumpLength_ ? .5*(jumpFrom_+jumpTo_):readDelay_;
+                        predictedDelta=trajectory_.predict(rawMidi,workingTarget,e.confidence,double(tracker_.hopHostSamples())/rate_,tracker_.observationAgeSeconds(f0_)-age/rate_,trajectoryStrength_);
+                    }
+                    const double error = std::clamp(1200.0 * std::log2(targetHz / f0_)-100.*predictedDelta, -1200.0, 1200.0);
                     // Soft Flex Tune zone: reduces correction smoothly near the
                     // note center, without allowing a hard dead-zone discontinuity.
                     const double distance = std::abs(error);
@@ -1181,6 +1192,7 @@ public:
                     // quiet gap can retain the previous phrase's cent error
                     // and steer the attack of the next syllable incorrectly.
                     if (!continueCorrectionState_) {
+                        trajectory_.reset();
                         desiredCents_ = 0.0;
                         slowMidiReady_ = false;
                         vibratoTarget_ = -1;
@@ -1511,6 +1523,19 @@ private:
     // already in the ring; no lookahead or audio-thread allocations.
     double choosePhaseAlignedDestination(double from, double nominal, double period, double minDelay) noexcept {
         const int maxAdjust = std::clamp(int(std::lround(period * 0.085)), 2, 32);
+        if(phaseContinuityCandidate_){
+            const int count=std::clamp(int(std::lround(period*.20)),12,48),capacity=mask_+1;
+            std::array<std::array<float,2>,48> source{};
+            for(int i=0;i<count;++i)for(int l=0;l<channels_;++l)source[size_t(i)][size_t(l)]=interpolate(history_.data()+size_t(l)*capacity,from+i*2.+3.);
+            const auto score=[&](double age) noexcept {skelly::PhaseContinuity metric;for(int i=0;i<count;++i)for(int l=0;l<channels_;++l)metric.add(l,source[size_t(i)][size_t(l)],interpolate(history_.data()+size_t(l)*capacity,age+i*2.+3.));return metric.cost();};
+            const double lo=std::max(minDelay,nominal-maxAdjust),hi=std::min(double(capacity)-8.,nominal+maxAdjust);
+            if(lo>hi)return nominal;
+            const auto penalty=[&](double age) noexcept {const double offset=(age-nominal)/maxAdjust;return score(age)+.028*offset*offset;};
+            const double original=score(nominal);double best=std::clamp(nominal,lo,hi),bestCost=penalty(best);
+            for(int k=-maxAdjust;k<=maxAdjust;++k){const double age=nominal+k;if(age<lo||age>hi)continue;const double v=penalty(age);if(v<bestCost){best=age;bestCost=v;}}
+            best=skelly::refinePhase(best,nominal,lo,hi,penalty);
+            ++phaseJumpCount_;phaseJumpError_+=std::abs(best-nominal);mismatchBefore_+=original;mismatchAfter_+=score(best);return best;
+        }
         const int length = std::clamp(int(std::lround(period * 0.12)), 12, 42);
         const int capacity = mask_ + 1;
         double bestScore = 1e40, best = nominal, baseline = -1.0, chosenMismatch = 0.0;
@@ -1608,7 +1633,8 @@ private:
     bool harmonicWetGateEnabled_ = true;
     bool provisionalTransitionEnabled_ = false;
     bool playgroundTransitionExperiment_=false;
-    bool compactWrapCandidate_=false;
+    bool compactWrapCandidate_=false,phaseContinuityCandidate_=false;
+    PitchTrajectory trajectory_;double trajectoryStrength_=0.;
     bool holdActiveWhilePending_ = true;
     PeriodTable periodTable_;
     int nearZeroSamples_ = 0;

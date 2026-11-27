@@ -48,6 +48,25 @@ inline void run(int fs){
     require(skelly::listeningSpeed(10.f,1)==skelly::challengerSpeed(10.f,1),"META promotion mismatch");
     for(int mode:{2,3,4})require(skelly::listeningSpeed(10.f,mode)==10.f,"unmeasured engine promotion");
     require(skelly::listeningSpeed(25.f,4)==skelly::challengerSpeed(25.f,4),"MetaTune 25ms promotion mismatch");
+    // Gain changes must not look like phase discontinuities; polarity and
+    // slope differences must be rejected even on stereo inverse lanes.
+    skelly::PhaseContinuity same,wrong,shifted;
+    for(int i=0;i<48;++i){const double x=std::sin(i*.31)+.3*std::sin(i*.83);const double y=std::sin(i*.31+.7)+.3*std::sin(i*.83+.7);for(int c=0;c<2;++c){const double z=c?-.7:1.;same.add(c,z*x,z*x*.6);wrong.add(c,z*x,-z*x);shifted.add(c,z*x,z*y);}}
+    require(same.cost()<.04&&wrong.cost()>1.5&&shifted.cost()>same.cost(),"phase metric does not discriminate alignment");
+    const auto objective=[](double x){return (x-2.25)*(x-2.25);};
+    require(skelly::refinePhase(2.,2.,1.,3.,objective)==2.25,"fractional alignment not refined");
+    require(skelly::playground::Bank::measuredMetaGrain(0)==1.&&skelly::playground::Bank::measuredMetaGrain(100)==1.&&skelly::playground::Bank::measuredMetaGrain(10)==0.&&skelly::playground::Bank::measuredMetaGrain(25)==0.,"measured META profile mismatch");
+    for(int mode:{0,1,2,3,4})for(float ms:{0.f,10.f,25.f,100.f}){
+        const float result=skelly::playground::Bank::finalMotionSpeed(ms,ms,mode);
+        require(result>=0.f&&result<=ms,"final motion out of range");
+        if(mode==2||mode==3||ms==0||ms==100)require(result==ms,"final motion altered protected endpoint");
+    }
+    skelly::PitchTrajectory trajectory;
+    require(trajectory.predict(69.,69,.95,.002,.008,1.)==0.,"trajectory must acquire first frame");
+    double pred=0.;for(int i=1;i<=8;++i)pred=trajectory.predict(69.+i*.025,69,.95,.002,.008,1.);
+    require(pred>0.&&pred<=.36,"bounded rising pitch prediction");
+    require(trajectory.predict(70.,70,.95,.002,.008,1.)==0.,"trajectory leaked across note boundary");
+    require(trajectory.predict(70.025,70,.5,.002,.008,1.)==0.,"trajectory accepted unreliable pitch");
     // Explicit higher-delay profiles now spend their existing host budget
     // on native synthesis instead of padding. All lower profiles are frozen.
     for(int profile=0;profile<6;++profile){
@@ -98,8 +117,17 @@ inline void run(int fs){
     for(int mode:{2,3})for(int profile=0;profile<int(skelly::playground::latencyNames.size());++profile){
         const int n=fs/2;std::vector<float> src(n);double phase=0.;
         for(int i=0;i<n;++i){double t=double(i)/fs;phase+=2*skelly::kPi*(225.+17.*std::sin(2*skelly::kPi*4.*t))/fs;src[i]=float((.12+.08*std::sin(2*skelly::kPi*3.*t))*std::sin(phase));}
-        auto render=[&](bool enabled){skelly::playground::Bank b;b.setListeningPromotion(enabled);b.setSynthesisCandidate(enabled);b.setEnvelopeCandidate(enabled);b.setAdaptiveVowelCandidate(enabled?.65:0.);b.setMotionCandidate(enabled);b.setDynamicsCandidate(enabled);b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.setRecordingResponseEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
+        auto render=[&](bool enabled){skelly::playground::Bank b;b.setListeningPromotion(enabled);b.setMeasuredGrainPromotion(enabled);b.setFinalListeningPolicy(enabled);b.setFinalTrial(enabled?15u:0u);b.setSynthesisCandidate(enabled);b.setPhaseContinuityCandidate(enabled);b.setEnvelopeCandidate(enabled);b.setAdaptiveVowelCandidate(enabled?.65:0.);b.setMotionCandidate(enabled);b.setDynamicsCandidate(enabled);b.setWetLevelRecoveryEnabled(enabled);b.setNativeQualityEnabled(enabled);b.setOvershootBalanceEnabled(enabled);b.setRecordingResponseEnabled(enabled);b.prepare(fs,2,127,profile,mode);auto l=src,r=src;for(auto& x:r)x*=-.7f;skelly::Parameters p;p.speedMs=10;p.pitchClasses=1u<<9;for(int i=0;i<n;i+=127){p.mix=i<n/2?1.f:.5f;float* io[]={l.data()+i,r.data()+i};b.process(io,2,std::min(127,n-i),p,mode);}return std::make_pair(l,r);};
         require(render(false)==render(true),"Classic/Crystal reference changed");
+    }
+    for(int mode=0;mode<skelly::playground::modeCount;++mode){
+        skelly::playground::Bank final;final.setListeningPromotion(true);final.setMeasuredGrainPromotion(true);final.setFinalListeningPolicy(true);final.prepare(fs,2,127,3,mode);
+        const int latency=final.latencySamples();const int n=fs/2;std::vector<float> l(n),r(n);double phase=0.;
+        for(int i=0;i<n;++i){const double t=double(i)/fs;phase+=2*skelly::kPi*(220.+15.*std::sin(2*skelly::kPi*5.*t))/fs;l[i]=float(.16*std::sin(phase)+.03*std::sin(2*phase));r[i]=-.7f*l[i];}
+        skelly::Parameters p;p.pitchClasses=2773;
+        for(int i=0;i<n;i+=127){p.speedMs=float(100.*i/n);float* io[]={l.data()+i,r.data()+i};final.process(io,2,std::min(127,n-i),p,mode);}
+        for(int i=0;i<n;++i)require(std::isfinite(l[i])&&std::isfinite(r[i])&&std::abs(l[i])<1.f&&std::abs(r[i])<1.f,"final speed automation finite/headroom");
+        require(final.latencySamples()==latency,"final speed automation changed PDC");
     }
     std::cout<<fs<<" PASS: bounded wet recovery and 12 frozen Classic/Crystal profile pairs\n";
 }

@@ -32,3 +32,7 @@ Historical results are in Git history, not in the active source tree. Do not rei
 The native editor/processor automatically enables the 2.5ms listening policy. TESTTUNE and META use the new wet dynamics and the measured retune calibration. TESTTUNE motion returns to baseline at 25ms because the earlier trial lost envelope accuracy and coverage. At other profiles, and for MetaTune 2.5, the prior defaults remain until matching results are available. Classic/Crystal stay bit-identical. No new parameter or user experiment selection. Render with SKELLY_PLAYGROUND_LISTENING_PROMOTION=1 to match the real plugin. This is a listening build, not a production release.
 
 MetaTune 2.5's measured 25ms combined improvement is now enabled in the 2.5ms native listening policy, tapered back to baseline outside 15–35ms. 10ms behavior remains baseline. Native synthesis experiments are still compared offline before promotion.
+
+## Frozen elimination audition policy (2.5ms profile)
+
+The final native path uses fixed measured flags 0/5/0/0/0 (TESTTUNE/META/CLASSIC/CRYSTAL/METATUNE 2.5), no user trial selector. Causal pitch-trajectory correction in TESTTUNE at 0–25ms and META at 0–8ms, shortened hard-tune note confirmation in MetaTune 2.5, and the prior measured compact META endpoint and MetaTune 2.5 25ms policies. Other profiles and protected Classic/Crystal remain unchanged. Windows final comparison revalidates the exact frozen policy before packaging. Source, score CSV and complete corresponding-source notices accompany the owner audition artifact.

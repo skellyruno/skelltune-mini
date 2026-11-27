@@ -97,11 +97,16 @@ def main():
         elif mode=="6" and speed=="25ms":expected=folder/f"next_{mode}_combined_{speed}.wav"
         else:expected=folder/f"envelope_{mode}_base_{speed}.wav"
         assert expected.exists() and hashlib.sha256(path.read_bytes()).digest()==hashlib.sha256(expected.read_bytes()).digest(),("promoted audio differs",path,expected)
+    for path in folder.glob("next_*_listening_*ms.wav"):
+        _,mode,_,speed=path.stem.split("_")
+        variant="synthesis" if mode=="2" and speed in ("0ms","100ms") else "promoted"
+        expected=folder/f"next_{mode}_{variant}_{speed}.wav"
+        assert expected.exists() and hashlib.sha256(path.read_bytes()).digest()==hashlib.sha256(expected.read_bytes()).digest(),("listening promotion differs",path,expected)
     lookup={r["file"]:r for r in rows}
     for r in rows:
         bits=pathlib.Path(r["file"]).stem.split("_")
         if bits[0]!="next" or bits[1] in ("3","4"):continue
-        baseline=lookup[f"envelope_{bits[1]}_base_{bits[-1]}.wav"]
+        baseline=lookup[f"next_{bits[1]}_promoted_{bits[-1]}.wav"] if bits[2] in ("phase","synthesis") else lookup[f"envelope_{bits[1]}_base_{bits[-1]}.wav"]
         refs=[lookup[f"envelope_{m}_base_{bits[-1]}.wav"] for m in ("3","4")]
         print("CHALLENGER_DELTA",r["file"],{k:round(r[k]-baseline[k],3) for k in ("median_cents","envelope_mae_db","level_mae_db","voiced_coverage")}, "beats_both_pitch",r["median_cents"]<min(x["median_cents"] for x in refs),flush=True)
     with (folder/"vocal_scores.csv").open("w",newline="") as out:

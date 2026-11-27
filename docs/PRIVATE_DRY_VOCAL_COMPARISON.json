@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "parent": "292b03f858f99dbdfcd041b07a75f5ecc6719a57",
+  "inputs": 2,
+  "seconds": 16,
+  "sample_rate": 44100,
+  "retune_ms": [
+    0,
+    10,
+    25,
+    100
+  ],
+  "profile": "2.5 ms",
+  "pdc_samples": 110,
+  "scale_mask": 2773,
+  "paired_cases": 32,
+  "renders": 64,
+  "protected_exact_pairs": 16,
+  "over_scale_samples": 0,
+  "rows": [
+    {
+      "engine": "TESTTUNE",
+      "pairs": 8,
+      "exact": 8,
+      "median_cents": [
+        4.20449,
+        4.20449
+      ],
+      "median_p90_cents": [
+        36.40546,
+        36.40546
+      ],
+      "median_envelope_db": [
+        0.637398,
+        0.637398
+      ],
+      "median_coverage": [
+        0.956858,
+        0.956858
+      ],
+      "max_final_callback_p99_ms": 0.149266
+    },
+    {
+      "engine": "META",
+      "pairs": 8,
+      "exact": 0,
+      "median_cents": [
+        5.53685,
+        5.49469
+      ],
+      "median_p90_cents": [
+        41.02804,
+        41.06503
+      ],
+      "median_envelope_db": [
+        0.927329,
+        0.949075
+      ],
+      "median_coverage": [
+        0.951327,
+        0.95354
+      ],
+      "max_final_callback_p99_ms": 0.11916
+    },
+    {
+      "engine": "CLASSIC",
+      "pairs": 8,
+      "exact": 8,
+      "median_cents": [
+        5.33843,
+        5.33843
+      ],
+      "median_p90_cents": [
+        39.31255,
+        39.31255
+      ],
+      "median_envelope_db": [
+        0.188938,
+        0.188938
+      ],
+      "median_coverage": [
+        0.990044,
+        0.990044
+      ],
+      "max_final_callback_p99_ms": 0.109065
+    },
+    {
+      "engine": "CRYSTAL",
+      "pairs": 8,
+      "exact": 8,
+      "median_cents": [
+        14.19126,
+        14.19126
+      ],
+      "median_p90_cents": [
+        70.16439,
+        70.16439
+      ],
+      "median_envelope_db": [
+        0.976104,
+        0.976104
+      ],
+      "median_coverage": [
+        0.956084,
+        0.956084
+      ],
+      "max_final_callback_p99_ms": 0.153141
+    }
+  ],
+  "source_blobs": {
+    "bank": "b466aff0ab36b78e7ac622b4a8ac58ec2fd7d2a9",
+    "policy": "0f449d9de20a671c208ca5a5e0d80d76b66f8edc",
+    "prior_harness": "a63eddd595263e990a5c900f3afafbffc9ee3fcd",
+    "new_harness": "c2311506fe89fff57d6257760861805050b48457"
+  },
+  "snap_sha256": "ca46212c500efe397968a2ef9869050f26b0ea015b5f462fd8ac99ffb6b3672b",
+  "limits": "Portable four-engine local build, no MetaTune 2.5 substitute. Fixed test scale not verified song key. Existing trial-zero vs final policy, not a newly designed pitch engine. No promotion or engine/default changes."
+}
